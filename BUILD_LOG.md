@@ -583,13 +583,23 @@ guessing at a fix.
 
 **Git Commit Hash**
 
-`__PENDING__` — filled in immediately after the hardening commit is created (see the
-commit that follows this entry; both were written and pushed together).
+`c6c28116b39fc69132c517392067d7d8f5bb69bb` (`c6c2811`)
 
 **GitHub Remote and Push Results**
 
-`__PENDING__` — filled in after `git push -u origin main` completes; see the note in
-`PLAN.md` § Project Status and the completion report delivered alongside this entry.
+- `git remote -v` (before): empty — no `origin` configured.
+- `git ls-remote https://github.com/kirantoday/nexus-credit-intelligence.git`:
+  exit code 0, zero refs returned — target repository exists and was empty, so no
+  divergent-history decision was needed.
+- `git remote add origin https://github.com/kirantoday/nexus-credit-intelligence.git`
+  — added.
+- `git push -u origin main` — succeeded: `* [new branch] main -> main`, upstream
+  tracking set (`branch 'main' set up to track 'origin/main'`).
+- Post-push verification: `git ls-remote origin` returns `c6c28116b39fc69132c517392067d7d8f5bb69bb`
+  for both `HEAD` and `refs/heads/main`, matching the local commit exactly.
+  `git status` reports `Your branch is up to date with 'origin/main'` and a clean
+  working tree.
+- Remote branch: https://github.com/kirantoday/nexus-credit-intelligence/tree/main
 
 **Approximate Time Spent**
 

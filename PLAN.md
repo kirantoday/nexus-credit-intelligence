@@ -55,7 +55,7 @@ file beyond a pointer.
 | **Current Status** | Milestone 1 is complete and hardened. Backend (FastAPI/SQLAlchemy 2/Alembic) and frontend (React/Vite/MUI/TanStack Query) scaffolds are built, tested, linted, type-checked, and boot successfully. `/health` verified locally. Alembic migration mechanics verified (history/heads resolve); actual `alembic upgrade head` against a live Supabase project is pending real `DATABASE_URL`/`DIRECT_DATABASE_URL` credentials (tracked in Known Issues). **Milestone 1 hardening** (not Milestone 2) added: default branch renamed `master` → `main`, `CLAUDE.md` operating guide, `.pre-commit-config.yaml` (fast local checks), `README.md`, GitHub issue/PR templates, and a GitHub remote connection — see `BUILD_LOG.md` "Milestone 1 Hardening" entry. Awaiting approval to begin Milestone 2. |
 | **Last Updated** | 2026-08-05 |
 | **Current Git Branch** | main |
-| **Latest Commit** | see `BUILD_LOG.md` "Milestone 1 Hardening" entry for hash (recorded post-commit) |
+| **Latest Commit** | `c6c2811` — Milestone 1 hardening (pushed to `origin/main`) |
 | **Next Milestone** | Milestone 2 — Provenance, `raw_provider_payload`, `calculation`/`calculation_input`, entitlement engine (§18 step 2) |
 
 ---
@@ -68,7 +68,7 @@ milestone completes; it is not itself a log (see `BUILD_LOG.md` for that).
 
 | Milestone | Feature | Status | Completion Date | Git Commit | Notes |
 |---|---|---|---|---|---|
-| 1 | Foundation: Supabase connection, Alembic skeleton, FastAPI `/health`, React shell | Complete (+ hardening) | 2026-08-05 | `79ca395`; hardening: see `BUILD_LOG.md` | Full Supabase connectivity (`alembic upgrade head` against a live project, pgvector/pg_trgm verification) pending real Supabase credentials — see Known Issues. Hardening pass (branch rename, `CLAUDE.md`, pre-commit, `README.md`, GitHub templates, GitHub remote) tracked as "Milestone 1 Hardening" in `BUILD_LOG.md`, not counted as Milestone 2. |
+| 1 | Foundation: Supabase connection, Alembic skeleton, FastAPI `/health`, React shell | Complete (+ hardening) | 2026-08-05 | `79ca395` (foundation), `c6c2811` (hardening) | Full Supabase connectivity (`alembic upgrade head` against a live project, pgvector/pg_trgm verification) pending real Supabase credentials — see Known Issues. Hardening pass (branch rename, `CLAUDE.md`, pre-commit, `README.md`, GitHub templates, GitHub remote — pushed to `origin/main`) tracked as "Milestone 1 Hardening" in `BUILD_LOG.md`, not counted as Milestone 2. |
 | 2 | Provenance, `raw_provider_payload`, `calculation`/`calculation_input`, entitlement engine | Not Started | — | — | |
 | 3 | SEC adapter vertical slice (real issuer + filing + financial fact, full domain-layer path) | Not Started | — | — | |
 | 4 | Credit Universe initial page (seeded canonical securities) | Not Started | — | — | |
