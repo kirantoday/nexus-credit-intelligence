@@ -390,8 +390,7 @@ will be validated in Milestone 15 (§18) once there's something worth deploying 
 
 **Git Commit Hash**
 
-See the commit immediately following this entry in git history (this entry was
-written as part of that same commit).
+`79ca39512737d7d80bab6ad7d5973870c6cc9655` (`79ca395`)
 
 **Approximate Time Spent**
 

@@ -55,7 +55,7 @@ file beyond a pointer.
 | **Current Status** | Backend (FastAPI/SQLAlchemy 2/Alembic) and frontend (React/Vite/MUI/TanStack Query) scaffolds are built, tested, linted, type-checked, and boot successfully. `/health` verified locally. Alembic migration mechanics verified (history/heads resolve); actual `alembic upgrade head` against a live Supabase project is pending real `DATABASE_URL`/`DIRECT_DATABASE_URL` credentials (tracked in Known Issues). Awaiting approval to begin Milestone 2. |
 | **Last Updated** | 2026-08-05 |
 | **Current Git Branch** | master |
-| **Latest Commit** | see `BUILD_LOG.md` Milestone 1 entry for hash |
+| **Latest Commit** | `79ca395` — Milestone 1: Foundation |
 | **Next Milestone** | Milestone 2 — Provenance, `raw_provider_payload`, `calculation`/`calculation_input`, entitlement engine (§18 step 2) |
 
 ---
@@ -68,7 +68,7 @@ milestone completes; it is not itself a log (see `BUILD_LOG.md` for that).
 
 | Milestone | Feature | Status | Completion Date | Git Commit | Notes |
 |---|---|---|---|---|---|
-| 1 | Foundation: Supabase connection, Alembic skeleton, FastAPI `/health`, React shell | Complete | 2026-08-05 | see `BUILD_LOG.md` | Full Supabase connectivity (`alembic upgrade head` against a live project, pgvector/pg_trgm verification) pending real Supabase credentials — see Known Issues |
+| 1 | Foundation: Supabase connection, Alembic skeleton, FastAPI `/health`, React shell | Complete | 2026-08-05 | `79ca395` | Full Supabase connectivity (`alembic upgrade head` against a live project, pgvector/pg_trgm verification) pending real Supabase credentials — see Known Issues |
 | 2 | Provenance, `raw_provider_payload`, `calculation`/`calculation_input`, entitlement engine | Not Started | — | — | |
 | 3 | SEC adapter vertical slice (real issuer + filing + financial fact, full domain-layer path) | Not Started | — | — | |
 | 4 | Credit Universe initial page (seeded canonical securities) | Not Started | — | — | |
