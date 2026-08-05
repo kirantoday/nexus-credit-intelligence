@@ -1,0 +1,100 @@
+# Pre-commit hooks for Nexus Credit Intelligence.
+#
+# Install (once per clone), from the repository root:
+#
+#   python -m pip install pre-commit
+#   pre-commit install
+#
+# Run manually against everything (e.g. after first installing, or in CI):
+#
+#   pre-commit run --all-files
+#
+# Backend hooks call the interpreter inside backend/.venv directly rather than
+# letting pre-commit manage an isolated environment for each tool — this repo
+# already has a project-local venv (see README.md "Backend local run"), and
+# reusing it keeps hook runs fast and avoids a second dependency-install path
+# to keep in sync with backend/pyproject.toml.
+#
+# The venv path in `entry` uses DOUBLED backslashes (backend\\.venv\\...) on
+# purpose. pre-commit runs `language: system` entries through shlex.split() in
+# POSIX mode regardless of OS, which treats a single backslash as an escape
+# character and silently drops it (turning the path into garbage). A forward-
+# slash path doesn't work either: pre-commit invokes the executable directly
+# via Python's subprocess (no shell), and Windows CreateProcess fails to
+# resolve a relative forward-slash executable path in that call form. Doubling
+# each backslash survives shlex's unescaping and leaves a real Windows path.
+# Verified directly against Python's subprocess module during Milestone 1
+# hardening — see BUILD_LOG.md.
+#
+# Kept deliberately fast: formatting/lint/type-check only, scoped to the half
+# of the repo that actually changed. Full test suites and production builds
+# stay in CI (.github/workflows/ci.yml), not in a hook that runs on every
+# commit.
+
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=2000"]
+      - id: detect-private-key
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+        exclude: ^web/tsconfig.*\.json$ # tsconfig files use JSONC (comments not standard JSON)
+
+  - repo: local
+    hooks:
+      - id: backend-ruff
+        name: backend / ruff check
+        language: system
+        entry: backend\\.venv\\Scripts\\python.exe -m ruff check backend
+        files: ^backend/.*\.py$
+        pass_filenames: false
+
+      - id: backend-black
+        name: backend / black --check
+        language: system
+        entry: backend\\.venv\\Scripts\\python.exe -m black --check backend
+        files: ^backend/.*\.py$
+        pass_filenames: false
+
+      - id: backend-mypy
+        name: backend / mypy
+        language: system
+        entry: backend\\.venv\\Scripts\\python.exe -m mypy backend/app
+        files: ^backend/app/.*\.py$
+        pass_filenames: false
+
+      - id: backend-pytest
+        name: backend / pytest (fast unit tests)
+        language: system
+        entry: backend\\.venv\\Scripts\\python.exe -m pytest -q
+        files: ^backend/(app|tests)/.*\.py$
+        pass_filenames: false
+
+      - id: frontend-eslint
+        name: frontend / eslint
+        language: system
+        entry: npm --prefix web run lint
+        files: ^web/.*\.(ts|tsx)$
+        pass_filenames: false
+
+      - id: frontend-prettier
+        name: frontend / prettier --check
+        language: system
+        entry: npm --prefix web run format:check
+        files: ^web/.*\.(ts|tsx|json|md)$
+        pass_filenames: false
+
+      - id: frontend-typecheck
+        name: frontend / tsc (type check)
+        language: system
+        entry: npm --prefix web run typecheck
+        files: ^web/.*\.(ts|tsx)$
+        pass_filenames: false

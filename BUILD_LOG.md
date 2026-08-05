@@ -404,3 +404,202 @@ a clear message if `DATABASE_URL` is missing rather than silently returning `Non
 a fake session. This keeps Milestone 1's "backend starts successfully" claim honest:
 it starts successfully *because* nothing in this milestone requires the database yet,
 not because a failure was hidden.
+
+---
+
+## 2026-08-05 — Milestone 1 Hardening
+
+**Summary**
+
+Process/tooling/documentation hardening on top of the already-approved Milestone 1
+foundation — explicitly **not** Milestone 2 work. No models, providers, business
+features, SEC integrations, Credit Universe functionality, AI functionality, or
+database tables were touched. Scope: rename the default branch to `main`, add
+`CLAUDE.md` as Claude Code's permanent operating guide, add fast local pre-commit
+checks, add a real `README.md`, add GitHub issue/PR templates, re-verify the entire
+Milestone 1 check suite, update governance docs, and connect + push to the GitHub
+remote.
+
+**Features Completed**
+
+- Renamed the local default branch from `master` to `main`; confirmed no leftover
+  `master` references anywhere in the repo outside of `PLAN.md`'s own status table
+  (which was updated).
+- Added `CLAUDE.md`: Project Purpose, Authoritative Documents, Approved Stack (with
+  explicit prohibitions), Architecture Boundaries, Provenance and Entitlement Rules,
+  Coding Standards, Testing Rules, Milestone Workflow, Architecture Change Policy,
+  Git Safety Rules, and Current Project State.
+- Added `.pre-commit-config.yaml`: standard hygiene hooks (trailing whitespace,
+  end-of-file, merge-conflict markers, large files, private keys, YAML/TOML/JSON
+  validity) plus local hooks calling the already-installed backend venv tools
+  (Ruff, Black, MyPy, a fast Pytest run) and frontend npm scripts (ESLint, Prettier
+  check, `tsc` type check) — each scoped by `files:` regex so a docs-only commit
+  doesn't pay for backend/frontend checks it doesn't need. Installed the git hook
+  (`pre-commit install`) and ran `pre-commit run --all-files` clean.
+- Added a `typecheck` script to `web/package.json` (`tsc -b`) so the pre-commit
+  frontend type-check hook and any future CI step invoke type-checking the same way
+  `npm run lint`/`format:check` already do, rather than a one-off `npm exec` form
+  that resolved paths incorrectly (see Problems Encountered).
+- Added `pre-commit` to `backend/pyproject.toml`'s `dev` extra so it installs via the
+  same `pip install -e ".[dev]"` step as the rest of the dev toolchain.
+- Added `README.md`: product description, project status (linking to `PLAN.md` as
+  the authoritative live source rather than duplicating it), architecture diagram,
+  stack, repository structure, prerequisites, environment setup, backend/frontend
+  local run instructions, all check commands, pre-commit usage, Supabase/Railway/
+  Vercel deployment overviews (explicitly marked not-yet-deployed where true),
+  data-source and synthetic-data policy, security/provenance principles, roadmap
+  summary, and links to the other three governance documents.
+- Added GitHub templates: `bug_report.md`, `feature_request.md`,
+  `architecture_change.md` (the latter mirroring `CLAUDE.md`'s Architecture Change
+  Policy — context, proposed change, alternatives, tradeoffs, `PLAN.md` impact, ADR
+  requirement, migration implications, approval status), and
+  `pull_request_template.md` (with explicit provenance/entitlement and architecture
+  checklists, not just generic PR boilerplate).
+- Re-ran the full Milestone 1 verification suite after all of the above (see Test
+  Results) to confirm nothing regressed.
+- Checked GitHub remote state before touching it: `git remote -v` showed no `origin`;
+  `git ls-remote https://github.com/kirantoday/nexus-credit-intelligence.git`
+  returned exit code 0 with zero refs, confirming the target repository exists and
+  is empty — safe to add as `origin` and push without any merge/rebase/force
+  decision required.
+
+**Files Created**
+
+`CLAUDE.md`, `README.md`, `.pre-commit-config.yaml`,
+`.github/ISSUE_TEMPLATE/bug_report.md`, `.github/ISSUE_TEMPLATE/feature_request.md`,
+`.github/ISSUE_TEMPLATE/architecture_change.md`, `.github/pull_request_template.md`.
+
+**Files Modified**
+
+`PLAN.md` (branch `main`, Milestone 1 row marked "Complete (+ hardening)", Current
+Status narrative, latest-commit reference), `backend/pyproject.toml` (added
+`pre-commit` to the `dev` extra), `web/package.json` (added `typecheck` script).
+
+**Database Changes**
+
+None.
+
+**API Endpoints Added**
+
+None.
+
+**Frontend Pages Added**
+
+None.
+
+**Environment Variables Added**
+
+None.
+
+**Tests Added**
+
+None (no new application logic — hardening is tooling/process/docs only). Existing
+backend test suite (2 tests) re-verified passing.
+
+**Test Results**
+
+```
+backend: pytest -v            -> 2 passed
+backend: ruff check .         -> All checks passed!
+backend: black --check .      -> 15 files would be left unchanged.
+backend: mypy app             -> Success: no issues found in 10 source files
+
+frontend: npm run lint        -> clean
+frontend: npm run typecheck   -> clean (tsc -b)
+frontend: npm run format:check -> All matched files use Prettier code style!
+frontend: npm run build       -> succeeded (dist/assets bundle 428.68 kB / gzip 136.05 kB)
+frontend: npm audit           -> found 0 vulnerabilities
+
+pre-commit run --all-files    -> all 15 hooks passed
+```
+
+**Commands Executed** (representative)
+
+```
+git branch -m master main
+
+python -m pip install pre-commit   (into backend/.venv)
+pre-commit install
+pre-commit run --all-files
+
+pytest -v / ruff check . / black --check . / mypy app
+uvicorn app.main:app --host 127.0.0.1 --port 8010   (manual boot check, then killed)
+
+npm run lint / npm run typecheck / npm run format:check / npm run build / npm audit
+npm run dev                                          (manual boot check, then killed)
+
+git status ; git branch --show-current ; git remote -v
+git ls-remote https://github.com/kirantoday/nexus-credit-intelligence.git
+git remote add origin https://github.com/kirantoday/nexus-credit-intelligence.git
+git add -A ; git commit ...
+git push -u origin main
+```
+
+**Deployment Validation**
+
+Not exercised — still out of scope until Milestone 15. This entry only connects the
+local repository to its GitHub remote; it does not deploy anything to Railway or
+Vercel.
+
+**Problems Encountered**
+
+- The `frontend-typecheck` pre-commit hook, written as
+  `npm --prefix web exec tsc -- -b --noEmit`, resolved `tsconfig.json` against the
+  repository root instead of `web/` (`error TS5083: Cannot read file
+  '.../tsconfig.json'`) — `npm --prefix ... exec` does not change the effective
+  working directory for the underlying command the way `npm --prefix ... run` does.
+  Fixed by adding a real `typecheck` script to `web/package.json` and invoking it
+  via `npm --prefix web run typecheck`, matching the pattern that already worked for
+  `lint`/`format:check`.
+- The backend pre-commit hooks (`backend-ruff`, `backend-black`, `backend-mypy`,
+  `backend-pytest`) initially failed with `[WinError 2] The system cannot find the
+  file specified` when the `entry` used a forward-slash path
+  (`backend/.venv/Scripts/python.exe`) — reproduced directly against Python's
+  `subprocess` module: Windows `CreateProcess` does not resolve that relative,
+  forward-slash executable path in the no-shell invocation form pre-commit uses.
+  Switching to a single-backslash Windows path
+  (`backend\.venv\Scripts\python.exe`) then failed differently — `Executable
+  'backend.venvScriptspython.exe' not found` — because pre-commit parses `entry`
+  with `shlex.split()` in POSIX mode regardless of host OS, and POSIX shlex treats
+  a single backslash as an escape character and drops it. Resolved by **doubling**
+  every backslash in the YAML (`backend\\.venv\\Scripts\\python.exe`), verified by
+  directly testing `shlex.split()` against both forms before settling on the fix.
+  Documented inline in `.pre-commit-config.yaml` so this isn't rediscovered the
+  hard way later.
+
+**Solutions**
+
+See above — both problems were root-caused by directly reproducing the failing
+subprocess call outside of pre-commit/npm before changing the config, rather than
+guessing at a fix.
+
+**Remaining Work**
+
+- KI-001 (unchanged): real Supabase dev-project credentials still needed to verify
+  `alembic upgrade head` and `pgvector`/`pg_trgm` extension creation against a live
+  database.
+- Everything in Milestone 2 onward per `PLAN.md` § Milestone Status — unstarted, as
+  required by this hardening pass's scope constraint.
+
+**Git Commit Hash**
+
+`__PENDING__` — filled in immediately after the hardening commit is created (see the
+commit that follows this entry; both were written and pushed together).
+
+**GitHub Remote and Push Results**
+
+`__PENDING__` — filled in after `git push -u origin main` completes; see the note in
+`PLAN.md` § Project Status and the completion report delivered alongside this entry.
+
+**Approximate Time Spent**
+
+Single focused hardening session, following directly after Milestone 1.
+
+**Developer Notes**
+
+Kept pre-commit deliberately fast (formatting/lint/type-check + a small existing test
+suite) and left full builds and the complete test matrix in CI, per instruction — as
+the backend test suite grows past "fast," the `backend-pytest` hook should be
+narrowed (e.g. to a marked `-m fast` subset) or removed from pre-commit rather than
+left to slow down every commit; that tradeoff call belongs to whoever notices it
+first getting slow, not a preemptive guess made here.
