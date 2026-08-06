@@ -21,6 +21,7 @@ import { MarketContextPanel } from "../components/MarketContextPanel";
 import { ProvenanceBadge } from "../components/ProvenanceBadge";
 import { SyntheticDataBadge } from "../components/SyntheticDataBadge";
 import { useCreditUniverse } from "../queries/useCreditUniverse";
+import { useResearchUniverse } from "../queries/useResearchUniverses";
 import type {
   CreditUniverseRow,
   CreditUniverseSortField,
@@ -56,6 +57,7 @@ export function CreditUniversePage(): ReactElement {
 
   const instrumentType = (searchParams.get("type") as InstrumentType | null) ?? undefined;
   const syntheticFilter = searchParams.get("synthetic") as "all" | "real" | "synthetic" | null;
+  const universeId = searchParams.get("universe") ?? undefined;
   const page = Number(searchParams.get("page") ?? "1");
   const pageSize = Number(searchParams.get("pageSize") ?? "25");
   const sortByParam = searchParams.get("sortBy");
@@ -65,6 +67,10 @@ export function CreditUniversePage(): ReactElement {
 
   const isSynthetic =
     syntheticFilter === "real" ? false : syntheticFilter === "synthetic" ? true : undefined;
+
+  // Milestone 6.5 (PLAN.md 24.9): clicking a Research Universe opens Credit
+  // Universe pre-filtered to it via this `universe` URL param.
+  const universeQuery = useResearchUniverse(universeId);
 
   function updateParams(updates: Record<string, string | null>): void {
     const next = new URLSearchParams(searchParams);
@@ -100,6 +106,7 @@ export function CreditUniversePage(): ReactElement {
     search: debouncedSearch || undefined,
     instrumentType,
     isSynthetic,
+    universeId,
     sortBy,
     sortDir,
     page,
@@ -254,6 +261,16 @@ export function CreditUniversePage(): ReactElement {
       </Box>
 
       <MarketContextPanel />
+
+      {universeId && (
+        <Chip
+          label={`Universe: ${universeQuery.data?.name ?? "…"}`}
+          onDelete={() => updateParams({ universe: null, page: "1" })}
+          color="primary"
+          variant="outlined"
+          sx={{ alignSelf: "flex-start" }}
+        />
+      )}
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ sm: "center" }}>

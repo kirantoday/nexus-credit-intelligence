@@ -8,10 +8,24 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.core.freshness import FreshnessTier
-from app.core.types import InstrumentType, ProviderName
+from app.core.types import (
+    CollectionScope,
+    CollectionType,
+    CollectionVisibility,
+    CurationMethod,
+    InstrumentType,
+    ProviderName,
+    VerificationStatus,
+)
+from app.domain.collection import CollectionCreate, CollectionMembershipCreate
 from app.domain.issuer import IssuerCreate
 from app.domain.security import SecurityCreate
-from app.repositories import issuer_repository, provenance_repository, security_repository
+from app.repositories import (
+    collection_repository,
+    issuer_repository,
+    provenance_repository,
+    security_repository,
+)
 from app.services import credit_universe_service
 from tests.integration.conftest import reported_public_provenance
 
@@ -74,6 +88,56 @@ def test_get_credit_universe_page_empty_search_returns_empty_page(db_session: Se
 
     assert page.total == 0
     assert page.rows == []
+
+
+def test_get_credit_universe_page_filters_by_universe(db_session: Session) -> None:
+    """Milestone 6.5 (PLAN.md 24.9) — clicking a Research Universe opens
+    Credit Universe pre-filtered to it."""
+    provenance = provenance_repository.create_provenance(db_session, reported_public_provenance())
+    in_universe_issuer = issuer_repository.create_issuer(
+        db_session,
+        IssuerCreate(legal_name="Universe Filter Test Issuer In", provenance_id=provenance.id),
+    )
+    _seed_one_security(db_session, legal_name="Universe Filter Test Issuer Out")
+
+    collection = collection_repository.create_collection(
+        db_session,
+        CollectionCreate(
+            slug="test-credit-universe-filter",
+            name="Test Credit Universe Filter",
+            description="Seeded for a credit_universe_service test.",
+            collection_type=CollectionType.RESEARCH_UNIVERSE,
+            scope=CollectionScope.ORGANIZATION,
+            visibility=CollectionVisibility.PUBLIC,
+            curation_method=CurationMethod.SYSTEM_SEEDED,
+            verification_status=VerificationStatus.VERIFIED,
+        ),
+    )
+    security_repository.create_security(
+        db_session,
+        SecurityCreate(
+            issuer_id=in_universe_issuer.id,
+            instrument_type=InstrumentType.BOND,
+            description="Universe Filter Test Issuer In — Test Bond",
+            maturity_date=date(2030, 1, 1),
+            amount_outstanding=Decimal("500000000"),
+            provenance_id=provenance.id,
+        ),
+    )
+    collection_repository.add_membership(
+        db_session,
+        CollectionMembershipCreate(
+            collection_id=collection.id,
+            issuer_id=in_universe_issuer.id,
+            rationale="Test membership.",
+            verification_status=VerificationStatus.VERIFIED,
+        ),
+    )
+
+    page = credit_universe_service.get_credit_universe_page(db_session, universe_id=collection.id)
+
+    assert page.total == 1
+    assert page.rows[0].issuer_legal_name == "Universe Filter Test Issuer In"
 
 
 def test_sofr_benchmarked_row_gets_a_real_benchmark_rate(db_session: Session) -> None:

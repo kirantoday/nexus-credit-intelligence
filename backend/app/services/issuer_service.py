@@ -36,6 +36,7 @@ from app.schemas.issuer import (
     IssuerFinancialFactRow,
     IssuerSecurityRow,
 )
+from app.services import research_universe_service
 
 _RECENT_ACTIVITY_LIMIT = 15
 
@@ -193,6 +194,8 @@ def get_issuer_detail(db: Session, issuer_id: UUID) -> IssuerDetail | None:
         for provider, count in sorted(source_counts.items(), key=lambda kv: kv[0].value)
     ]
 
+    universe_memberships = research_universe_service.get_issuer_universe_memberships(db, issuer_id)
+
     return IssuerDetail(
         issuer_id=issuer.id,
         legal_name=issuer.legal_name,
@@ -207,4 +210,5 @@ def get_issuer_detail(db: Session, issuer_id: UUID) -> IssuerDetail | None:
         financial_facts=financial_fact_rows,
         data_sources=data_sources,
         recent_activity=activity[:_RECENT_ACTIVITY_LIMIT],
+        universe_memberships=universe_memberships,
     )

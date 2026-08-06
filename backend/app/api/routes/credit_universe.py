@@ -8,6 +8,7 @@ access here.
 from __future__ import annotations
 
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -27,6 +28,7 @@ def get_credit_universe(
     instrument_type: InstrumentType | None = None,
     is_synthetic: bool | None = None,
     search: Annotated[str | None, Query(max_length=200)] = None,
+    universe_id: UUID | None = None,
     sort_by: SortField = "legal_name",
     sort_dir: SortDirection = "asc",
     page: Annotated[int, Query(ge=1)] = 1,
@@ -37,6 +39,7 @@ def get_credit_universe(
         instrument_type=instrument_type,
         is_synthetic=is_synthetic,
         search=search,
+        universe_id=universe_id,
         sort_by=sort_by,
         sort_dir=sort_dir,
         page=page,

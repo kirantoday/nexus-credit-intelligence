@@ -7,6 +7,7 @@ import type {
   Seniority,
   TransformationType,
 } from "./creditUniverse";
+import type { IssuerUniverseMembership } from "./researchUniverse";
 
 /**
  * One row of `IssuerDetail.securities` (backend/app/schemas/issuer.py).
@@ -88,6 +89,11 @@ export interface IssuerDetail {
   financial_facts: IssuerFinancialFactRow[];
   data_sources: IssuerDataSource[];
   recent_activity: IssuerActivityItem[];
+  /** Milestone 6.5 (PLAN.md 24.9) — curated Research Universe/Watchlist/
+   * Benchmark membership, clearly separate from the factual-status fields
+   * above: membership is a coverage decision, never a current-status
+   * assertion (PLAN.md 24.1). */
+  universe_memberships: IssuerUniverseMembership[];
 }
 
 export async function fetchIssuerDetail(issuerId: string): Promise<IssuerDetail> {

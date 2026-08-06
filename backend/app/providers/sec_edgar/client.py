@@ -13,6 +13,12 @@ from app.providers.sec_edgar.dto import SecCompanyFactsDTO, SecSubmissionsDTO
 
 _SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
 _COMPANY_FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik10}.json"
+# Archives (filing document) URLs use the *unpadded* numeric CIK, unlike
+# data.sec.gov's zero-padded CIK10 — a real, easy-to-miss inconsistency
+# between SEC's two URL families.
+_ARCHIVES_DOCUMENT_URL = (
+    "https://www.sec.gov/Archives/edgar/data/{cik}/{accession_nodash}/{primary_document}"
+)
 
 _DtoT = TypeVar("_DtoT")
 
@@ -25,6 +31,18 @@ def format_cik10(cik: int | str) -> str:
 @dataclass(frozen=True, slots=True)
 class FetchResult(Generic[_DtoT]):
     dto: _DtoT
+    raw_bytes: bytes
+    content_type: str
+    url: str
+    retrieved_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class FilingDocumentFetchResult:
+    """A fetched filing document's raw bytes — no DTO, since this is an HTML/
+    text document, not a JSON API response `FetchResult[_DtoT]` is shaped for.
+    """
+
     raw_bytes: bytes
     content_type: str
     url: str
@@ -58,6 +76,26 @@ class SecEdgarClient:
         dto = SecCompanyFactsDTO.model_validate(json.loads(response.raw_bytes, parse_float=Decimal))
         return FetchResult(
             dto=dto,
+            raw_bytes=response.raw_bytes,
+            content_type=response.content_type,
+            url=url,
+            retrieved_at=retrieved_at,
+        )
+
+    def fetch_filing_document(
+        self, cik10: str, accession_no: str, primary_document: str
+    ) -> FilingDocumentFetchResult:
+        """Fetch a filing's primary document (the actual 8-K/10-Q/etc. body)
+        for text extraction (PLAN.md 24.4's deterministic rule matching).
+        """
+        cik_unpadded = str(int(cik10))
+        accession_nodash = accession_no.replace("-", "")
+        url = _ARCHIVES_DOCUMENT_URL.format(
+            cik=cik_unpadded, accession_nodash=accession_nodash, primary_document=primary_document
+        )
+        response = self._http.get(url)
+        retrieved_at = datetime.now(UTC)
+        return FilingDocumentFetchResult(
             raw_bytes=response.raw_bytes,
             content_type=response.content_type,
             url=url,

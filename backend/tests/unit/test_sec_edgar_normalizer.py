@@ -19,7 +19,13 @@ import pytest
 from app.core.types import DataClassification, FormType, ProviderName, TransformationType
 from app.providers.sec_edgar import normalizer
 from app.providers.sec_edgar.client import format_cik10
-from app.providers.sec_edgar.dto import SecCompanyFactsDTO, SecSubmissionsDTO, SecXbrlUnitDatapoint
+from app.providers.sec_edgar.dto import (
+    SecCompanyFactsDTO,
+    SecFilingEntryDTO,
+    SecSubmissionsDTO,
+    SecXbrlUnitDatapoint,
+    recent_filing_entries,
+)
 from app.providers.sec_edgar.provider import _select_most_recent_datapoint
 
 _FIXTURES = Path(__file__).parent.parent / "fixtures" / "sec_edgar"
@@ -201,3 +207,112 @@ def test_normalize_financial_fact_rejects_missing_fiscal_metadata() -> None:
         normalizer.normalize_financial_fact(
             datapoint, issuer_id=uuid4(), concept="x", unit="USD", provenance_id=uuid4()
         )
+
+
+# --- Milestone 6.5: filings.recent parsing / sec_filing normalization ---
+
+
+def test_submissions_dto_parses_real_filings_recent(submissions_dto: SecSubmissionsDTO) -> None:
+    """Genuine trimmed SEC data: a 10-Q, an 8-K with real Item 2.02/9.01
+    codes, and a Form 4 — proves the parallel-array shape parses, including
+    the `items` field this milestone's rule engine depends on."""
+    recent = submissions_dto.filings.recent
+    assert recent.accessionNumber == [
+        "0000320193-26-000020",
+        "0000320193-26-000018",
+        "0001140361-26-025622",
+    ]
+    assert recent.form == ["10-Q", "8-K", "4"]
+    assert recent.items == ["", "2.02,9.01", ""]
+
+
+def test_recent_filing_entries_zips_parallel_arrays(submissions_dto: SecSubmissionsDTO) -> None:
+    entries = recent_filing_entries(submissions_dto)
+
+    assert len(entries) == 3
+    ten_q, eight_k, form_4 = entries
+    assert ten_q.accession_no == "0000320193-26-000020"
+    assert ten_q.form == "10-Q"
+    assert ten_q.items is None, "empty items string must normalize to None, not ''"
+    assert eight_k.form == "8-K"
+    assert eight_k.items == "2.02,9.01"
+    assert eight_k.primary_document == "aapl-20260730.htm"
+    assert form_4.form == "4"
+
+
+def test_recent_filing_entries_empty_filings_returns_empty_list() -> None:
+    dto = SecSubmissionsDTO(cik="0000320193", name="Apple Inc.")
+    assert recent_filing_entries(dto) == []
+
+
+def test_normalize_sec_filing_maps_real_entry(submissions_dto: SecSubmissionsDTO) -> None:
+    entry = recent_filing_entries(submissions_dto)[1]  # the 8-K
+    issuer_id = uuid4()
+    provenance_id = uuid4()
+
+    filing = normalizer.normalize_sec_filing(
+        entry,
+        issuer_id=issuer_id,
+        primary_document_url="https://www.sec.gov/Archives/edgar/data/320193/x/aapl-20260730.htm",
+        provenance_id=provenance_id,
+    )
+
+    assert filing.issuer_id == issuer_id
+    assert filing.accession_no == "0000320193-26-000018"
+    assert filing.form_type == "8-K"
+    assert filing.filing_date.isoformat() == "2026-07-30"
+    assert filing.is_amendment is False
+    assert filing.provenance_id == provenance_id
+
+
+def test_normalize_sec_filing_detects_amendment() -> None:
+    entry = SecFilingEntryDTO(
+        accession_no="0000320193-26-000099",
+        filing_date="2026-08-01",
+        report_date=None,
+        form="10-K/A",
+        items=None,
+        primary_document="aapl-20260801.htm",
+    )
+
+    filing = normalizer.normalize_sec_filing(
+        entry, issuer_id=uuid4(), primary_document_url=None, provenance_id=uuid4()
+    )
+
+    assert filing.is_amendment is True
+    assert filing.form_type == "10-K/A", "exact form type is preserved, never collapsed to 10-K"
+
+
+def test_normalize_sec_filing_provenance_is_public_reported(
+    submissions_dto: SecSubmissionsDTO,
+) -> None:
+    entry = recent_filing_entries(submissions_dto)[1]
+    retrieved_at = datetime.now(UTC)
+
+    provenance = normalizer.normalize_sec_filing_provenance(
+        entry,
+        source_url="https://data.sec.gov/submissions/CIK0000320193.json",
+        retrieved_at=retrieved_at,
+        raw_payload_id=uuid4(),
+    )
+
+    assert provenance.provider is ProviderName.SEC_EDGAR
+    assert provenance.classification is DataClassification.PUBLIC
+    assert provenance.transformation is TransformationType.REPORTED
+    assert provenance.source_record_id == "0000320193-26-000018"
+    assert provenance.as_of_date.isoformat() == "2026-07-30"
+
+
+def test_extract_filing_text_strips_tags_and_scripts() -> None:
+    html = (
+        "<html><head><style>.x{color:red}</style></head>"
+        "<body><h1>Item 1.03</h1><p>Bankruptcy Petition</p>"
+        "<script>var x = 1;</script></body></html>"
+    )
+
+    text = normalizer.extract_filing_text(html)
+
+    assert "Item 1.03" in text
+    assert "Bankruptcy Petition" in text
+    assert "color:red" not in text
+    assert "var x = 1" not in text

@@ -7,6 +7,8 @@ PLAN.md section 17's `services/` layer.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -52,6 +54,7 @@ def get_credit_universe_page(
     instrument_type: InstrumentType | None = None,
     is_synthetic: bool | None = None,
     search: str | None = None,
+    universe_id: UUID | None = None,
     sort_by: SortField = "legal_name",
     sort_dir: SortDirection = "asc",
     page: int = 1,
@@ -62,6 +65,7 @@ def get_credit_universe_page(
         instrument_type=instrument_type,
         is_synthetic=is_synthetic,
         search=search,
+        universe_id=universe_id,
         sort_by=sort_by,
         sort_dir=sort_dir,
         page=page,

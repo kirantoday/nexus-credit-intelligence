@@ -29,6 +29,7 @@ from app.core.types import (
     Seniority,
     TransformationType,
 )
+from app.schemas.research_universe import IssuerUniverseMembership
 
 
 class IssuerSecurityRow(BaseModel):
@@ -125,3 +126,8 @@ class IssuerDetail(BaseModel):
     financial_facts: list[IssuerFinancialFactRow]
     data_sources: list[IssuerDataSource]
     recent_activity: list[IssuerActivityItem]
+    # Milestone 6.5 (PLAN.md 24.9) — curated Research Universe/Watchlist/
+    # Benchmark membership, clearly separate from the factual-status
+    # sections above: membership is a coverage decision, never itself a
+    # current-status assertion (PLAN.md 24.1).
+    universe_memberships: list[IssuerUniverseMembership]

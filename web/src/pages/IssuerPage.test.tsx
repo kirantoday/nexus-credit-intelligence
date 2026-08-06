@@ -43,6 +43,7 @@ const BASE_ISSUER: IssuerDetail = {
     { provider: "synthetic", record_count: 9, latest_retrieved_at: "2026-08-06T12:00:00Z" },
   ],
   recent_activity: [],
+  universe_memberships: [],
 };
 
 const EMPTY_CAPITAL_STRUCTURE: CapitalStructureResponse = {

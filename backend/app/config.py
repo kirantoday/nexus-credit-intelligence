@@ -55,9 +55,22 @@ class Settings(BaseSettings):
     bloomberg_enabled: bool = False
     lseg_lpc_enabled: bool = False
 
-    # AI / LLM gate
+    # AI / LLM gate (Milestone 6.5, PLAN.md section 24.7). Provider-specific
+    # credentials, never a shared generic secret — `app/ai/factory.py` reads
+    # llm_provider and validates only that provider's own fields, so an
+    # unconfigured OPENAI_API_KEY never blocks booting with LLM_PROVIDER=anthropic
+    # and a provider is never silently substituted for another.
     llm_provider: str = "anthropic"
-    llm_api_key: str | None = None
+    anthropic_api_key: str | None = None
+    anthropic_model: str = "claude-sonnet-5"
+    openai_api_key: str | None = None
+    openai_model: str | None = None
+    azure_openai_api_key: str | None = None
+    azure_openai_endpoint: str | None = None
+    azure_openai_model: str | None = None
+    # Reserved, unused until a future milestone implements embeddings — chat/
+    # tool-calling and embeddings may end up sourced from different vendors.
+    embedding_provider: str | None = None
 
     # Auth (disabled for first demo; architecture supports Supabase Auth JWT later)
     auth_enabled: bool = False

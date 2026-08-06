@@ -22,6 +22,7 @@ from app.core.types import (
     TransformationType,
 )
 from app.domain.security import Security, SecurityCreate
+from app.models.collection import CollectionMembership as CollectionMembershipModel
 from app.models.issuer import Issuer as IssuerModel
 from app.models.provenance import Provenance as ProvenanceModel
 from app.models.security import Security as SecurityModel
@@ -131,6 +132,7 @@ def list_credit_universe(
     instrument_type: InstrumentType | None = None,
     is_synthetic: bool | None = None,
     search: str | None = None,
+    universe_id: UUID | None = None,
     sort_by: SortField = "legal_name",
     sort_dir: SortDirection = "asc",
     page: int = 1,
@@ -141,6 +143,10 @@ def list_credit_universe(
     (PLAN.md section 5) — built to scale to thousands of rows, not just the
     small Milestone 4 seed set. Returns (this page of rows, total matching
     row count).
+
+    `universe_id` (Milestone 6.5, PLAN.md 24.9) filters to issuers that are
+    members of the given Research Universe/Watchlist/Benchmark collection —
+    "clicking a universe opens Credit Universe with that filter applied."
     """
     base_stmt = (
         select(SecurityModel, IssuerModel, ProvenanceModel)
@@ -156,6 +162,14 @@ def list_credit_universe(
         pattern = f"%{search}%"
         base_stmt = base_stmt.where(
             IssuerModel.legal_name.ilike(pattern) | SecurityModel.description.ilike(pattern)
+        )
+    if universe_id is not None:
+        base_stmt = base_stmt.where(
+            IssuerModel.id.in_(
+                select(CollectionMembershipModel.issuer_id).where(
+                    CollectionMembershipModel.collection_id == universe_id
+                )
+            )
         )
 
     total = db.execute(select(func.count()).select_from(base_stmt.subquery())).scalar_one()

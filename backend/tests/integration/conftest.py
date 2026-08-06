@@ -16,6 +16,8 @@ import pytest
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.ai.factory import LLMConfigurationError, get_llm_provider
+from app.ai.providers.base import LLMProvider
 from app.config import get_settings
 from app.core.types import DataClassification, ProviderName, TransformationType
 from app.db.base import NEXUS_SCHEMA
@@ -50,7 +52,18 @@ def db_engine() -> Iterator[Engine]:
 def db_session(db_engine: Engine) -> Iterator[Session]:
     connection = db_engine.connect()
     transaction = connection.begin()
-    session_factory = sessionmaker(bind=connection, autoflush=False)
+    # `join_transaction_mode="create_savepoint"` (SQLAlchemy's documented
+    # recipe for test suites — see "Joining a Session into an External
+    # Transaction") lets code under test call `session.commit()` (Milestone
+    # 6.5's `filing_monitor_service`, which manages its own per-issuer commit
+    # boundaries) without ending the outer transaction: each commit
+    # releases/reopens a SAVEPOINT instead, so the final rollback below still
+    # discards everything. Every pre-existing test here never calls
+    # commit() itself (this project's flush-not-commit repository
+    # convention), so this is purely additive — no change to their behavior.
+    session_factory = sessionmaker(
+        bind=connection, autoflush=False, join_transaction_mode="create_savepoint"
+    )
     session = session_factory()
     try:
         yield session
@@ -128,6 +141,18 @@ def fred_api_key() -> str:
     if not settings.fred_api_key:
         pytest.skip("FRED_API_KEY not configured; skipping live FRED test")
     return settings.fred_api_key
+
+
+@pytest.fixture
+def live_llm_provider() -> LLMProvider:
+    """A real `LLMProvider` for live Anthropic calls (Milestone 6.5, PLAN.md
+    24.7), skipped gracefully if `ANTHROPIC_API_KEY`/`LLM_PROVIDER` isn't
+    configured — same gating pattern as `sec_http_client`."""
+    settings = get_settings()
+    try:
+        return get_llm_provider(settings)
+    except LLMConfigurationError:
+        pytest.skip("LLM provider not configured; skipping live AI evidence-review test")
 
 
 def reported_public_provenance(**overrides: object) -> ProvenanceCreate:

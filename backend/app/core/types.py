@@ -135,3 +135,178 @@ class CapitalStructureInstrumentType(StrEnum):
     SUBORDINATED = "subordinated"
     PREFERRED_EQUITY = "preferred_equity"
     COMMON_EQUITY = "common_equity"
+
+
+# --- Milestone 6.5: Research Universes + Overnight Distress Filing Monitor ---
+
+
+class CollectionType(StrEnum):
+    """`collection.collection_type` (PLAN.md 24.1).
+
+    Research Universes and Watchlists are distinct, coexisting product
+    concepts that share one generalized table (ADR-016) rather than a
+    dedicated `watchlist` table. `benchmark` is its own type (not just a
+    research_universe with a flag) so the Investment Grade Benchmarks group
+    can be queried and rendered as visually separate by construction.
+    """
+
+    RESEARCH_UNIVERSE = "research_universe"
+    WATCHLIST = "watchlist"
+    BENCHMARK = "benchmark"
+
+
+class CollectionScope(StrEnum):
+    """`collection.scope` (PLAN.md 24.1)."""
+
+    ORGANIZATION = "organization"
+    PERSONAL = "personal"
+    TEAM = "team"
+
+
+class CollectionVisibility(StrEnum):
+    """`collection.visibility` (PLAN.md 24.1)."""
+
+    PUBLIC = "public"
+    PRIVATE = "private"
+    TEAM = "team"
+
+
+class CurationMethod(StrEnum):
+    """`collection.curation_method` (PLAN.md 24.1)."""
+
+    MANUAL_CURATED = "manual_curated"
+    SYSTEM_SEEDED = "system_seeded"
+    USER_CREATED = "user_created"
+
+
+class VerificationStatus(StrEnum):
+    """`collection.verification_status` / `collection_membership.verification_status`."""
+
+    VERIFIED = "verified"
+    PARTIAL = "partial"
+    UNVERIFIED = "unverified"
+
+
+class CollectionPriority(StrEnum):
+    """`collection.priority` (PLAN.md 24.1) — reserved for future Morning Research
+
+    Brief prioritization; not used for sorting logic in Milestone 6.5.
+    """
+
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class EvidenceType(StrEnum):
+    """`research_evidence.evidence_type` (PLAN.md 24.3).
+
+    Distress-signal values populated by this milestone's SEC filing monitor.
+    The table/column are provider-agnostic (ADR-018); this allowed-value set
+    grows via an ordinary migration when a future evidence type is needed,
+    exactly how `ProviderName` already grows.
+    """
+
+    BANKRUPTCY_OR_RECEIVERSHIP = "bankruptcy_or_receivership"
+    CHAPTER_11 = "chapter_11"
+    CHAPTER_7 = "chapter_7"
+    DEFAULT_OR_MISSED_PAYMENT = "default_or_missed_payment"
+    COVENANT_BREACH = "covenant_breach"
+    DEBT_ACCELERATION = "debt_acceleration"
+    GOING_CONCERN = "going_concern"
+    SUBSTANTIAL_DOUBT = "substantial_doubt"
+    LIQUIDITY_WARNING = "liquidity_warning"
+    RESTRUCTURING_ADVISOR = "restructuring_advisor"
+    RESTRUCTURING_SUPPORT_AGREEMENT = "restructuring_support_agreement"
+    EXCHANGE_OFFER = "exchange_offer"
+    LIABILITY_MANAGEMENT_TRANSACTION = "liability_management_transaction"
+    DEBT_AMENDMENT = "debt_amendment"
+    MATURITY_EXTENSION = "maturity_extension"
+    REFINANCING = "refinancing"
+    DIP_FINANCING = "dip_financing"
+    EMERGENCY_FINANCING = "emergency_financing"
+    MATERIAL_ASSET_SALE = "material_asset_sale"
+    DELISTING_NOTICE = "delisting_notice"
+    WORKFORCE_REDUCTION = "workforce_reduction"
+    FACILITY_CLOSURE = "facility_closure"
+    MATERIAL_IMPAIRMENT = "material_impairment"
+    AUDITOR_RESIGNATION = "auditor_resignation"
+    ADVERSE_AUDIT_DEVELOPMENT = "adverse_audit_development"
+    STRATEGIC_ALTERNATIVES = "strategic_alternatives"
+
+
+class EvidenceSeverity(StrEnum):
+    """`research_evidence.severity` / `alert_event.severity`."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class DetectionMethod(StrEnum):
+    """`research_evidence.detection_method` / `alert_event.detection_method`."""
+
+    DETERMINISTIC = "deterministic"
+    AI_ASSISTED = "ai_assisted"
+
+
+class ReviewStatus(StrEnum):
+    """`research_evidence.review_status`."""
+
+    UNREVIEWED = "unreviewed"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+
+
+class AlertStatus(StrEnum):
+    """`alert_event.status` (PLAN.md 24.3).
+
+    Only these three values are implemented and populated in Milestone 6.5.
+    Stored as text+CHECK (not a native enum) specifically so a future
+    milestone can extend the allowed set to the full
+    new -> acknowledged -> investigating -> resolved -> false_positive
+    lifecycle via an ordinary migration, without a redesign.
+    """
+
+    NEW = "new"
+    ACKNOWLEDGED = "acknowledged"
+    DISMISSED = "dismissed"
+
+
+class FilingMonitorRunStatus(StrEnum):
+    """`filing_monitor_run.status` (PLAN.md 24.5)."""
+
+    RUNNING = "running"
+    SUCCESS = "success"
+    COMPLETED_WITH_ERRORS = "completed_with_errors"
+    FAILED = "failed"
+    BASELINE_ESTABLISHED = "baseline_established"
+
+
+class FilingMonitorRunMode(StrEnum):
+    """`filing_monitor_run.mode` (PLAN.md 24.5)."""
+
+    BASELINE = "baseline"
+    DELTA = "delta"
+    BACKFILL = "backfill"
+
+
+# SEC form types the overnight monitor watches (PLAN.md 24.5). Filtering
+# happens in the service layer, not a DB CHECK constraint — `sec_filing.form_type`
+# stays free text because real SEC amendment suffixes vary too much for a
+# fixed constraint to be worth the brittleness.
+MONITORED_FORM_TYPES: frozenset[str] = frozenset(
+    {
+        "8-K",
+        "8-K/A",
+        "10-Q",
+        "10-Q/A",
+        "10-K",
+        "10-K/A",
+        "6-K",
+        "6-K/A",
+        "20-F",
+        "20-F/A",
+    }
+)

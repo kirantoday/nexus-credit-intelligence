@@ -50,13 +50,13 @@ file beyond a pointer.
 
 | Field | Value |
 |---|---|
-| **Overall Progress** | ~38% — Milestone 6 of 16 complete |
-| **Current Milestone** | Milestone 6 — Issuer detail page + Capital Structure page/model (complete) |
-| **Current Status** | Milestone 6 is complete. The brief was to make Issuer Detail "the primary research workspace, not simply a detail screen," organized around how a distressed-credit analyst actually thinks about a company rather than around database tables — so `IssuerPage.tsx` is built as one workspace with sections answering exactly those questions ("what debt exists / where does it sit / what's secured or unsecured," "what filings support this," "what changed recently," "where did this information come from"), not a set of separate destinations. Capital Structure is a first-class **section embedded directly in Issuer Detail** rather than a separate top-level page reachable only after leaving it — a deliberate UI-organization call within the already-approved data model/API shape (§4.6, §7 unchanged), made because forcing a page hop to see "what debt exists" would contradict the brief's explicit instruction. `capital_structure_position` (§4.6) was added via migration `0006`, with a DB-level CHECK constraint (`ck_capstruct_position_recovery_requires_scenario`) enforcing §7's hard labeling rule at the schema layer, not just in the UI: `enterprise_value_coverage`/`illustrative_recovery` can never be set without `recovery_scenario` describing the assumption. Real, permanently-committed proof: a new fictional distressed issuer, Cobalt Ridge Energy Corp, was seeded with a genuine eight-layer stack (revolver → 1L TLB → 1L notes → 2L notes → senior unsecured → subordinated → preferred → common equity) and a real illustrative recovery waterfall against a stated $650M base-case Enterprise Value — the first real, multi-input caller of `calculation`/`calculation_input` (§4.2/4.3): each layer's recovery figure traces, via `calculation_input` rows, to every strictly-senior layer's own principal plus the shared EV assumption, not just a bare number with a footnote. The waterfall correctly shows full recovery for the first three (most senior) layers, a partial 77.14% recovery for the layer Enterprise Value runs out on (second lien), and 0% for everything junior to it — verified by unit tests on the pure waterfall function and integration tests on the persisted rows. The eight existing Milestone 4 leveraged-loan issuers each got their already-seeded loan tranche(s) turned into reported (non-scenario) `capital_structure_position` rows. Real issuers (Apple Inc.) deliberately get **no** `capital_structure_position` rows this milestone: neither SEC EDGAR's company-facts API nor OpenFIGI's search endpoint reports seniority/lien/ranking for a specific instrument (TD-008), so asserting a stack position for debt this platform hasn't actually sourced that fact for would break the same provenance discipline every other adapter follows — tracked as new TD-010, and the Issuer Detail page falls back to a flat, still fully-provenanced Securities table for any issuer with no capital structure layers on file. `IssuerDetail`'s "recent activity" and "data sources" sections are computed reads over already-provenanced records' own dates/providers (financial fact filing dates, security/position `retrieved_at`) — no new `credit_event` table, keeping §23.1 out of Version 1 as required. 204 backend tests pass (up from 166 in Milestone 5) and 38 frontend tests pass (up from 29), alongside ruff/black/mypy/eslint/prettier/tsc/frontend production build. Verified live end-to-end in a browser: Cobalt Ridge Energy Corp's full waterfall renders with the mandatory "Calculated · Scenario-based · Illustrative · Not a market fact" label, and Apple's page correctly falls back to its flat securities list with a 404 page for a nonexistent issuer id. |
+| **Overall Progress** | ~41% — Milestone 6.5 of 16 complete (6.5 inserted, approved) |
+| **Current Milestone** | Milestone 6.5 — Research Universes + Overnight Distress Filing Monitor (complete) |
+| **Current Status** | Milestone 6.5 is complete — see its entry below, `BUILD_LOG.md`, and ADR-016/017/018 in `ARCHITECTURE_DECISIONS.md` for full detail. 23 real, live SEC-verified issuers organized into 15 Research Universes (14 distress-oriented + 1 Investment Grade Benchmark); a two-layer (deterministic + governed Anthropic AI) overnight SEC filing distress-detection pipeline; a live 60-day Historical Backfill Demo produced 85 real filings, 83 evidence records, and 28 real, cautiously-worded, evidence-backed alerts (4 high / 5 medium / 19 low severity, all AI-reviewed) surfaced on the new Morning Research Brief page, with full drill-down into Issuer Detail and Credit Universe filtering by universe. This was the CFO's most directly-requested workflow and was built before CourtListener per explicit approved direction, not as a silent scope change. |
 | **Last Updated** | 2026-08-06 |
 | **Current Git Branch** | main |
-| **Latest Commit** | `2262e7c` — Milestone 6: Issuer detail page + Capital Structure page/model |
-| **Next Milestone** | Milestone 7 — CourtListener adapter + docket view (§18 step 7) |
+| **Latest Commit** | `2262e7c` — Milestone 6: Issuer detail page + Capital Structure page/model (Milestone 6.5's commit hash recorded here in a follow-up docs commit, per established repo convention) |
+| **Next Milestone** | Milestone 7 — CourtListener adapter + docket view (§18 step 7), unstarted, pending explicit approval |
 
 ---
 
@@ -74,6 +74,7 @@ milestone completes; it is not itself a log (see `BUILD_LOG.md` for that).
 | 4 | Credit Universe initial page (seeded canonical securities) | Complete | 2026-08-06 | `34fd088` | Migration `0004` (`security` table + issuer synthetic columns) applied and round-tripped live. Real, permanently-committed proof: one real SEC-sourced Apple Inc. bond (aggregate XBRL figure, honestly represented as such — no fabricated CUSIP/maturity) plus 10 synthetic leveraged-loan positions across 8 fictional issuers, all tagged `SYNTHETIC_DEMO_DATA`. Credit Universe is now the post-login landing page: sortable/filterable/paginated TanStack Table v8 grid, every row carrying a provenance badge. Found and fixed two real bugs during this milestone: a search-box keystroke-loss race (fixed with a debounce hook) and a Supabase pgbouncer/psycopg3 prepared-statement incompatibility causing intermittent `InvalidSqlStatementName` errors (fixed by disabling server-side prepare in `app/db/session.py`). 134 backend tests pass (91→134), 26 new frontend tests pass. |
 | 5 | OpenFIGI + FRED adapters | Complete | 2026-08-06 | `a7f11f2` | Migration `0005` (`security.figi` unique index, `fred_series_registry`, `fred_observation`) applied and round-tripped live. Real, permanently-committed proof: five real Apple corporate bonds (real FIGI + maturity/coupon via OpenFIGI) plus real, live-synced SOFR and ICE BofA HY OAS FRED observations. Credit Universe gained a "Current Benchmark Rate" column and a Market Context panel — both real, reported facts, not a blended calculation. Found and fixed two real bugs: `conftest.py`'s separate test engine had the same pgbouncer/psycopg3 issue as Milestone 4's `app/db/session.py` (fixed independently there too), and OpenFIGI's unauthenticated tier hit a live 429 under back-to-back live tests (fixed with a longer test-client throttle + optional API-key header wiring). 166 backend tests pass (134→166), 3 new frontend tests pass (26→29). |
 | 6 | Issuer detail page + Capital Structure page/model | Complete | 2026-08-06 | `2262e7c` | Migration `0006` (`capital_structure_position`) applied and round-tripped live. Real, permanently-committed proof: a new full-stack synthetic issuer (Cobalt Ridge Energy Corp, 8 layers, real illustrative recovery waterfall against a stated EV) plus reported capital-structure layers for all 8 Milestone 4 loan issuers. Issuer Detail (`IssuerPage.tsx`) is the primary research workspace, organized around analyst questions rather than tables; Capital Structure renders as an embedded section, not a separate page, per this milestone's explicit brief. 204 backend tests pass (166→204), 9 new frontend tests pass (29→38). |
+| 6.5 | Research Universes + Overnight Distress Filing Monitor (inserted, approved — see §24) | Complete | 2026-08-06 | `2262e7c` (hash recorded in follow-up commit) | Migration `0007` (`collection`, `collection_membership`, `sec_filing`, `filing_monitor_run`, `research_evidence`, `alert_event`) applied and round-tripped live. Real, permanently-committed proof: 23 real SEC-verified issuers (23 accepted / 7 rejected of 30 candidates — RAD/MNK/YELL/BIG/FYBR/SAVE/COMM excluded, none resolvable in SEC's live `company_tickers.json`) organized into 15 Research Universes (14 distress-oriented + Investment Grade Benchmarks, kept visually and structurally separate). A live baseline run + a real, explicitly-labeled 60-day Historical Backfill Demo produced 85 real `sec_filing` rows, 83 `research_evidence` rows, and 28 real `alert_event` rows (4 high / 5 medium / 19 low severity; 0 deterministic-only / 28 AI-reviewed by live Anthropic calls), with zero run errors. AI review demonstrably worked as designed: real high-severity Chapter 11 events (EchoStar/DISH subsidiaries, Office Properties Income Trust) were correctly flagged high, while routine "chapter 11" mentions in benign contexts (JPMorgan tax-code reference, Johnson & Johnson historical subsidiary dismissal, Ford/Microsoft boilerplate) were correctly downgraded to low severity with honest "no distress" wording rather than false alarms. Provider-specific AI credential config (ADR-017) replaced the unused generic `LLM_API_KEY`. 274 backend tests pass (204→274, +70), 61 frontend tests pass (38→61, +23) across 11 files. Found and fixed two genuine test-design defects during this milestone (a CIK/ticker false-positive substring-match bug in the seed script's issuer resolver — corrected with word-boundary matching and cleaned up live; and 5 integration tests whose fake test doubles weren't CIK-scoped, which broke once real seed data existed). Full live browser walkthrough completed: Research Universes (benchmark separation), Morning Research Brief (real alerts, severity filter, evidence expansion with real excerpts), drill-down into Issuer Detail (Research Universe Memberships section), Credit Universe filtered by universe (chip, real Apple securities returned for Investment Grade Benchmarks). See ADR-016/017/018. |
 | 7 | CourtListener adapter + docket view | Not Started | — | — | |
 | 8 | Watchlists (10 coverage + 1 benchmark) + comparison view | Not Started | — | — | |
 | 9 | Research notes/documents + audit events | Not Started | — | — | |
@@ -105,6 +106,7 @@ already made in §1–23; will grow with genuine shortcuts taken during implemen
 | TD-008 | SEC EDGAR's XBRL company-facts API (the only SEC EDGAR endpoint this codebase uses) exposes only issuer-level aggregate concepts (e.g. `LongTermDebtNoncurrent`), not per-instrument dimensional data — real, per-instrument bond data (CUSIP, specific maturity/coupon) is not obtainable from this endpoint at all. `normalize_bond_security` honestly represents this by leaving `cusip`/`isin`/`figi`/`maturity_date`/`coupon` as `None` rather than fabricating instrument-level detail | Medium | Milestone 5's OpenFIGI adapter now supplies real FIGI/maturity/coupon for specific bond issues (a different data source, as this TD anticipated) — partially resolved for the issuers OpenFIGI covers. SEC EDGAR itself still can't provide this; CUSIP/ISIN remain unavailable from either provider | Open (real external API limitation, not a design shortcut) |
 | TD-009 | `providers/fred/provider.py`'s `sync_series` pulls only the most recent `limit` observations (default 10), not a full historical backfill to a series' `observation_start` — a deliberate first-vertical-slice scope choice, not an oversight | Low | Add a bulk/historical sync path once a feature actually needs trend history (e.g. a rate chart) rather than just the latest value | Open (deferred by design, `backend/app/providers/fred/provider.py`) |
 | TD-010 | Real issuers (Apple Inc.) have no `capital_structure_position` rows — neither SEC EDGAR's company-facts API nor OpenFIGI's search endpoint reports seniority/lien position/ranking for a specific instrument (same underlying gap as TD-008), so this milestone deliberately did not force real securities into a stack layer it can't honestly support. The Issuer Detail page falls back to a flat Securities table for any issuer with no capital structure layers on file, so nothing is hidden — it just isn't organized into a priority stack yet | Medium | Populate real capital structure layers once a provider that actually reports lien/seniority/ranking data exists (a licensed provider, Milestone 14, or a future SEC dimensional-XBRL parse) | Open (real external data limitation, not a design shortcut, `backend/app/synthetic/capital_structure_generator.py`) |
+| TD-011 | Issuer Detail's pre-existing "What filings support this?" and "What changed recently?" sections (`issuer_service.py`, Milestone 3) are driven solely by `financial_fact`-linked provenance — they were never extended to also surface the new `sec_filing`/`research_evidence`/`alert_event` rows Milestone 6.5 introduces. Live-verified during the Milestone 6.5 browser walkthrough: EchoStar Corp has 2 real `sec_filing` rows and 2 real `alert_event` rows (visible on the Morning Research Brief, with a working drill-down link into this same Issuer Detail page), yet its own "What filings support this?" section reads "No filings on file for this issuer yet" — correct for the financial-fact-evidentiary question that section actually answers (EchoStar was seeded identity-only, no XBRL pull), but easy to misread as "this issuer has no SEC filings at all." Not a scope violation — PLAN.md §24.9 committed only to a new, separate "Research Universe Memberships" section (present and correct) — but a real UX gap worth closing | Low | Extend `issuer_service.get_issuer_detail` to include `sec_filing`/`alert_event` activity in "What filings support this?"/"What changed recently?", or re-label the existing sections to make their financial-fact scope explicit, once Issuer Detail has a real design pass for it | Open (discovered during Milestone 6.5 browser walkthrough, not a regression) |
 
 ---
 
@@ -130,10 +132,25 @@ are implemented, tested, and manually verified end-to-end against the live,
 shared Supabase project — including a real, live-browser walkthrough of both
 a fully-modeled synthetic distressed issuer (Cobalt Ridge Energy Corp, full
 recovery waterfall) and a real issuer with no capital structure data (Apple
-Inc., correctly falling back to its flat securities list). **Milestone 7
-(CourtListener adapter + docket view, §18 step 7) has not started**, awaiting
-explicit approval to begin. Do not begin Milestone 7 until it is explicitly
-approved.
+Inc., correctly falling back to its flat securities list).
+
+**Milestone 6.5 (Research Universes + Overnight Distress Filing Monitor, §24)
+is complete**, inserted before Milestone 7 by explicit approved direction. 23
+real SEC-verified issuers are ingested and grouped into 15 Research
+Universes; Credit Universe filters by Research Universe; Issuer Detail shows
+universe memberships; the overnight monitor's baseline and backfill modes
+both work with safe watermark behavior (delta mode shares the same code path
+and is exercised by the integration test suite, though not yet run live —
+there is no second day of real overnight data to process yet); deterministic
+and AI-assisted evidence/alerts are real, evidence-backed, and cautiously
+worded (verified via a live 60-day Historical Backfill Demo — 85 filings, 83
+evidence records, 28 alerts); the Morning Research Brief renders and
+drill-down reaches Issuer Detail; the full test/lint/type/build/migration
+suite passes; `PLAN.md`/`BUILD_LOG.md`/ADR-016/017/018 are updated. See §24.10
+for the full completion record.
+
+**Milestone 7 (CourtListener adapter + docket view, §18 step 7) has not
+started**, and awaits explicit approval before beginning.
 
 ---
 
@@ -1074,9 +1091,20 @@ OCTUS_ENABLED=false
 BLOOMBERG_ENABLED=false
 LSEG_LPC_ENABLED=false
 
-# AI / LLM gate
+# AI / LLM gate (Milestone 6.5, §24 — provider-specific credentials, never a
+# shared generic secret; the factory validates only what LLM_PROVIDER selects
+# and never silently falls back to a different provider)
 LLM_PROVIDER=anthropic
-LLM_API_KEY=
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-sonnet-5
+OPENAI_API_KEY=
+OPENAI_MODEL=
+AZURE_OPENAI_API_KEY=
+AZURE_OPENAI_ENDPOINT=
+AZURE_OPENAI_MODEL=
+# Reserved for a future milestone — chat/tool-calling and embeddings may end up
+# sourced from different providers; unused until embeddings are implemented.
+EMBEDDING_PROVIDER=
 
 # Auth (disabled for first demo; architecture supports Supabase Auth JWT later)
 AUTH_ENABLED=false
@@ -1325,3 +1353,307 @@ alternate trigger for existing pipelines, not a different pipeline.
 
 **Not implemented now**: no scheduler is wired up, no job runner is chosen, no cron
 configuration exists in Version 1. `scripts/*.py` remain manually invoked.
+
+### 23.6 Issuer Health / composite research score
+
+**Target capability**: every issuer eventually exposes one composite health/risk
+score combining several independent signal families — `research_evidence`
+severity/volume (§24.3), capital structure stress (leverage, coverage, upcoming
+maturities), liquidity indicators, court docket activity (once Milestone 7 exists),
+ratings (once a ratings source exists), and macro factors (FRED series) — with an
+AI-generated synthesis layer on top, the same way §23.4's Data Quality score is a
+read over which sources exist, not a new source of truth itself.
+
+**How it fits the existing architecture**: exactly like §23.4, this is a computed
+value derived at read time (or via a future scheduled recalculation job, §23.5)
+from already-provenanced records — never a hand-maintained field, never a
+substitute for clicking through to the underlying evidence. Milestone 6.5's
+`research_evidence`/`alert_event` model (§24) is deliberately provider-agnostic
+specifically so a future score calculation can read across every evidence source
+without a schema change.
+
+**Not implemented now**: no `issuer_health_score` column, table, or calculation.
+Documented here only so Milestone 6.5's evidence model is built with this future
+consumer in mind, per ADR-018.
+
+---
+
+# 24. Milestone 6.5 — Research Universes + Overnight Distress Filing Monitor
+
+**Status: complete (2026-08-06).** Inserted before Milestone 7 (CourtListener) by
+explicit approved direction — not a silent architecture change. See ADR-016,
+ADR-017, ADR-018 in `ARCHITECTURE_DECISIONS.md` for the material design
+decisions, and `BUILD_LOG.md` for the chronological build entry with real counts.
+
+## 24.1 Research Universes vs. Watchlists
+
+Two coexisting, distinct concepts:
+- **Research Universes** — organization-wide, curated, shared, evidence-backed
+  coverage groups. `collection_type = research_universe` (or `benchmark` for the
+  one investment-grade comparison group). Built and seeded with real issuers this
+  milestone.
+- **Watchlists** (§4.7, §14, Milestone 8) — personal/team-managed collections.
+  `collection_type = watchlist`. **Not implemented or expanded this milestone** —
+  the schema accommodates them (same `collection`/`collection_membership` tables),
+  but no watchlist rows are created and no watchlist CRUD UI exists yet; that
+  remains Milestone 8's scope.
+
+Both live in one generalized `collection`/`collection_membership` table pair
+(ADR-016) rather than a dedicated `watchlist` table, distinguished by
+`collection_type`. `collection_membership` is a curated coverage decision, never a
+current-status assertion — it never states an issuer *is* currently distressed,
+in Chapter 11, high yield, rated, or facing refinancing risk on its own; that
+comes only from dated `research_evidence`/`alert_event` records.
+
+**`collection`**: id, slug, name, description, `collection_type`
+(`research_universe`\|`watchlist`\|`benchmark`), `scope` (`organization`\|
+`personal`\|`team`), `owner_user_id` (nullable — no `user` table exists yet),
+`visibility`, `curation_method` (`manual_curated`\|`system_seeded`\|
+`user_created`), `verification_status`, `last_verified_at`, `priority` (nullable
+`critical`\|`high`\|`medium`\|`low`, reserved for future Morning Research Brief
+prioritization — not used for sorting logic this milestone), `verification_count`
+(reserved future-facing metadata), `last_refresh_source` (reserved future-facing
+metadata), `created_at`, `updated_at`.
+
+**`collection_membership`**: id, collection_id, issuer_id, `rationale` (text),
+`rationale_as_of_date`, `verification_status`, `supporting_provenance_ids` (jsonb),
+`added_at`, `added_by` (nullable), `system_seeded`. Unique `(collection_id,
+issuer_id)`.
+
+## 24.2 Real SEC issuer requirement
+
+Every issuer in a Research Universe is live-verified against real SEC EDGAR data
+before ingestion: CIK resolved via SEC's public `company_tickers.json` (never
+hand-typed), confirmed via a live `fetch_submissions` call, ingested through the
+same Provider DTO → Normalizer → Canonical Domain Object → Repository path every
+other adapter uses (`ingest_issuer_identity_only`, extending
+`providers/sec_edgar/provider.py`). Unresolved/ambiguous candidates are excluded
+or replaced, never fabricated or fuzzy-merged (no automatic entity merging, same
+rule as §8's Universal Search). Real issuer/universe counts recorded on completion.
+
+## 24.3 Evidence and alert model (provider-agnostic — ADR-018)
+
+`research_evidence` (**not** `distress_evidence` — see ADR-018) represents any
+research signal, not only SEC-filing-derived distress signals. SEC EDGAR is the
+first `evidence_provider`, not the only one intended. Columns: id, issuer_id,
+`evidence_provider`, `source_type`, `filing_id` (nullable FK → the new `sec_filing`
+table — this milestone's one concrete source pointer; future providers add their
+own nullable source-specific FK the same way, per the TD-007/ADR-015 precedent),
+`evidence_type` (CHECK enum — bankruptcy_or_receivership, chapter_11, chapter_7,
+default_or_missed_payment, covenant_breach, debt_acceleration, going_concern,
+substantial_doubt, liquidity_warning, restructuring_advisor,
+restructuring_support_agreement, exchange_offer, liability_management_transaction,
+debt_amendment, maturity_extension, refinancing, dip_financing,
+emergency_financing, material_asset_sale, delisting_notice, workforce_reduction,
+facility_closure, material_impairment, auditor_resignation,
+adverse_audit_development, strategic_alternatives), severity, source_section,
+source_item, matched_rule, evidence_excerpt (+offsets), confidence,
+detection_method (`deterministic`\|`ai_assisted`), provenance_id, review_status.
+
+Evidence from the same source event is grouped into an internal **Evidence
+Bundle** (`app/domain/evidence_bundle.py`, not a persisted table) before becoming
+one `alert_event` — so evidence from multiple providers about the same issuer can
+eventually feed one alert without redesigning the alert engine.
+
+`alert_event` (first real implementation of §4.11's approved shape): id,
+issuer_id, category, severity, headline, explanation, `evidence_ids` (jsonb array
+— the real source of truth for what caused the alert), `bundle_key`,
+`primary_evidence_provider`, `primary_source_label`, `primary_source_url`,
+detection_method, ai_assisted, confidence, as_of_date, provenance_id,
+triggered_at, `status` (text+CHECK, only `new`\|`acknowledged`\|`dismissed`
+implemented/populated this milestone — deliberately extensible via an ordinary
+future migration to `new → acknowledged → investigating → resolved →
+false_positive`), acknowledged_at/by, dismissed_at/by/reason, `is_backfill`. No
+`filing_id` column — the UI resolves source filings by joining through
+`evidence_ids`. `alert_rule` (§4.11) is **not** created this milestone — no real
+caller yet (Milestone 10).
+
+Alert provenance uses the existing `calculation`/`calculation_input` lineage
+machinery (the same pattern Milestone 6 established for `illustrative_recovery`):
+`alert_event.provenance_id` → a `provenance` row with `transformation =
+calculated`, `calculation_id` → `calculation(method="research_alert_synthesis")`,
+with one `calculation_input` row per contributing evidence item's provenance.
+
+## 24.4 Detection pipeline
+
+**Layer 1 (deterministic)** — `app/core/distress_rules.py`: explainable phrase/
+item-code rules (8-K Item 1.03, "chapter 11"/"chapter 7", "substantial doubt
+about its ability to continue as a going concern", "restructuring support
+agreement", "exchange offer", "amend and extend", "debtor-in-possession"/DIP
+financing, "strategic alternatives", delisting, workforce reduction, facility
+closure, material impairment, auditor resignation, liquidity shortfall, debt
+acceleration, and one rule per remaining `evidence_type`), deliberately
+conservative around ambiguous phrases (e.g. a bare "chapter 11" mention without
+Item 1.03 or stronger context gets low confidence, not excluded).
+
+**Layer 2 (governed AI)** — only Layer 1 candidates are ever submitted to the
+LLM. `app/ai/evidence_review.py` builds a constrained prompt restricted to the
+supplied excerpts, and **fails closed** to deterministic templated wording on any
+parse failure or unsupported claim. The AI classifies/summarizes/suggests
+severity and must cite the underlying evidence; it never asserts distress from a
+bare keyword and never bypasses `policy_check`/provenance rules. The original
+filing remains authoritative.
+
+Alert wording is deliberately cautious — "Potential liquidity warning detected in
+a new 10-Q," "8-K Item 1.03 bankruptcy filing detected," never "this company is
+distressed" or "will liquidate."
+
+## 24.5 Watermark / baseline / delta / backfill
+
+`filing_monitor_run`: id, started_at, completed_at, status (`running`\|
+`success`\|`completed_with_errors`\|`failed`\|`baseline_established`), mode
+(`baseline`\|`delta`\|`backfill`), previous_watermark, resulting_watermark,
+issuers_checked, filings_discovered, filings_processed, alerts_created,
+errors_count, error_summary, backfill_lookback_days, is_backfill.
+
+- **Baseline** (first run): establishes `resulting_watermark = now`, ingests no
+  filings, creates no alerts — avoids flooding the UI with an issuer's entire
+  history.
+- **Delta**: processes only filings with `filing_date` after the previous
+  successful watermark. Idempotent by construction — `sec_filing.accession_no` is
+  unique, so a re-processed filing is a no-op, not a duplicate.
+- **Backfill**: explicit `--backfill-days N`, real filings within that lookback
+  window, results labeled **"Historical Backfill Demo"** in the UI, never
+  presented as newly filed overnight.
+- **Watermark only advances when a run completes with zero errors.** A partial or
+  failed run leaves the watermark untouched — already-ingested filings/evidence/
+  alerts are retained (never lost), and the next run safely re-checks the same
+  window (idempotent, not duplicative).
+
+`sec_filing` (new canonical entity — `financial_fact` is XBRL-datapoint-level,
+nothing previously represented "this filing exists"): id, issuer_id,
+accession_no (unique), form_type (free text, monitored set filtered in the
+service layer via `MONITORED_FORM_TYPES` — 8-K, 10-Q, 10-K, 6-K, 20-F, and their
+amendments), filing_date, period_of_report, is_amendment, primary_document(_url),
+provenance_id.
+
+## 24.6 Scheduling
+
+`python -m app.scripts.run_overnight_filing_monitor --mode {baseline|delta|backfill}
+[--backfill-days N]` — a standalone script, not the FastAPI `get_db` dependency,
+writing through the same Provider DTO → Normalizer → Canonical Domain Object →
+Repository → Evidence Evaluation → Alert Synthesis pipeline as every interactive
+request (§3's "no job bypasses the pipeline" rule, §23.5).
+
+**Target production schedule (documented, not activated)**: Railway Cron,
+`0 9 * * *` (09:00 UTC, ≈ 5:00 AM Eastern), command
+`python -m app.scripts.run_overnight_filing_monitor --mode delta`. Not wired into
+`railway.toml` or deployed this milestone — no production Railway environment is
+configured yet (Milestone 15 territory) — documented here and in `README.md` so
+activation is a one-line config change once deployment is real.
+
+## 24.7 AI provider configuration (ADR-017)
+
+`LLMProvider` Protocol (§10) and `AnthropicProvider` pulled forward from
+Milestone 13, scoped narrowly to backend evidence classification — no chat, no
+RAG, no user-facing assistant, no embeddings. Provider-specific env vars replace
+the originally-planned generic `LLM_API_KEY` (§19): `ANTHROPIC_API_KEY`/
+`ANTHROPIC_MODEL`, `OPENAI_API_KEY`/`OPENAI_MODEL` (unimplemented provider),
+`AZURE_OPENAI_API_KEY`/`AZURE_OPENAI_ENDPOINT`/`AZURE_OPENAI_MODEL` (unimplemented
+provider), plus a separate `EMBEDDING_PROVIDER` (reserved, unused — chat and
+embeddings may end up on different vendors later). `app/ai/factory.py` reads
+`LLM_PROVIDER`, validates only that provider's required credentials, raises a
+clear configuration error otherwise, and never silently falls back to a different
+provider. When no key is configured, the monitor runs in deterministic-only mode
+rather than failing — AI assistance is additive, never required for the app to
+function.
+
+## 24.8 API surface
+
+`GET /api/research-universes`, `GET /api/research-universes/{id}`,
+`GET /api/research-universes/{id}/issuers`, `GET /api/filing-monitor/runs`,
+`GET /api/filing-monitor/runs/latest-successful`,
+`GET /api/filing-monitor/filings`, `POST /api/filing-monitor/runs/trigger`
+(non-production-gated — interim stand-in for admin/demo-only until real auth
+exists, TD-002), `GET /api/research-evidence`, `GET /api/alerts`,
+`POST /api/alerts/{id}/acknowledge`, `POST /api/alerts/{id}/dismiss`,
+`GET /api/morning-brief`. Plus a `universe` filter on the existing
+`GET /api/credit-universe` and `universe_memberships` on `GET /api/issuers/{id}`.
+
+## 24.9 Frontend
+
+`ResearchUniversesPage.tsx` (`/research-universes`), `MorningResearchBriefPage.tsx`
+(`/research-brief`, heading "New Research Alerts — Since Last Successful Run" —
+deliberately not "New Distress *Filings*," so future non-SEC alerts fit without a
+copy change). Both are new, enabled nav entries; the existing disabled "Soon"
+placeholders (Watchlists, Search, Research, Alerts, Assistant) are untouched.
+`CreditUniversePage` gains a `universe` URL filter; `IssuerPage` gains a Research
+Universe Memberships section, clearly separated from factual-status sections.
+
+## 24.10 Completion record
+
+**Issuers / universes**: 30 real candidate tickers evaluated against SEC's
+live `company_tickers.json`; 23 accepted (live-verified via `fetch_submissions`,
+each with at least one filing on record) and 7 rejected — RAD (Rite Aid),
+MNK (Mallinckrodt), YELL (Yellow Corp), BIG (Big Lots), FYBR (Frontier
+Communications), SAVE (Spirit Airlines), COMM (CommScope) — none resolvable
+in the live ticker file (delisted/reorganized/acquired since the candidate
+list was drafted), documented and excluded rather than guessed at. 23 unique
+issuers span 15 Research Universes (14 distress-oriented, one Investment
+Grade Benchmark of 5 large-cap issuers kept structurally and visually
+separate — never mixed into distress-screening views).
+
+**Monitor runs**: a baseline run established a clean watermark
+(`issuers_checked=23`, zero filings ingested, per the baseline-mode
+contract), followed by a real, explicitly-labeled 60-day Historical Backfill
+Demo (`--mode backfill --backfill-days 60`) against live SEC EDGAR data:
+`filings_discovered=85`, `filings_processed=85`, `alerts_created=28`,
+`errors_count=0`, watermark advanced (advances only on zero-error runs,
+per §24.5).
+
+**Evidence / alerts**: 85 real `sec_filing` rows, 83 `research_evidence`
+rows, 28 `alert_event` rows — 4 high / 5 medium / 19 low severity; 0
+deterministic-only / 28 AI-reviewed (every bundle went through live
+Anthropic evidence review, since a real `ANTHROPIC_API_KEY` was configured).
+Spot-verified evidence quality against the live filings: EchoStar Corp's
+real 8-K (accession `0001415404-26-000038`, filed 2026-08-03) disclosing
+subsidiary Chapter 11 petitions and automatic note acceleration was
+correctly matched by three independent deterministic rules (8-K Item 1.03,
+Item 2.04, "chapter 11 petition" phrase) and reviewed by Anthropic with a
+97% confidence, cautiously-worded headline citing the specific default/
+acceleration mechanism — not a bare "bankruptcy" assertion. The two-layer
+design's false-positive guard was demonstrably proven, not just tested:
+routine "chapter 11" mentions in Ford's, Johnson & Johnson's, JPMorgan
+Chase's, and Microsoft's real 10-Ks/10-Ks (tax-code references, a
+subsidiary's historical, already-dismissed case, boilerplate risk-factor
+language) were all correctly downgraded to low severity with explicit
+"no distress language found"/"not current distress" wording by the AI
+review layer, rather than surfacing as false alarms.
+
+**Tests**: 274 backend tests pass (204→274, +70 — unit + integration,
+including two new genuinely-live-marked suites gated on a configured
+`ANTHROPIC_API_KEY`/SEC connectivity), 61 frontend tests pass (38→61, +23)
+across 11 files. Backend ruff/black/mypy clean; frontend eslint/prettier/tsc
+clean; both production builds succeed.
+
+**Live verification**: migration `0007` applied and round-tripped
+(`upgrade head` → `downgrade 0006` → `upgrade head`) against the live,
+shared `nexus` schema at creation time, before real data existed — not
+re-run after seeding, since a downgrade would have dropped the real,
+permanently-committed Research Universe/evidence/alert data this milestone
+exists to demonstrate. Backend and frontend both boot and were exercised
+together in a live browser walkthrough: Research Universes page (benchmark
+section visually and structurally separated), Morning Research Brief (real
+summary counts, severity/universe/detection/status filters all
+URL-persisted, evidence expansion showing real matched-rule excerpts),
+drill-down from an alert into Issuer Detail (Research Universe Memberships
+section correctly listing e.g. EchoStar's High Yield + Telecom & Media
+memberships), and Credit Universe filtered by a Research Universe (real
+Apple securities returned when filtered to Investment Grade Benchmarks;
+correctly empty for universes whose issuers were ingested identity-only
+with no `security` rows yet — an honest empty state, not a bug).
+
+**Two genuine defects found and fixed during this milestone** (not
+introduced by nor masked in this record): (1) `seed_research_universes.py`'s
+CIK resolver used substring matching, which matched "Yellow" (a failed
+ticker lookup for delisted Yellow Corp) against the unrelated "Yellowstone
+Group Ltd." — fixed with word-boundary regex matching, the bad
+`collection_membership` row removed live, and a regression test suite added
+(`test_seed_research_universes.py`). (2) `test_filing_monitor_service.py`'s
+integration tests used fake `fetch_filings_fn` test doubles that ignored the
+`cik` parameter — harmless while no real Research Universe issuers existed,
+but once the seed script permanently committed 23 real issuers, `run_monitor`
+correctly began iterating all of them (by design — it targets every issuer
+in scope, not just one test's issuer), causing the fakes to produce/fail
+data for all 24 issuers instead of one. Fixed by making every fake
+CIK-aware.

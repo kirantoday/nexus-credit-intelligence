@@ -14,6 +14,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { ApiError } from "../api/client";
@@ -263,6 +264,39 @@ export function IssuerPage(): ReactElement {
             </Box>
           ))}
         </Stack>
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <SectionHeading>Which Research Universes is this issuer in?</SectionHeading>
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
+          Curated coverage decisions, each with a dated rationale — never itself an assertion of
+          current distress, bankruptcy, rating, or refinancing risk. See the sections above for
+          that, sourced from dated evidence.
+        </Typography>
+        {issuer.universe_memberships.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            Not currently a member of any Research Universe.
+          </Typography>
+        ) : (
+          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            {issuer.universe_memberships.map((membership) => (
+              <Tooltip
+                key={membership.collection_id}
+                title={`${membership.rationale}${membership.rationale_as_of_date ? ` (as of ${formatDate(membership.rationale_as_of_date)})` : ""}`}
+              >
+                <Chip
+                  component={RouterLink}
+                  to={`/?universe=${membership.collection_id}`}
+                  clickable
+                  label={membership.name}
+                  size="small"
+                  variant="outlined"
+                  color={membership.collection_type === "benchmark" ? "info" : "default"}
+                />
+              </Tooltip>
+            ))}
+          </Stack>
+        )}
       </Paper>
 
       <Box>

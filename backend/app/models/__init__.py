@@ -17,12 +17,17 @@ resolves, regardless of import order.
 from __future__ import annotations
 
 from app.models import (  # noqa: F401
+    alert,
     capital_structure,
+    collection,
     entitlement,
+    filing_monitor_run,
     financial_fact,
     fred,
     issuer,
     provenance,
     raw_provider_payload,
+    research_evidence,
+    sec_filing,
     security,
 )

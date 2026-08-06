@@ -2463,3 +2463,414 @@ commit recording this hash.
   `90befc60889a71a05fd9f9c5ff63c7d20c951aff`, matching the local commit
   exactly.
 - Remote branch: https://github.com/kirantoday/nexus-credit-intelligence/tree/main
+
+---
+
+## 2026-08-06 — Milestone 6.5: Research Universes + Overnight Distress Filing Monitor
+
+**Summary**
+
+Inserted before Milestone 7 (CourtListener) by explicit approved direction —
+the CFO's most directly-requested workflow (reduce manual research effort,
+organize issuers the way a distressed-credit team thinks, surface new
+distress-related filing activity each morning, drill from an alert into
+Issuer Detail/Capital Structure). Organization-wide, curated "Research
+Universes" (distinct from and coexisting with the still-unbuilt personal/team
+Watchlists of Milestone 8) populated with real, live SEC-verified issuers,
+plus a two-layer (deterministic + governed Anthropic AI) overnight SEC filing
+distress-detection pipeline producing evidence-backed, cautiously-worded
+alerts surfaced on a new "Morning Research Brief" page. The plan was refined
+through several rounds of explicit approval before implementation:
+generalizing `distress_evidence` into provider-agnostic `research_evidence`,
+redesigning the alert pipeline around an internal Evidence Bundle concept
+rather than a hard `filing_id` FK, renaming "Morning Filing Brief" to
+"Morning Research Brief," and replacing a generic `LLM_API_KEY` with
+provider-specific credential configuration. See ADR-016, ADR-017, ADR-018.
+
+**Features Completed**
+
+- `collection`/`collection_membership` (ADR-016): generalizes the approved
+  §4.7 watchlist shape into one table pair with a `collection_type`
+  discriminator (`research_universe`|`watchlist`|`benchmark`), so Research
+  Universes and the still-unbuilt personal Watchlists share one schema
+  without either faking the other's fields. `collection_membership` carries
+  a dated `rationale`, never a current-status assertion.
+- `sec_filing`: the first canonical entity representing "this filing exists"
+  (`financial_fact` remained XBRL-datapoint-level only). `providers/sec_edgar`
+  extended with `list_recent_filings`/`ingest_recent_filings` (parses
+  `filings.recent`'s parallel arrays, including 8-K item codes),
+  `fetch_filing_text` (fetches and strips real filing HTML via a stdlib
+  `html.parser.HTMLParser` tag stripper, no new dependency), and
+  `ingest_issuer_identity_only` for the seed script.
+- `research_evidence`/`alert_event` (ADR-018): provider-agnostic from the
+  start — `evidence_provider` column (SEC EDGAR is the first, not the only,
+  intended value), evidence grouped into an internal, non-persisted
+  **Evidence Bundle** (`app/domain/evidence_bundle.py`,
+  `group_evidence_into_bundles`) before becoming one `alert_event`.
+  `alert_event` has no `filing_id` column at all — it carries `evidence_ids`
+  (the real source of truth) plus a denormalized `primary_source_label`/
+  `primary_source_url` built by a provider-specific describer function
+  injected into the otherwise generic `alert_synthesis_service`. Alert
+  provenance reuses the `calculation`/`calculation_input` lineage machinery
+  Milestone 6 established for `illustrative_recovery` — one `calculation_input`
+  row per contributing evidence item's provenance.
+- `app/core/distress_rules.py` (Layer 1, deterministic): explainable phrase/
+  item-code rules covering all ~26 `EvidenceType` values (8-K Item 1.03/2.04,
+  "chapter 11"/"chapter 7", "substantial doubt about its ability to continue
+  as a going concern", restructuring support agreements, exchange offers,
+  DIP financing, delisting, workforce reduction, material impairment, and
+  more), deliberately conservative around ambiguous phrases — a bare
+  "chapter 11" mention without stronger context gets a
+  `phrase_chapter_11_bare_mention` low-confidence match, not exclusion or a
+  high-severity false alarm.
+- `app/ai/` (Layer 2, governed AI, ADR-017): `LLMProvider` Protocol and a
+  real `AnthropicProvider` pulled forward from Milestone 13, scoped narrowly
+  to evidence classification (`call_tools`/`create_embeddings` explicitly
+  raise `NotImplementedError`). `app/ai/factory.py` reads `LLM_PROVIDER`,
+  validates only that provider's own credentials, never falls back silently.
+  `app/ai/evidence_review.py` builds a constrained prompt restricted to the
+  supplied excerpts and **fails closed** to deterministic templated wording
+  on any parse failure or unsupported claim.
+- `app/services/filing_monitor_service.py`: the SEC-specific orchestrator —
+  baseline (establishes a watermark, ingests nothing)/delta (since the
+  previous successful watermark)/backfill (explicit lookback window, labeled
+  "Historical Backfill Demo") modes, idempotent by `accession_no` uniqueness,
+  per-issuer commit/rollback isolation so one issuer's failure never loses an
+  earlier issuer's already-committed work in the same run, watermark only
+  advances on a zero-error run.
+- `app/services/alert_synthesis_service.py`: the provider-agnostic half —
+  takes evidence, groups it into bundles, checks `bundle_key` idempotency,
+  calls AI review if configured (else deterministic templated wording),
+  creates one `alert_event` per new bundle. Contains zero SEC-specific field
+  references.
+- `app/scripts/run_overnight_filing_monitor.py` (new `app/scripts/`
+  directory): standalone entry point, opens its own session (not the FastAPI
+  `get_db` dependency, since the service manages its own commit boundaries),
+  resolves the LLM provider with a try/except that falls back to
+  deterministic-only mode rather than crashing the job. Target production
+  schedule documented (Railway Cron, `0 9 * * *`) but not activated — no
+  production Railway environment exists yet.
+- `app/scripts/seed_research_universes.py`: live-resolves ~30 candidate
+  tickers against SEC's public `company_tickers.json` (word-boundary
+  matching only, never substring — see Problems Encountered #1),
+  live-verifies each via `fetch_submissions`, ingests via
+  `ingest_issuer_identity_only`, creates 15 `collection` rows and their
+  `collection_membership` rows with dated rationale. Idempotent — safe to
+  re-run (verified twice).
+- API routes: `research_universes.py`, `filing_monitor.py` (trigger endpoint
+  non-production-gated, interim stand-in for admin/demo-only per TD-002),
+  `research_evidence.py`, `alerts.py`, `morning_brief.py`, plus a `universe`
+  filter added to `credit_universe.py` and `universe_memberships` added to
+  `issuer.py`'s response.
+- Frontend: `ResearchUniversesPage.tsx` (`/research-universes` — universe
+  cards, benchmark universes visually and structurally separated into their
+  own section), `MorningResearchBriefPage.tsx` (`/research-brief` — heading
+  "New Research Alerts — Since Last Successful Run," deliberately not "New
+  Distress *Filings*," so future non-SEC alerts fit without a copy change;
+  full filter set, all URL-persisted matching the existing
+  `CreditUniversePage` pattern), `AlertCard.tsx` (evidence expansion,
+  ack/dismiss actions), `UniverseCard.tsx`, `SeverityBadge.tsx`,
+  `BriefSummaryBar.tsx`. `CreditUniversePage` gained a `universe` URL
+  filter; `IssuerPage` gained a "Which Research Universes is this issuer
+  in?" section. Two new enabled nav entries (Research Universes, Morning
+  Research Brief); the other five disabled "Soon" placeholders (Watchlists,
+  Search, Research Workspace, Alerts, Research Assistant) are untouched —
+  they belong to later milestones.
+
+**Files Created**
+
+`backend/alembic/versions/0007_research_universes_and_filing_monitor.py`,
+`backend/app/ai/providers/base.py`,
+`backend/app/ai/providers/anthropic_provider.py`, `backend/app/ai/factory.py`,
+`backend/app/ai/llm_gate.py`, `backend/app/ai/evidence_review.py`,
+`backend/app/api/routes/{alerts,filing_monitor,morning_brief,research_evidence,research_universes}.py`,
+`backend/app/core/distress_rules.py`,
+`backend/app/domain/{alert,collection,evidence_bundle,filing_monitor_run,research_evidence,sec_filing}.py`,
+`backend/app/models/{alert,collection,filing_monitor_run,research_evidence,sec_filing}.py`,
+`backend/app/repositories/{alert_repository,collection_repository,filing_monitor_run_repository,research_evidence_repository,sec_filing_repository}.py`,
+`backend/app/schemas/{filing_monitor,research_universe}.py`,
+`backend/app/scripts/{run_overnight_filing_monitor,seed_research_universes}.py`,
+`backend/app/services/{alert_synthesis_service,filing_monitor_api_service,filing_monitor_service,research_universe_service}.py`,
+`backend/tests/integration/{test_ai_evidence_review_live,test_filing_monitor_api_service,test_filing_monitor_service,test_research_universe_service}.py`,
+`backend/tests/unit/{test_alert_wording,test_distress_rules,test_evidence_bundling,test_evidence_review,test_llm_factory,test_seed_research_universes}.py`,
+`web/src/api/{filingMonitor,researchUniverse}.ts`,
+`web/src/components/{AlertCard,AlertCard.test,BriefSummaryBar,SeverityBadge,UniverseCard,UniverseCard.test}.tsx`,
+`web/src/pages/{MorningResearchBriefPage,MorningResearchBriefPage.test,ResearchUniversesPage,ResearchUniversesPage.test}.tsx`,
+`web/src/queries/{useAlerts,useMorningBrief,useResearchUniverses}.ts`.
+
+**Files Modified**
+
+`.env.example`, `backend/app/api/routes/credit_universe.py`,
+`backend/app/config.py` (removed `llm_api_key`; added provider-specific
+`anthropic_api_key`/`anthropic_model`/`openai_api_key`/`openai_model`/
+`azure_openai_api_key`/`azure_openai_endpoint`/`azure_openai_model`/
+`embedding_provider`), `backend/app/core/types.py` (new enums +
+`MONITORED_FORM_TYPES`), `backend/app/main.py` (mounts the five new
+routers), `backend/app/models/__init__.py`,
+`backend/app/providers/sec_edgar/{client,dto,normalizer,provider}.py`,
+`backend/app/repositories/security_repository.py`,
+`backend/app/schemas/issuer.py`, `backend/app/services/credit_universe_service.py`,
+`backend/app/services/issuer_service.py`, `backend/pyproject.toml` (added
+`anthropic` dependency), `backend/tests/integration/conftest.py`
+(`join_transaction_mode="create_savepoint"`, needed because
+`filing_monitor_service` manages its own commit boundaries),
+`backend/tests/integration/{test_credit_universe_service,test_issuer_service}.py`,
+`backend/tests/unit/test_sec_edgar_normalizer.py`, `web/src/App.tsx` (two
+new routes), `web/src/api/{creditUniverse,issuer}.ts`,
+`web/src/components/Layout.tsx` (two new enabled nav entries),
+`web/src/pages/{CreditUniversePage,IssuerPage,IssuerPage.test}.tsx`.
+
+**Database Changes**
+
+Migration `0007` applied to the live, shared Supabase project and
+round-tripped (`upgrade head` → `downgrade 0006` → `upgrade head`) at
+creation time, before real data existed: creates `nexus.collection`,
+`nexus.collection_membership`, `nexus.sec_filing`, `nexus.filing_monitor_run`,
+`nexus.research_evidence`, `nexus.alert_event`, all CHECK-constrained per
+ADR-014 convention. Verified with `alembic check` afterward — no drift.
+
+Real, permanently-committed live seed: `seed_research_universes.py` ingested
+23 real, SEC-verified issuers (23 accepted / 7 rejected of 30 candidates —
+RAD, MNK, YELL, BIG, FYBR, SAVE, COMM excluded, all ambiguity resolved
+honestly, see Problems Encountered) into 15 `collection` rows (14 Research
+Universes + 1 Investment Grade Benchmark of 5 large-cap issuers). A live
+baseline run established a clean watermark (`issuers_checked=23`), followed
+by a real, explicitly-labeled 60-day Historical Backfill Demo against live
+SEC EDGAR data: 85 `sec_filing` rows, 83 `research_evidence` rows, 28
+`alert_event` rows (4 high / 5 medium / 19 low severity, all 28 reviewed by
+live Anthropic calls), zero run errors, watermark advanced. Re-running the
+seed script confirmed full idempotency (same 23 accepted / 7 rejected, no
+duplicate collections or memberships).
+
+**API Endpoints Added**
+
+`GET /api/research-universes`, `GET /api/research-universes/{id}`,
+`GET /api/research-universes/{id}/issuers`, `GET /api/filing-monitor/runs`,
+`GET /api/filing-monitor/runs/latest-successful`,
+`GET /api/filing-monitor/filings`, `POST /api/filing-monitor/runs/trigger`
+(non-production-gated), `GET /api/research-evidence`, `GET /api/alerts`,
+`POST /api/alerts/{id}/acknowledge`, `POST /api/alerts/{id}/dismiss`,
+`GET /api/morning-brief`. `GET /api/credit-universe` gained a `universe`
+filter param; `GET /api/issuers/{id}` gained `universe_memberships`.
+
+**Frontend Pages Added**
+
+`ResearchUniversesPage.tsx` at `/research-universes`,
+`MorningResearchBriefPage.tsx` at `/research-brief`.
+
+**Environment Variables Added**
+
+`LLM_PROVIDER` (unchanged), `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`,
+`OPENAI_API_KEY`, `OPENAI_MODEL`, `AZURE_OPENAI_API_KEY`,
+`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_MODEL`, `EMBEDDING_PROVIDER`
+(reserved, unused). `LLM_API_KEY` removed (the naming mismatch that left AI
+review silently unusable — `ANTHROPIC_API_KEY` already existed in
+`backend/.env` but nothing read it until this milestone).
+
+**Tests Added**
+
+70 new backend tests (204 → 274): `test_distress_rules.py`,
+`test_evidence_bundling.py`, `test_alert_wording.py`, `test_llm_factory.py`,
+`test_evidence_review.py` (unit — rule matching and the false-positive
+safeguard, bundle grouping including a synthetic multi-provider bundle,
+cautious-wording templates, per-provider LLM config validation with no
+silent fallback, malformed-AI-response fail-closed behavior),
+`test_seed_research_universes.py` (unit — CIK resolver regression tests
+including the exact Yellow/Yellowstone false-positive case),
+`test_research_universe_service.py`, `test_filing_monitor_api_service.py`,
+`test_filing_monitor_service.py` (integration — baseline/delta/backfill,
+watermark advance-on-success/hold-on-failure, idempotent re-run, per-issuer
+error isolation), plus one test each added to
+`test_credit_universe_service.py` (universe filter) and
+`test_issuer_service.py` (universe memberships).
+`test_ai_evidence_review_live.py` is a genuinely live-marked suite (real
+Anthropic call) — not skipped, since a real key is configured.
+
+23 new frontend tests (38 → 61) across 4 new files: `UniverseCard.test.tsx`
+(6 — name/issuer-count/priority/verification rendering, benchmark chip only
+on benchmark collections, singular/plural issuer count, click-to-navigate),
+`AlertCard.test.tsx` (9 — headline/severity/detection-method rendering,
+issuer drill-down link, backfill-demo chip only when `is_backfill`,
+AI-assisted vs. deterministic labeling, evidence expansion, ack/dismiss
+callbacks, buttons hidden once already acknowledged/dismissed),
+`ResearchUniversesPage.test.tsx` (3 — universe/benchmark sections, empty
+state, error state), `MorningResearchBriefPage.test.tsx` (4 — summary bar +
+alert cards render, empty-filter success message, alert/brief API error
+states).
+
+**Test Results**
+
+```
+backend: pytest tests/ -q                      -> 274 passed
+backend: ruff check .                          -> All checks passed!
+backend: black --check .                       -> 166 files would be left unchanged.
+backend: mypy app                              -> Success: no issues found in 115 source files
+backend: alembic current                       -> 0007 (head)
+backend: alembic check                         -> No new upgrade operations detected.
+
+frontend: npx vitest run                       -> 61 passed (11 test files)
+frontend: npx eslint .                         -> clean
+frontend: npx prettier --check src             -> All matched files use Prettier code style!
+frontend: npx tsc --noEmit                     -> clean
+frontend: npm run build                        -> succeeded (dist/assets bundle 641.87 kB / gzip 192.73 kB)
+
+GET /health (live server, port 8000)                    -> 200 {"status": "healthy", ...}
+GET /api/morning-brief (live)                           -> 200, real counts (15 universes, 23 issuers,
+                                                            85 filings, 28 alerts, 4/5/19 severity split)
+python -m app.scripts.run_overnight_filing_monitor --mode baseline
+    -> baseline_established, issuers_checked=23
+python -m app.scripts.run_overnight_filing_monitor --mode backfill --backfill-days 60
+    -> success, filings_discovered=85, filings_processed=85, alerts_created=28, errors_count=0
+```
+
+**Commands Executed** (representative)
+
+```
+cd backend
+./.venv/Scripts/python -m alembic revision --autogenerate -m "research universes and filing monitor"
+mv alembic/versions/<hash>_*.py alembic/versions/0007_research_universes_and_filing_monitor.py
+./.venv/Scripts/python -m alembic upgrade head
+./.venv/Scripts/python -m alembic downgrade 0006   # round-trip, before real data existed
+./.venv/Scripts/python -m alembic upgrade head
+./.venv/Scripts/python -m alembic check            # No new upgrade operations detected.
+
+./.venv/Scripts/python -m pytest tests/ -q
+./.venv/Scripts/python -m ruff check . / black --check . / mypy app
+
+# genuine, committed (non-test) live seed
+./.venv/Scripts/python -m app.scripts.seed_research_universes
+./.venv/Scripts/python -m app.scripts.seed_research_universes   # re-run: confirmed idempotent
+
+# genuine, committed (non-test) live monitor runs
+./.venv/Scripts/python -m app.scripts.run_overnight_filing_monitor --mode baseline
+./.venv/Scripts/python -m app.scripts.run_overnight_filing_monitor --mode backfill --backfill-days 60
+
+cd ../web
+npx vitest run / eslint . / prettier --check src / tsc --noEmit / npm run build
+
+# manual browser verification (Chrome, via claude-in-chrome tools)
+# Research Universes page with benchmark section visually/structurally
+# separated; Morning Research Brief summary bar with real counts, severity
+# filter (URL-persisted), evidence expansion showing real matched-rule
+# excerpts from a real EchoStar 8-K; drill-down from an alert into Issuer
+# Detail's Research Universe Memberships section; Credit Universe filtered
+# by Investment Grade Benchmarks returning Apple's real securities
+```
+
+**Problems Encountered**
+
+1. **A real CIK/ticker identity-mismatch bug in the seed script's
+   resolver.** `_resolve_cik`'s original name-fallback used substring
+   containment (`"yellow" in "yellowstone group ltd."`) — after ticker YELL
+   failed to resolve directly (Yellow Corp had genuinely delisted, a
+   legitimate rejection), the substring fallback matched the unrelated
+   "Yellowstone Group Ltd." and would have permanently committed a wrong
+   issuer into the Chapter 11/Bankruptcy universe. Caught by manually
+   reviewing the resolution log before trusting it, not by a test — no test
+   existed yet for this path. Fixed with word-boundary regex matching
+   (`re.compile(rf"\b{re.escape(candidate.name_hint.lower())}\b")`); the
+   already-committed bad `collection_membership` row (created before the
+   fix) was removed live via a one-off script using a newly-added
+   `collection_repository.remove_membership` function; a regression test
+   suite (`test_seed_research_universes.py`) was added covering this exact
+   case plus ambiguous-match exclusion and no-match cases.
+2. **A `calculation_input` composite-key collision on filings matching
+   multiple rules.** `fetch_filing_text`'s original design created one
+   `provenance` row per filing (reused across every matched rule) — a
+   filing matching 2+ deterministic rules produced 2+ `research_evidence`
+   rows sharing one `provenance_id`, and an alert bundle citing both then
+   violated `calculation_input`'s composite primary key. Fixed by moving
+   provenance creation into
+   `filing_monitor_service._process_one_filing`'s per-match loop (one
+   distinct `provenance` row per matched rule, all referencing the same
+   underlying `raw_payload_id`), matching Milestone 3's established "one
+   raw payload, many provenance rows" convention.
+3. **`raw_provider_payload.payload_json` validator violation for extracted
+   filing text.** `fetch_filing_text` originally passed `payload_json=None`
+   for HTML filing documents, but the domain validator requires either
+   `payload_json` or `storage_object_path` (TD-006's "store inline for now"
+   precedent didn't yet cover this new payload shape). Fixed by wrapping
+   extracted text as `{"extracted_text": text}`.
+4. **A genuine test-design flaw surfaced only after real seed data
+   existed.** `test_filing_monitor_service.py`'s fake `fetch_filings_fn`/
+   `fetch_filing_text_fn` test doubles were written and passed while no
+   real Research Universe issuers existed, so each test's fake implicitly
+   only ever produced data for its own single seeded issuer. Once
+   `seed_research_universes.py` permanently committed 23 real issuers,
+   `run_monitor` correctly began iterating all 24 issuers in scope (by
+   design — it targets every issuer in a `research_universe`/`benchmark`
+   collection system-wide, not "whichever issuer this test cares about"),
+   and 5 of 7 tests failed: one test's fake unconditionally raised for all
+   24 issuers (`errors_count=24` instead of 1, real CIKs like JPMorgan's
+   and Costco's visible in the failure output); others produced/reused the
+   same filing/accession-number across every iteration, inflating counters
+   or attributing evidence to the wrong issuer. This was a real,
+   live-observed test-isolation gap, not a production code bug —
+   `run_monitor`'s system-wide iteration is correct, intentional behavior.
+   Fixed by making every fake CIK-aware (checks the incoming `cik` against
+   the test's own seeded issuer, no-ops for every other CIK) and relaxing
+   `issuers_checked == 1` to `>= 1` in the baseline test.
+
+**Solutions**
+
+Each problem was caught either by manual review of live resolution output
+(#1), a live integration test run against Supabase surfacing the exact
+constraint name and violating rows (#2), a live validator error at
+ingestion time (#3), or a live full-suite pytest run after seed data
+existed (#4) — none were guessed at or silently patched around. #1 and #4
+both prompted new regression tests so the same class of bug can't recur
+silently.
+
+**Remaining Work**
+
+- TD-011 (new): Issuer Detail's pre-existing "What filings support this?"/
+  "What changed recently?" sections are `financial_fact`-scoped only, not
+  yet extended to surface `sec_filing`/`alert_event` activity — discovered
+  during this milestone's browser walkthrough, not a scope violation
+  (PLAN.md §24.9 only committed to the separate Research Universe
+  Memberships section, which is correct), but a real gap worth closing.
+- Delta mode shares `run_monitor`'s code path with baseline/backfill and is
+  covered by the integration test suite, but has not yet been run live —
+  there is no second day of real overnight data yet to process a delta
+  against. First real delta run happens whenever the monitor is next
+  triggered (manually, or once Railway Cron is wired up in Milestone 15).
+- TD-001 through TD-010 unchanged, carried forward from prior milestones.
+- Everything in Milestone 7 onward per `PLAN.md` § Milestone Status —
+  unstarted; Milestone 7 (CourtListener) requires separate explicit
+  approval to begin, per this milestone's own governance instructions.
+
+**Developer Notes**
+
+The two-layer detection design was validated by real behavior, not just
+unit tests: the live 60-day backfill's 28 AI-reviewed alerts show the
+deterministic layer correctly surfacing candidates (including
+intentionally ambiguous ones — JPMorgan Chase, Johnson & Johnson,
+Microsoft, and Ford all matched a bare "chapter 11" phrase rule somewhere
+in their real 10-Ks) and the AI review layer correctly distinguishing a
+routine tax-code reference, a subsidiary's already-dismissed historical
+case, or boilerplate risk-factor language from EchoStar's and Office
+Properties Income Trust's genuine, current Chapter 11 proceedings —
+downgrading the former to low severity with explicit "no distress language
+found" wording rather than surfacing false alarms, and correctly citing the
+exact default/acceleration mechanism (not a bare "bankruptcy" assertion)
+for the latter. This is the system doing what §24.4's "cautiously worded,
+never overclaiming" requirement actually asked for, not just passing a
+test that says so.
+
+The mid-implementation architectural refinements (Evidence Bundle,
+generalized `research_evidence`, provider-specific AI credentials) all
+proved their worth during real implementation, not just in the abstract:
+`filing_monitor_service` never had to import anything alert-specific,
+`alert_synthesis_service` never had to import anything SEC-specific, and
+the AI provider factory's provider-specific validation caught the
+pre-existing `LLM_API_KEY`/`ANTHROPIC_API_KEY` naming mismatch immediately
+rather than silently running deterministic-only forever without anyone
+noticing why.
+
+**Git Commit Hash**
+
+_Recorded in a follow-up docs commit, per established repo convention._
+
+**GitHub Remote and Push Results**
+
+_Recorded in a follow-up docs commit, per established repo convention._

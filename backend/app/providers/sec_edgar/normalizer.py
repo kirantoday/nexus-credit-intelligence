@@ -10,6 +10,7 @@ producing the exact same canonical types from its own DTO shapes.
 from __future__ import annotations
 
 from datetime import date, datetime
+from html.parser import HTMLParser
 from uuid import UUID
 
 from app.core.types import (
@@ -22,9 +23,10 @@ from app.core.types import (
 from app.domain.financial_fact import FinancialFactCreate
 from app.domain.issuer import IssuerCreate
 from app.domain.provenance import ProvenanceCreate
+from app.domain.sec_filing import SecFilingCreate
 from app.domain.security import SecurityCreate
 from app.providers.sec_edgar.client import format_cik10
-from app.providers.sec_edgar.dto import SecSubmissionsDTO, SecXbrlUnitDatapoint
+from app.providers.sec_edgar.dto import SecFilingEntryDTO, SecSubmissionsDTO, SecXbrlUnitDatapoint
 
 _FORM_TYPE_MAP: dict[str, FormType] = {
     "10-K": FormType.FORM_10K,
@@ -186,3 +188,102 @@ def normalize_bond_security(
         synthetic_reason=None,
         provenance_id=provenance_id,
     )
+
+
+def normalize_sec_filing_provenance(
+    entry: SecFilingEntryDTO,
+    *,
+    source_url: str,
+    retrieved_at: datetime,
+    raw_payload_id: UUID,
+) -> ProvenanceCreate:
+    return ProvenanceCreate(
+        provider=ProviderName.SEC_EDGAR,
+        source_record_id=entry.accession_no,
+        source_url=source_url,
+        as_of_date=date.fromisoformat(entry.filing_date),
+        retrieved_at=retrieved_at,
+        transformation=TransformationType.REPORTED,
+        classification=DataClassification.PUBLIC,
+        raw_payload_id=raw_payload_id,
+    )
+
+
+def normalize_sec_filing(
+    entry: SecFilingEntryDTO,
+    *,
+    issuer_id: UUID,
+    primary_document_url: str | None,
+    provenance_id: UUID,
+) -> SecFilingCreate:
+    return SecFilingCreate(
+        issuer_id=issuer_id,
+        accession_no=entry.accession_no,
+        form_type=entry.form,
+        filing_date=date.fromisoformat(entry.filing_date),
+        period_of_report=date.fromisoformat(entry.report_date) if entry.report_date else None,
+        is_amendment=entry.form.endswith("/A"),
+        primary_document=entry.primary_document,
+        primary_document_url=primary_document_url,
+        provenance_id=provenance_id,
+    )
+
+
+def normalize_filing_document_provenance(
+    *,
+    accession_no: str,
+    filing_date: date,
+    source_url: str,
+    retrieved_at: datetime,
+    raw_payload_id: UUID,
+) -> ProvenanceCreate:
+    """Provenance for a fetched filing *document* (the body, for text/evidence
+    extraction) — a distinct retrieval event from the filing-metadata
+    provenance `sec_filing.provenance_id` already carries.
+    """
+    return ProvenanceCreate(
+        provider=ProviderName.SEC_EDGAR,
+        source_record_id=accession_no,
+        source_url=source_url,
+        as_of_date=filing_date,
+        retrieved_at=retrieved_at,
+        transformation=TransformationType.REPORTED,
+        classification=DataClassification.PUBLIC,
+        raw_payload_id=raw_payload_id,
+    )
+
+
+class _TextExtractingHTMLParser(HTMLParser):
+    """Minimal stdlib HTML-to-text extractor — no new dependency for what is,
+    for rule-matching purposes, just "the visible words in the document."
+    Skips `<script>`/`<style>` contents; does not attempt layout fidelity.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._chunks: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in ("script", "style"):
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("script", "style") and self._skip_depth > 0:
+            self._skip_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth == 0 and data.strip():
+            self._chunks.append(data.strip())
+
+    def get_text(self) -> str:
+        return " ".join(self._chunks)
+
+
+def extract_filing_text(html: str) -> str:
+    """Plain visible text from a filing's HTML body, for deterministic rule
+    matching (PLAN.md 24.4) — not a layout-preserving conversion.
+    """
+    parser = _TextExtractingHTMLParser()
+    parser.feed(html)
+    return parser.get_text()

@@ -3,7 +3,9 @@ import { Route, Routes } from "react-router";
 import { Layout } from "./components/Layout";
 import { CreditUniversePage } from "./pages/CreditUniversePage";
 import { IssuerPage } from "./pages/IssuerPage";
+import { MorningResearchBriefPage } from "./pages/MorningResearchBriefPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+import { ResearchUniversesPage } from "./pages/ResearchUniversesPage";
 
 export function App(): ReactElement {
   return (
@@ -11,6 +13,8 @@ export function App(): ReactElement {
       <Route element={<Layout />}>
         <Route path="/" element={<CreditUniversePage />} />
         <Route path="/issuers/:issuerId" element={<IssuerPage />} />
+        <Route path="/research-universes" element={<ResearchUniversesPage />} />
+        <Route path="/research-brief" element={<MorningResearchBriefPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

@@ -814,3 +814,237 @@ first time a real caller needs to attribute two fields on the *same*
 `security` row to two different providers — not before. This ADR's pattern
 (new row when in doubt) is the interim answer for every provider adapter
 until that happens.
+
+---
+
+## ADR-016: Research Universes and Watchlists share one `collection`/`collection_membership` table pair, discriminated by `collection_type`
+
+**Date:** 2026-08-06
+**Status:** Accepted
+
+**Context**
+Milestone 6.5 needed organization-wide, curated "Research Universes" —
+distinct from the personal/team "Watchlists" `PLAN.md` §4.7/§14 already
+approved for Milestone 8 (eleven named lists, not yet built). Both are
+fundamentally the same shape: a named group of issuers with a rationale for
+each membership. Building Research Universes now, ahead of Watchlists,
+raised the question of whether to give it its own dedicated table or to
+generalize the already-approved-but-unbuilt watchlist shape to cover both.
+
+**Decision**
+One `collection`/`collection_membership` table pair for both concepts, with
+a `collection_type` discriminator (`research_universe`\|`watchlist`\|
+`benchmark`). `collection` carries `scope` (`organization`\|`personal`\|
+`team`), `visibility`, `curation_method`, `verification_status`, and
+`owner_user_id` (nullable — no `user` table exists yet, TD-002) so the same
+table can honestly represent an org-wide, system-seeded, publicly-visible
+Research Universe and a future personal, user-created, private Watchlist
+without either concept needing to fake fields that don't apply to it.
+`collection_membership.rationale`/`rationale_as_of_date` is a dated
+curatorial decision, never a current-status assertion — it never states an
+issuer *is* currently distressed, in Chapter 11, or high yield; that comes
+only from `research_evidence`/`alert_event` (ADR-018). `alert_rule` (§4.11)
+is deliberately **not** created this milestone — it is a different concept
+(user-defined threshold rules) with no real caller yet; adding it now would
+repeat the speculative-infrastructure mistake ADR-006/ADR-015 already
+warned against.
+
+**Alternatives Considered**
+- A dedicated `research_universe`/`research_universe_membership` table pair,
+  built independently of the future `watchlist` table — rejected: the two
+  concepts differ only in scope/ownership/curation metadata, not in shape.
+  Two nearly-identical table pairs would mean duplicating every future
+  feature (filtering, membership rationale, verification) twice, and would
+  leave Milestone 8 deciding whether to unify them retroactively (a harder,
+  live-data migration) instead of deciding now with no data at stake yet.
+- A single `watchlist` table with no `collection_type` distinction, treating
+  Research Universes as "system watchlists" — rejected: conflates two
+  concepts a user needs to tell apart at a glance (an org-wide curated
+  research group vs. a personal tracking list), and the eventual Watchlist
+  UI (Milestone 8) would need to filter out Research Universes by some other
+  means anyway.
+
+**Tradeoffs**
+`collection` carries a few columns that only make sense for one
+`collection_type` (e.g. `owner_user_id` is meaningless for
+`collection_type = research_universe`, `priority` is not yet used for
+Watchlists) — accepted as a normal generalized-table tradeoff, the same
+shape as `research_evidence.filing_id` being nullable because not every
+future evidence provider has a filing to point to.
+
+**Consequences**
+- Milestone 8 (Watchlists) builds directly on this schema — no migration
+  needed to introduce the concept, only new rows with
+  `collection_type = watchlist` and a CRUD UI.
+- Any future `collection_type` (e.g. a shared "peer group" concept) is a new
+  enum value plus UI, not a new table.
+
+**Future Revisit Recommendation**
+If a `collection_type` ever needs materially different columns (not just
+different values of existing ones), split it into its own table at that
+point — this ADR's generalization is justified by real shape overlap, not a
+permanent commitment to one table for every future grouping concept.
+
+---
+
+## ADR-017: `LLMProvider` Protocol pulled forward from Milestone 13, scoped to backend evidence review only, with provider-specific (not shared) credential configuration
+
+**Date:** 2026-08-06
+**Status:** Accepted
+
+**Context**
+Milestone 6.5's governed-AI evidence review layer needed an LLM call
+(`app/ai/evidence_review.py`) years ahead of Milestone 13 (AI Research
+Assistant), which is where `PLAN.md` §10 originally scoped the
+`LLMProvider` Protocol and provider abstraction. A real `ANTHROPIC_API_KEY`
+already existed in `backend/.env`, but `app/config.py` looked for a generic
+`LLM_API_KEY` that was never actually set — a naming mismatch that left AI
+review silently unusable. The user explicitly directed fixing the naming
+mismatch with provider-specific variables rather than adding a duplicate
+secret name.
+
+**Decision**
+Pull `LLMProvider` (§10's `complete`/`call_tools`/`create_embeddings`
+Protocol) and a real `AnthropicProvider` forward into this milestone, scoped
+narrowly to backend evidence classification — no chat, no RAG, no
+user-facing assistant, no embeddings (`call_tools`/`create_embeddings` raise
+`NotImplementedError("reserved for Milestone 13")`). Configuration is
+provider-specific, not a shared secret: `ANTHROPIC_API_KEY`/
+`ANTHROPIC_MODEL`, `OPENAI_API_KEY`/`OPENAI_MODEL`,
+`AZURE_OPENAI_API_KEY`/`AZURE_OPENAI_ENDPOINT`/`AZURE_OPENAI_MODEL`, plus a
+separate `EMBEDDING_PROVIDER` (reserved, unused — chat and embeddings may
+end up on different vendors later). `app/ai/factory.py` reads
+`LLM_PROVIDER`, validates only that selected provider's own required
+credentials, and raises a clear `LLMConfigurationError` if they're missing —
+it never falls back to a different provider and never logs a key. When no
+provider is configured, the overnight monitor runs in deterministic-only
+mode — a fully supported, intentionally operational state, not a degraded
+one (`app/scripts/run_overnight_filing_monitor.py` catches
+`LLMConfigurationError` at startup specifically to guarantee this).
+
+**Alternatives Considered**
+- Keep the generic `LLM_API_KEY` and just point it at whichever provider is
+  active — rejected: a shared secret name across providers means switching
+  providers silently changes what a stale/leaked `LLM_API_KEY` grants
+  access to, and means "is Anthropic configured?" can't be answered without
+  also knowing what `LLM_PROVIDER` currently says. Explicitly rejected by
+  the user during planning.
+- Defer AI evidence review entirely to Milestone 13, ship Layer 1
+  (deterministic) only this milestone — rejected: a real, working
+  `ANTHROPIC_API_KEY` already existed, and the two-layer design (deterministic
+  candidates reviewed by governed AI) was a specific, approved requirement
+  for this milestone, not an optional enhancement.
+- Build a full multi-provider abstraction with all of OpenAI/Azure OpenAI/
+  Ollama actually implemented now — rejected: no real caller needs them yet;
+  `factory.py` raises a clear "selected but not implemented" error for those
+  provider names directly, which is the same user-visible behavior as a full
+  stub implementation with none of the speculative code.
+
+**Tradeoffs**
+Milestone 13's eventual AI Research Assistant will need to extend this same
+`LLMProvider`/`AnthropicProvider` with `call_tools`/`create_embeddings` —
+accepted, since the Protocol shape was already approved for that purpose and
+this milestone only implements the subset it actually calls.
+
+**Consequences**
+- Every future AI-calling feature in this codebase reads its own
+  provider-specific env vars and goes through `app/ai/factory.py` — no
+  feature should introduce a second, competing credential-configuration
+  pattern.
+- `app/ai/evidence_review.py`'s fail-closed behavior (malformed/ungrounded
+  AI response never becomes an alert, falls back to the deterministic
+  template) is the precedent for how every future AI-assisted feature in
+  this codebase must degrade.
+
+**Future Revisit Recommendation**
+Implement `call_tools`/`create_embeddings` on `AnthropicProvider` (and add
+real `OpenAIProvider`/`AzureOpenAIProvider` implementations) when Milestone
+13 has a concrete caller — not before.
+
+---
+
+## ADR-018: The evidence/alert model is provider-agnostic from the start — `research_evidence`, not `distress_evidence`, with alerts grouped via an internal Evidence Bundle concept rather than a hard filing FK
+
+**Date:** 2026-08-06
+**Status:** Accepted
+
+**Context**
+Milestone 6.5's overnight monitor is SEC-filing-specific today, but
+`PLAN.md`'s roadmap already commits to future evidence sources for the same
+kind of distress-signal research: CourtListener docket events (Milestone
+7), ratings actions, macro/FRED-derived signals, and eventually AI-extracted
+signals from research notes/documents (Milestone 9). Naming the new tables
+and alert-grouping logic after SEC filings specifically (`distress_evidence`,
+alerts keyed to a `filing_id`) would mean redesigning both the schema and
+the alert-synthesis logic the first time a second evidence source arrives.
+
+**Decision**
+`research_evidence` (not `distress_evidence`) carries an explicit
+`evidence_provider` column (SEC EDGAR is the first value, not the only one
+the schema anticipates) and a nullable `filing_id` FK — this milestone's one
+concrete source pointer, following the same nullable-source-FK precedent
+TD-007/ADR-015 already established, so a future provider adds its own
+nullable FK the same way rather than forcing a polymorphic association table
+before a second real source exists. Evidence is grouped into an internal
+**Evidence Bundle** (`app/domain/evidence_bundle.py`,
+`group_evidence_into_bundles` — domain-only, not a persisted table) before
+becoming one `alert_event`; today's grouping key is `(issuer_id,
+evidence_provider, source_type, filing_id)`, which happens to mean "one
+bundle per filing" because that's the only real grouping key that exists
+yet, but the function itself has no SEC-specific logic, so a future
+milestone can change the grouping key (e.g. same issuer + overlapping time
+window across two providers) without touching alert-synthesis code
+downstream. `alert_event` has **no** `filing_id` column at all — it carries
+`evidence_ids` (the real source of truth for what caused the alert) plus a
+denormalized `primary_source_label`/`primary_source_url` convenience pair
+built by whichever provider's evidence triggered the bundle
+(`filing_monitor_service._describe_sec_source` is the one place SEC-specific
+label formatting happens, injected into the otherwise provider-agnostic
+`app/services/alert_synthesis_service.py`). The UI resolves "which filing(s)
+caused this alert" by joining through `evidence_ids` →
+`research_evidence.filing_id`, never by a direct alert-to-filing pointer.
+
+**Alternatives Considered**
+- Name the tables/columns after SEC filings directly
+  (`distress_evidence.filing_id` NOT NULL, `alert_event.filing_id`) —
+  rejected: cheaper today, but CourtListener (the very next milestone) would
+  either need its own parallel `distress_evidence`-like table or a
+  disruptive rename/migration of live, permanently-committed data the first
+  time a second provider arrives.
+- A fully polymorphic evidence-source association
+  (`source_type` + `source_id` with no FK constraint) instead of a nullable
+  `filing_id` FK — rejected as overbuilt for one real source, the same
+  reasoning ADR-015 used for `security`: build the general mechanism when a
+  second real source needs it, not speculatively.
+- Persist `EvidenceBundle` as its own table — rejected: nothing outside the
+  alert-synthesis code path needs to query "what bundle is this evidence
+  part of" independently of the alert it produced; `alert_event.evidence_ids`
+  already answers that once a bundle becomes an alert, and a bundle that
+  produces no alert (e.g. all-low-confidence evidence, or a duplicate on
+  re-run) has no reason to be a durable row.
+
+**Tradeoffs**
+`primary_source_label`/`primary_source_url` are denormalized, provider-shaped
+text rather than a normalized reference — accepted because the alternative
+(the UI joining through evidence to the provider-specific source table on
+every render) would leak SEC-specific joins into the generic alert list/
+Morning Research Brief views, exactly the coupling this ADR exists to avoid.
+
+**Consequences**
+- Milestone 7 (CourtListener) adds `evidence_provider = courtlistener`,
+  its own nullable source FK (e.g. `docket_entry_id`) on `research_evidence`,
+  and its own `_describe_courtlistener_source`-shaped function injected into
+  `alert_synthesis_service` — no schema change to `alert_event` and no
+  change to the bundling function's signature.
+- The Morning Research Brief page's heading ("New Research Alerts," not "New
+  Distress Filings") and its evidence-provider filter (defaulted to "all
+  providers," today only `sec_edgar` populated) were written against this
+  same assumption at the UI layer — see `PLAN.md` §24.9.
+
+**Future Revisit Recommendation**
+Revisit the `(issuer_id, evidence_provider, source_type, filing_id)`
+bundling key the first time two evidence records from *different*
+providers genuinely need to join into one bundle (e.g. a CourtListener
+docket event and an SEC 8-K about the same bankruptcy filing, on the same
+day) — that is a real grouping-logic change, not a schema change, and
+belongs in `group_evidence_into_bundles`, not a new migration.

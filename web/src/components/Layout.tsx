@@ -25,6 +25,8 @@ interface NavItem {
 // stay visible so the eventual product surface is legible from day one.
 const NAV_ITEMS: NavItem[] = [
   { label: "Credit Universe", path: "/", enabled: true },
+  { label: "Research Universes", path: "/research-universes", enabled: true },
+  { label: "Morning Research Brief", path: "/research-brief", enabled: true },
   { label: "Dashboard", path: "/dashboard", enabled: false },
   { label: "Capital Structure", path: "/capital-structure", enabled: false },
   { label: "Watchlists", path: "/watchlists", enabled: false },

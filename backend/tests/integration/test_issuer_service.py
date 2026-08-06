@@ -8,11 +8,21 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.core.types import FormType, InstrumentType
+from app.core.types import (
+    CollectionScope,
+    CollectionType,
+    CollectionVisibility,
+    CurationMethod,
+    FormType,
+    InstrumentType,
+    VerificationStatus,
+)
+from app.domain.collection import CollectionCreate, CollectionMembershipCreate
 from app.domain.financial_fact import FinancialFactCreate
 from app.domain.issuer import IssuerCreate
 from app.domain.security import SecurityCreate
 from app.repositories import (
+    collection_repository,
     financial_fact_repository,
     issuer_repository,
     provenance_repository,
@@ -121,3 +131,40 @@ def test_get_issuer_detail_recent_activity_is_sorted_newest_first(db_session: Se
     categories = {item.category for item in detail.recent_activity}
     assert "security_identified" in categories
     assert "filing" in categories
+
+
+def test_get_issuer_detail_includes_universe_memberships(db_session: Session) -> None:
+    """Milestone 6.5 (PLAN.md 24.9) — curated Research Universe membership,
+    clearly separate from factual-status sections."""
+    issuer_id = _seed_issuer_with_a_security_and_a_filing(
+        db_session, legal_name="Issuer Service Test Co Epsilon"
+    )
+    collection = collection_repository.create_collection(
+        db_session,
+        CollectionCreate(
+            slug="test-issuer-service-universe",
+            name="Test Issuer Service Universe",
+            description="Seeded for an issuer_service test.",
+            collection_type=CollectionType.RESEARCH_UNIVERSE,
+            scope=CollectionScope.ORGANIZATION,
+            visibility=CollectionVisibility.PUBLIC,
+            curation_method=CurationMethod.SYSTEM_SEEDED,
+            verification_status=VerificationStatus.VERIFIED,
+        ),
+    )
+    collection_repository.add_membership(
+        db_session,
+        CollectionMembershipCreate(
+            collection_id=collection.id,
+            issuer_id=issuer_id,
+            rationale="Test membership for issuer_service.",
+            verification_status=VerificationStatus.VERIFIED,
+        ),
+    )
+
+    detail = issuer_service.get_issuer_detail(db_session, issuer_id)
+
+    assert detail is not None
+    assert len(detail.universe_memberships) == 1
+    assert detail.universe_memberships[0].name == "Test Issuer Service Universe"
+    assert detail.universe_memberships[0].rationale == "Test membership for issuer_service."
