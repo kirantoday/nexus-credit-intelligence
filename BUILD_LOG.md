@@ -2111,7 +2111,17 @@ log in the browser (not guessing at CORS) to find the real port mismatch.
 
 **Git Commit Hash**
 
-`a7f11f27b87a477c160c15aa84b50feb1cc229c3` (`a7f11f2`)
+`a7f11f27b87a477c160c15aa84b50feb1cc229c3` (`a7f11f2`) — implementation.
+`675e18d69fe9c57f7cf76f012af3274ac6d1ee33` (`675e18d`) — follow-up docs
+commit recording this hash.
+
+**GitHub Remote and Push Results**
+
+- `git push origin main` — succeeded: `6ee8718..675e18d  main -> main`.
+- Post-push verification: `git ls-remote origin main` returns
+  `675e18d69fe9c57f7cf76f012af3274ac6d1ee33`, matching the local commit
+  exactly.
+- Remote branch: https://github.com/kirantoday/nexus-credit-intelligence/tree/main
 
 **Approximate Time Spent**
 
