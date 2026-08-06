@@ -20,12 +20,11 @@ interface NavItem {
   enabled: boolean;
 }
 
-// Placeholder navigation for Milestone 1. Each item is wired up for real as
-// its milestone lands (PLAN.md section 18) — disabled items are visible now
-// so the eventual product surface is legible from day one.
+// Credit Universe is the landing page (ADR-008) — every other item is wired
+// up for real as its milestone lands (PLAN.md section 18); disabled items
+// stay visible so the eventual product surface is legible from day one.
 const NAV_ITEMS: NavItem[] = [
-  { label: "Home", path: "/", enabled: true },
-  { label: "Credit Universe", path: "/credit-universe", enabled: false },
+  { label: "Credit Universe", path: "/", enabled: true },
   { label: "Dashboard", path: "/dashboard", enabled: false },
   { label: "Capital Structure", path: "/capital-structure", enabled: false },
   { label: "Watchlists", path: "/watchlists", enabled: false },

@@ -96,3 +96,22 @@ class FormType(StrEnum):
     FORM_8K = "8-K"
     FORM_6K = "6-K"
     FORM_20F = "20-F"
+
+
+class InstrumentType(StrEnum):
+    """`security.instrument_type` (PLAN.md 4.5)."""
+
+    BOND = "bond"
+    LOAN = "loan"
+    EQUITY = "equity"
+
+
+class Seniority(StrEnum):
+    """`security.seniority` (PLAN.md 4.5)."""
+
+    FIRST_LIEN = "first_lien"
+    SECOND_LIEN = "second_lien"
+    SENIOR_UNSECURED = "senior_unsecured"
+    SUBORDINATED = "subordinated"
+    PREFERRED = "preferred"
+    COMMON = "common"

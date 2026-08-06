@@ -22,4 +22,5 @@ from app.models import (  # noqa: F401
     issuer,
     provenance,
     raw_provider_payload,
+    security,
 )

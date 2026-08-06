@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import ForeignKey, Index, Text, text
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,6 +18,10 @@ class Issuer(Base):
         # (synthetic/no-SEC-filer issuers) while still preventing two rows
         # from claiming the same real CIK.
         Index("ix_issuer_cik", "cik", unique=True),
+        CheckConstraint(
+            "is_synthetic OR synthetic_reason IS NULL",
+            name="ck_issuer_synthetic_reason_requires_is_synthetic",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -29,6 +33,10 @@ class Issuer(Base):
     ticker: Mapped[str | None] = mapped_column(Text, nullable=True)
     sic: Mapped[str | None] = mapped_column(Text, nullable=True)
     sector: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_synthetic: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    synthetic_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     provenance_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("provenance.id"), nullable=False
     )

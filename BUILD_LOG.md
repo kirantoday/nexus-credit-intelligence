@@ -1460,3 +1460,327 @@ template for every future provider adapter (OpenFIGI, FRED, CourtListener,
 TRACE, and eventually the disabled licensed-vendor stubs); none of them needed
 their own architectural decision beyond what PLAN.md §3/§17 already specified,
 which is why this entry has no accompanying ADR.
+
+---
+
+## 2026-08-06 — Milestone 4: Credit Universe initial page
+
+**Summary**
+
+The first usable Credit Universe screen is live end-to-end against the real,
+shared Supabase project and is now the post-login landing page, replacing the
+placeholder `HomePage`. `security` (PLAN.md §4.5) gets its first migration.
+Two real data sources coexist and are clearly distinguished in both the data
+model and the UI: one real SEC EDGAR-sourced bond (Apple Inc., an honest
+aggregate figure — not a fabricated per-instrument one) and ten synthetic
+leveraged-loan positions across 8 fictional issuers. Every displayed value
+carries a provenance badge; freshness is computed at read time, never stored.
+The UI is powered entirely by the canonical domain model — no provider-specific
+logic appears anywhere in the frontend. Two real, previously-undetected bugs
+were found through actual manual use (not just passing tests) and fixed at the
+root: a search-box keystroke-loss race, and a Supabase pgbouncer/psycopg3
+prepared-statement incompatibility that intermittently broke both the test
+suite and the live server.
+
+**Features Completed**
+
+- `core/freshness.py`: `FreshnessTier` (`live`/`cached`/`stale`) computed from
+  `retrieved_at` + a per-`ProviderName` TTL policy at read time (PLAN.md §16) —
+  never persisted, so it can't silently drift from the truth.
+- `security` domain object + ORM model (PLAN.md §4.5), with CHECK constraints
+  (not native Postgres ENUM, per ADR-014) on `instrument_type`/`seniority`,
+  partial unique indexes on `cusip`/`isin`, and a
+  synthetic-reason-requires-`is_synthetic` constraint mirroring the one
+  already on `issuer`.
+- `is_synthetic`/`synthetic_reason` added to `issuer` so the real/synthetic
+  boundary is a first-class, queryable property of every issuer, not just
+  every security.
+- `security_repository.list_credit_universe`: joins `security` + `issuer` +
+  `provenance` in a single query (no N+1) with filter (instrument type,
+  synthetic flag, free-text search), sort (`nulls_last()` in both directions),
+  and pagination — built to scale to thousands of rows per PLAN.md's UX
+  requirement, even though the seed dataset is 11 rows.
+- `leveraged_loan_generator`: idempotent synthetic-data seeder for 8 fictional
+  issuers / 10 loan positions, each tagged `SYNTHETIC_DEMO_DATA` per ADR-008.
+- SEC EDGAR provider extended with `ingest_aggregate_bond`: pulls a real
+  aggregate debt concept (e.g. `LongTermDebtNoncurrent`) from an issuer's
+  XBRL company-facts and normalizes it into a `security` row. Verified against
+  live Apple company-facts data before writing the normalizer that the simple
+  companyfacts API genuinely has no per-instrument/CUSIP-level data — the
+  aggregate-only representation is a real API limitation, not a shortcut
+  (TD-008).
+- `credit_universe_service` + `GET /api/credit-universe`: thin route, service
+  layer applies `policy_check` per row (currently a no-op gate — nothing
+  licensed exists yet) and computes freshness per row before response
+  assembly.
+- Frontend: `DataTable` (generic TanStack Table v8 wrapper — deliberately v8,
+  not the newly-released v9, after inspecting both packages' actual exports
+  and choosing the API with a stable, well-documented surface), `ProvenanceBadge`,
+  `SyntheticDataBadge`, and `CreditUniversePage` — a 9-column sortable/
+  filterable/paginated grid, now mounted at `/` as the landing page. Filters
+  (instrument type, real/synthetic toggle, pagination, sort) are persisted in
+  the URL via `useSearchParams`; loading, empty, and error states are all
+  implemented, not just the happy path.
+- Vitest + React Testing Library set up for the frontend for the first time
+  this milestone (`vite.config.ts` test block, `src/test/setup.ts` with
+  explicit RTL cleanup wiring since `globals: false` is kept deliberately).
+
+**Files Created**
+
+`backend/app/core/freshness.py`, `backend/app/domain/security.py`,
+`backend/app/models/security.py`, `backend/app/repositories/security_repository.py`,
+`backend/app/synthetic/__init__.py`, `backend/app/synthetic/leveraged_loan_generator.py`,
+`backend/app/schemas/__init__.py`, `backend/app/schemas/credit_universe.py`,
+`backend/app/services/__init__.py`, `backend/app/services/credit_universe_service.py`,
+`backend/app/api/routes/credit_universe.py`,
+`backend/alembic/versions/0004_security_and_issuer_synthetic_flag.py`,
+`backend/tests/unit/test_freshness.py`,
+`backend/tests/unit/test_issuer_security_validators.py`,
+`backend/tests/integration/test_security_repository.py`,
+`backend/tests/integration/test_leveraged_loan_generator.py`,
+`backend/tests/integration/test_credit_universe_service.py`,
+`web/src/api/creditUniverse.ts`, `web/src/queries/useCreditUniverse.ts`,
+`web/src/lib/format.ts`, `web/src/lib/format.test.ts`,
+`web/src/lib/useDebouncedValue.ts`, `web/src/components/DataTable.tsx`,
+`web/src/components/DataTable.test.tsx`, `web/src/components/SyntheticDataBadge.tsx`,
+`web/src/components/SyntheticDataBadge.test.tsx`, `web/src/components/ProvenanceBadge.tsx`,
+`web/src/pages/CreditUniversePage.tsx`, `web/src/pages/CreditUniversePage.test.tsx`,
+`web/src/test/setup.ts`.
+
+**Files Modified**
+
+`backend/app/core/types.py` (`InstrumentType`, `Seniority`),
+`backend/app/domain/issuer.py` (`is_synthetic`/`synthetic_reason`),
+`backend/app/models/issuer.py` (matching columns + CHECK constraint),
+`backend/app/models/__init__.py` (imports `security`),
+`backend/app/repositories/issuer_repository.py` (`get_issuer_by_legal_name`,
+updated `_to_domain`/`create_issuer`),
+`backend/app/providers/sec_edgar/normalizer.py` (`normalize_bond_provenance`,
+`normalize_bond_security`),
+`backend/app/providers/sec_edgar/provider.py` (`ingest_aggregate_bond`;
+extracted `_fetch_and_store_company_facts`/`_extract_datapoint` helpers),
+`backend/app/db/session.py` (disabled psycopg3 server-side prepare — see
+Problems Encountered), `backend/app/main.py` (mounts `credit_universe_router`),
+`backend/tests/integration/test_sec_edgar_live_ingestion.py` (added live
+aggregate-bond ingestion tests), `web/package.json`/`package-lock.json`
+(`@tanstack/react-table`, Vitest/RTL dev deps), `web/vite.config.ts` (test
+block), `web/tsconfig.app.json` (`@testing-library/jest-dom` types),
+`web/src/App.tsx` (`/` now renders `CreditUniversePage`),
+`web/src/components/Layout.tsx` (nav updated).
+
+Deleted: `web/src/pages/HomePage.tsx`, `web/src/queries/useHealth.ts`
+(only consumer was `HomePage`).
+
+**Database Changes**
+
+Migration `0004` applied to the live, shared Supabase project: creates
+`nexus.security` (CHECK constraints on `instrument_type`/`seniority`, partial
+unique indexes on `cusip`/`isin`, indexes on `issuer_id`/`provenance_id`/
+`instrument_type`) and adds `is_synthetic`/`synthetic_reason` (+ CHECK) to
+`nexus.issuer`. Verified with a full round-trip: `upgrade head` →
+`downgrade 0003` → `upgrade head`, plus a follow-up autogenerate check against
+the fully-migrated state that detected zero further diffs.
+
+Separately, a genuine (non-test, committed) seed was run against the live
+database: `nexus.security` now permanently contains one real row (Apple Inc.
+aggregate long-term debt, $71.34B, sourced from live XBRL company-facts) and
+ten synthetic leveraged-loan rows across 8 fictional issuers, all backed by
+real `provenance` rows (`provider = sec_edgar` / `provider = synthetic`
+respectively) — this is Milestone 4's primary objective made tangible, not
+just asserted by a test that immediately rolls back.
+
+**API Endpoints Added**
+
+`GET /api/credit-universe` — query params: `instrument_type`, `is_synthetic`,
+`search`, `sort_by`, `sort_dir`, `page`, `page_size`. Returns
+`{ rows: CreditUniverseRow[], total, page, page_size }`.
+
+**Frontend Pages Added**
+
+`CreditUniversePage` at `/` (replaces the placeholder `HomePage` as the
+landing page).
+
+**Environment Variables Added**
+
+None.
+
+**Tests Added**
+
+43 new backend tests (91 → 134): `test_freshness.py` (freshness-tier
+boundaries per provider policy), `test_issuer_security_validators.py`
+(synthetic-reason-requires-flag validators), `test_security_repository.py`
+(13 — CRUD, CHECK-constraint violations, cusip uniqueness, filter/sort/
+pagination), `test_leveraged_loan_generator.py` (4 — data correctness and
+intra-run idempotency, not a fixed created/found boolean, per the pattern
+established in Milestone 3), `test_credit_universe_service.py` (3), plus 2
+new live SEC EDGAR integration tests
+(`test_live_ingest_aggregate_bond`/`..._is_idempotent`).
+
+26 new frontend tests (0 → 26, first frontend tests this project has had):
+`format.test.ts` (16), `SyntheticDataBadge.test.tsx` (2), `DataTable.test.tsx`
+(5), `CreditUniversePage.test.tsx` (3).
+
+**Test Results**
+
+```
+backend: pytest -v (x3 consecutive runs)  -> 134 passed each time (0 flaky, see Problems Encountered #2)
+backend: ruff check .                     -> All checks passed!
+backend: black --check .                  -> 77 files would be left unchanged.
+backend: mypy .                           -> Success: no issues found in 73 source files
+backend: alembic current                  -> 0004 (head)
+backend: alembic check                    -> No new upgrade operations detected.
+
+frontend: npm run test                    -> 26 passed (4 test files)
+frontend: npm run lint                    -> clean
+frontend: npm run typecheck               -> clean (tsc -b)
+frontend: npm run build                   -> succeeded (dist/assets bundle 592.75 kB / gzip 181.78 kB;
+                                              chunk-size warning only, no split performed — out of
+                                              milestone scope)
+
+pre-commit run --all-files                -> all hooks passed
+
+GET /health (live server)                 -> 200 {"status": "healthy", ...}
+GET /api/credit-universe (live server)    -> 200, correct rows/provenance/freshness
+```
+
+**Commands Executed** (representative)
+
+```
+cd backend
+./.venv/Scripts/python -m alembic revision --autogenerate -m "security table and issuer synthetic flag"
+./.venv/Scripts/python -m alembic upgrade head
+./.venv/Scripts/python -m alembic downgrade 0003
+./.venv/Scripts/python -m alembic upgrade head
+./.venv/Scripts/python -m alembic revision --autogenerate -m "drift check"  # confirmed empty, deleted
+
+# genuine, committed (non-test) live seed — see Database Changes
+./.venv/Scripts/python -c "... seed_synthetic_loans(db) + ingest_aggregate_bond(db, http_client, cik=...) + db.commit() ..."
+
+./.venv/Scripts/python -m pytest -q   # run 3x consecutively to confirm the pooler fix eliminated flakiness
+./.venv/Scripts/python -m ruff check . / black --check . / mypy .
+
+cd ../web
+npm install @tanstack/react-table@^8 vitest @testing-library/react @testing-library/jest-dom @testing-library/user-event jsdom
+npm run test / lint / typecheck / build
+
+cd ..
+backend/.venv/Scripts/python -m pre_commit run --all-files
+
+# manual browser verification (Chrome, via claude-in-chrome tools)
+# search box, instrument-type filter, real/synthetic toggle, empty state,
+# column sort, console-error check — see Problems Encountered #1 and #2
+```
+
+**Deployment Validation**
+
+Not exercised — Railway/Vercel deployment remains Milestone 15 scope. Both
+the backend (`uvicorn`, port 8010) and frontend (`vite dev`, port 5173) dev
+servers were run locally throughout this milestone and confirmed booting and
+serving real, live-Supabase-backed data.
+
+**Problems Encountered**
+
+1. **A real search-box keystroke-loss bug, found only by actually typing into
+   the field.** `CreditUniversePage`'s search `TextField` was originally
+   `value={searchParams.get("q")}` with `onChange` calling `setSearchParams`
+   directly on every keystroke — driven straight from URL state, matching
+   every other filter on the page. Typing "Apple" resulted in only "e"
+   appearing. Root cause: each keystroke's `setSearchParams` call triggers a
+   React re-render with a new controlled `value` before the DOM/React can
+   process the next keystroke, so every character effectively resets the
+   field to whatever the URL update landed on. This is a genuine race
+   (react-router's URL/history update is not a free, synchronous operation),
+   not a browser-automation artifact — it would affect a real user typing at
+   normal speed. Fixed with a new `useDebouncedValue` hook: the `TextField`
+   now binds to local `useState` (`searchInput`), always instantly
+   responsive to the DOM; a 300ms-debounced derivative (`debouncedSearch`)
+   drives both the API query and, via a `useEffect`, the URL param — so
+   typing never loses characters and doesn't fire a network request or a
+   history entry per keystroke either. Directly caught by following CLAUDE.md's
+   "start the dev server and use the feature in a browser before reporting
+   the task as complete" instruction — automated tests alone (which mock the
+   API and don't simulate real per-keystroke DOM timing) would not have
+   caught this.
+2. **A real, live-reproduced Supabase pgbouncer/psycopg3 incompatibility.**
+   Discovered two ways: first as 3 flaky test failures
+   (`DuplicatePreparedStatement`) on a full `pytest -q` run that passed
+   cleanly when the same tests were re-run in isolation; second, more
+   seriously, as a genuine `500 Internal Server Error`
+   (`InvalidSqlStatementName: prepared statement "_pg3_0" does not exist`) on
+   the actual running dev server when curl'd directly, on the exact query
+   `security_repository.list_credit_universe` uses for its total count.
+   Root cause: `DATABASE_URL` points at Supabase's pooled connection string,
+   which runs pgbouncer in transaction-pooling mode — each query can be
+   handed to a *different* physical Postgres backend connection. psycopg3
+   caches server-side `PREPARE`d statements per logical connection by
+   default; under transaction pooling that cache goes stale, since a later
+   query on the same logical connection object can land on a physical
+   backend that never saw the original `PREPARE`, or one where a leftover
+   prepared-statement name collides with a different client's. This is a
+   well-documented category of pgbouncer-transaction-mode incompatibility,
+   not specific to this codebase's queries. Fixed in
+   `backend/app/db/session.py` by adding `"prepare_threshold": None` to
+   `connect_args`, which disables psycopg3's automatic server-side prepare
+   entirely. Verified via 3 consecutive full `pytest -q` runs (134/134 each
+   time, zero flakiness) and a live re-check of the actual running server
+   after restarting it with the fix (`GET /api/credit-universe` → 200 with
+   correct data). This is a connection-configuration fix, not an architecture
+   change — the approved stack (Supabase-managed Postgres via SQLAlchemy) is
+   unchanged; no ADR was written for it, matching CLAUDE.md's guidance that
+   ordinary tooling/config fixes don't need one.
+3. **TanStack Table v9 vs v8.** `npm install @tanstack/react-table` (no
+   version pin) pulled v9.0.0, whose API (`useTable`, feature-flag
+   composition) bears no resemblance to the well-documented v8 API this
+   project's design assumed. Caught before writing any component code by
+   inspecting `Object.keys(require('@tanstack/react-table'))` for both
+   versions; resolved by installing `@tanstack/react-table@^8` explicitly
+   (resolved to 8.21.3).
+4. **RTL auto-cleanup didn't fire between tests.** A `DataTable.test.tsx`
+   sort-click test failed with "multiple elements with text 'Name'" —
+   root cause was `globals: false` in `vite.config.ts` (deliberate, for
+   explicit imports), which prevents React Testing Library's automatic
+   `afterEach(cleanup)` detection. Fixed by wiring `cleanup()` explicitly in
+   `src/test/setup.ts`.
+
+**Solutions**
+
+All four were caught by direct verification, not assumption: actually typing
+into the search box in a real browser (not just asserting on mocked API
+responses), running the full test suite repeatedly and curling the live dev
+server directly rather than trusting a single green run, inspecting the
+actual installed package's exports before writing code against an assumed
+API, and reading the specific duplicate-element failure message rather than
+guessing at a cleanup fix.
+
+**Remaining Work**
+
+- TD-007 (new): `security` has a single `provenance_id` per row, not
+  per-field provenance — deferred until a milestone (likely Milestone 5's
+  OpenFIGI enrichment) actually needs to attribute individual fields to
+  different providers.
+- TD-008 (new): SEC EDGAR's XBRL company-facts API has no per-instrument bond
+  data at all (a real external API limitation, not a shortcut) — real
+  CUSIP/maturity/coupon data requires a different data source entirely.
+- Frontend production bundle exceeds Vite's 500kB chunk-size warning
+  threshold (592.75kB / gzip 181.78kB) — not addressed this milestone
+  (premature optimization for an 11-row seed dataset); worth revisiting with
+  route-based code-splitting once more pages exist.
+- Everything in Milestone 5 onward per `PLAN.md` § Milestone Status —
+  unstarted; Milestone 5 requires separate approval to begin.
+
+**Git Commit Hash**
+
+**Approximate Time Spent**
+
+Single focused implementation session, following directly after Milestone 3
+approval.
+
+**Developer Notes**
+
+The domain-layer and provider-layer conventions from Milestones 2 and 3 held
+up without modification for `security`/the SEC bond-ingestion path. The
+pgbouncer/psycopg3 finding (Problem #2) is worth remembering for every future
+provider adapter and every future load-bearing query — it was silent under
+light, isolated test runs and only surfaced under the kind of concurrent/
+sequential connection churn a full test suite or a real multi-request server
+session produces.

@@ -28,11 +28,23 @@ _engine = (
     create_engine(
         _settings.database_url,
         pool_pre_ping=True,
-        # Belt-and-suspenders alongside Base.metadata's schema="nexus": every
-        # connection resolves unqualified names to the nexus schema first, so a
-        # query can never silently fall through to the other application's
-        # tables in public.
-        connect_args={"options": f"-c search_path={NEXUS_SCHEMA},public"},
+        connect_args={
+            # Belt-and-suspenders alongside Base.metadata's schema="nexus": every
+            # connection resolves unqualified names to the nexus schema first, so a
+            # query can never silently fall through to the other application's
+            # tables in public.
+            "options": f"-c search_path={NEXUS_SCHEMA},public",
+            # Supabase's connection string points at its pgbouncer pooler in
+            # transaction-pooling mode, which hands each query to a different
+            # physical backend connection. psycopg3 normally caches server-side
+            # PREPARE statements per logical connection; under transaction
+            # pooling that cache goes stale (a later query can hit a backend
+            # that never saw the PREPARE, or one where a stale prepared-statement
+            # name collides with another client's), surfacing as intermittent
+            # `InvalidSqlStatementName` / `DuplicatePreparedStatement` errors.
+            # Disabling server-side prepare avoids the mismatch entirely.
+            "prepare_threshold": None,
+        },
     )
     if _settings.database_url
     else None

@@ -25,10 +25,24 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.core.types import DataClassification, FormType, ProviderName, TransformationType
+from app.core.types import (
+    DataClassification,
+    FormType,
+    InstrumentType,
+    ProviderName,
+    TransformationType,
+)
 from app.providers.base.http_client import ThrottledHttpClient
-from app.providers.sec_edgar.provider import ingest_issuer_and_one_financial_fact
-from app.repositories import financial_fact_repository, issuer_repository, provenance_repository
+from app.providers.sec_edgar.provider import (
+    ingest_aggregate_bond,
+    ingest_issuer_and_one_financial_fact,
+)
+from app.repositories import (
+    financial_fact_repository,
+    issuer_repository,
+    provenance_repository,
+    security_repository,
+)
 
 _APPLE_CIK = 320193
 _CONCEPT = "RevenueFromContractWithCustomerExcludingAssessedTax"
@@ -124,3 +138,49 @@ def test_live_ingest_provenance_is_public_reported(
     assert fact_provenance.provider is ProviderName.SEC_EDGAR
     assert fact_provenance.classification is DataClassification.PUBLIC
     assert fact_provenance.raw_payload_id is not None
+
+
+def test_live_ingest_aggregate_bond(
+    db_session: Session, sec_http_client: ThrottledHttpClient
+) -> None:
+    """PLAN.md section 18 step 4's "real SEC-sourced bonds": one real,
+    aggregate debt figure extracted as a `security` row, honestly described
+    (not presented as a specific, CUSIP-identified bond issue)."""
+    # The issuer must already exist — ingest it first, matching real call order.
+    fact_result = ingest_issuer_and_one_financial_fact(
+        db_session, sec_http_client, cik=_APPLE_CIK, concept=_CONCEPT
+    )
+
+    bond_result = ingest_aggregate_bond(db_session, sec_http_client, cik=_APPLE_CIK)
+
+    assert bond_result.security.issuer_id == fact_result.issuer.id
+    assert bond_result.security.instrument_type is InstrumentType.BOND
+    assert bond_result.security.amount_outstanding is not None
+    assert bond_result.security.amount_outstanding > Decimal(0)
+    assert bond_result.security.is_synthetic is False
+    # Honestly missing, never fabricated: no per-instrument data is available
+    # from this API (see normalizer.normalize_bond_security's docstring).
+    assert bond_result.security.cusip is None
+    assert bond_result.security.isin is None
+    assert bond_result.security.figi is None
+    assert bond_result.security.maturity_date is None
+    assert bond_result.security.coupon is None
+    assert "aggregate" in bond_result.security.description.lower()
+
+    fetched = security_repository.get_security(db_session, bond_result.security.id)
+    assert fetched is not None
+    assert fetched.amount_outstanding == bond_result.security.amount_outstanding
+
+
+def test_live_ingest_aggregate_bond_is_idempotent(
+    db_session: Session, sec_http_client: ThrottledHttpClient
+) -> None:
+    ingest_issuer_and_one_financial_fact(
+        db_session, sec_http_client, cik=_APPLE_CIK, concept=_CONCEPT
+    )
+
+    first = ingest_aggregate_bond(db_session, sec_http_client, cik=_APPLE_CIK)
+    second = ingest_aggregate_bond(db_session, sec_http_client, cik=_APPLE_CIK)
+
+    assert second.security_created is False
+    assert second.security.id == first.security.id

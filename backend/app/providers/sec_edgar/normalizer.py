@@ -12,10 +12,17 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID
 
-from app.core.types import DataClassification, FormType, ProviderName, TransformationType
+from app.core.types import (
+    DataClassification,
+    FormType,
+    InstrumentType,
+    ProviderName,
+    TransformationType,
+)
 from app.domain.financial_fact import FinancialFactCreate
 from app.domain.issuer import IssuerCreate
 from app.domain.provenance import ProvenanceCreate
+from app.domain.security import SecurityCreate
 from app.providers.sec_edgar.client import format_cik10
 from app.providers.sec_edgar.dto import SecSubmissionsDTO, SecXbrlUnitDatapoint
 
@@ -114,5 +121,68 @@ def normalize_financial_fact(
         form_type=form_type,
         filing_date=date.fromisoformat(datapoint.filed),
         accession_no=datapoint.accn,
+        provenance_id=provenance_id,
+    )
+
+
+def normalize_bond_provenance(
+    datapoint: SecXbrlUnitDatapoint,
+    *,
+    source_url: str,
+    retrieved_at: datetime,
+    raw_payload_id: UUID,
+) -> ProvenanceCreate:
+    return ProvenanceCreate(
+        provider=ProviderName.SEC_EDGAR,
+        source_record_id=datapoint.accn,
+        source_url=source_url,
+        as_of_date=date.fromisoformat(datapoint.end),
+        retrieved_at=retrieved_at,
+        transformation=TransformationType.REPORTED,
+        classification=DataClassification.PUBLIC,
+        raw_payload_id=raw_payload_id,
+    )
+
+
+def normalize_bond_security(
+    datapoint: SecXbrlUnitDatapoint,
+    *,
+    issuer_id: UUID,
+    issuer_legal_name: str,
+    provenance_id: UUID,
+) -> SecurityCreate:
+    """A real, SEC-reported aggregate debt figure represented as one
+    `security` row — deliberately *not* presented as a specific,
+    CUSIP-identified bond issue.
+
+    SEC's company-facts API reports debt at the balance-sheet aggregate level
+    (e.g. `LongTermDebtNoncurrent`), not per-instrument/tranche — genuine
+    per-issue detail (a specific note's own CUSIP, coupon, maturity) would
+    require parsing full XBRL dimensional data, which this project's simple
+    company-facts client doesn't do. `seniority`, `lien_position`, `secured`,
+    `cusip`/`isin`/`figi`, `maturity_date`, and `coupon` are left genuinely
+    unknown (`None`) rather than guessed at — the `description` says exactly
+    what this figure is so it's never mistaken for a specific issue.
+    """
+    return SecurityCreate(
+        issuer_id=issuer_id,
+        instrument_type=InstrumentType.BOND,
+        seniority=None,
+        lien_position=None,
+        secured=None,
+        cusip=None,
+        isin=None,
+        figi=None,
+        description=(
+            f"{issuer_legal_name} — Long-Term Debt "
+            "(SEC XBRL aggregate; not a specific instrument)"
+        ),
+        maturity_date=None,
+        coupon=None,
+        amount_outstanding=datapoint.val,
+        benchmark=None,
+        spread=None,
+        is_synthetic=False,
+        synthetic_reason=None,
         provenance_id=provenance_id,
     )
