@@ -20,11 +20,18 @@ class Settings(BaseSettings):
     environment: Literal["local", "test", "staging", "production"] = "local"
     log_level: str = "INFO"
 
-    # Supabase / database
+    # Supabase / database.
+    #
+    # This project shares a single Supabase project with another application.
+    # Nexus owns nothing outside the `nexus` Postgres schema (see app/db/base.py's
+    # NEXUS_SCHEMA and alembic/env.py) — it never reads, writes, or migrates the
+    # other application's tables. DATABASE_URL is the pooled/runtime connection;
+    # DIRECT_DATABASE_URL is the non-pooled connection Alembic requires.
     database_url: str | None = None
     direct_database_url: str | None = None
     supabase_url: str | None = None
-    supabase_service_role_key: str | None = None
+    supabase_anon_key: str | None = None
+    supabase_service_key: str | None = None
     supabase_storage_bucket: str | None = None
 
     # Public data providers

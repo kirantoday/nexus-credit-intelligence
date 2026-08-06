@@ -52,10 +52,10 @@ file beyond a pointer.
 |---|---|
 | **Overall Progress** | ~6% — Milestone 1 of 16 complete |
 | **Current Milestone** | Milestone 1 — Foundation (complete) |
-| **Current Status** | Milestone 1 is complete and hardened. Backend (FastAPI/SQLAlchemy 2/Alembic) and frontend (React/Vite/MUI/TanStack Query) scaffolds are built, tested, linted, type-checked, and boot successfully. `/health` verified locally. Alembic migration mechanics verified (history/heads resolve); actual `alembic upgrade head` against a live Supabase project is pending real `DATABASE_URL`/`DIRECT_DATABASE_URL` credentials (tracked in Known Issues). **Milestone 1 hardening** (not Milestone 2) added: default branch renamed `master` → `main`, `CLAUDE.md` operating guide, `.pre-commit-config.yaml` (fast local checks), `README.md`, GitHub issue/PR templates, and a GitHub remote connection — see `BUILD_LOG.md` "Milestone 1 Hardening" entry. Awaiting approval to begin Milestone 2. |
+| **Current Status** | Milestone 1 is complete and hardened. Backend (FastAPI/SQLAlchemy 2/Alembic) and frontend (React/Vite/MUI/TanStack Query) scaffolds are built, tested, linted, type-checked, and boot successfully. **Milestone 1 hardening** added: default branch renamed `master` → `main`, `CLAUDE.md` operating guide, `.pre-commit-config.yaml` (fast local checks), `README.md`, GitHub issue/PR templates, and a GitHub remote connection — see `BUILD_LOG.md` "Milestone 1 Hardening" entry. **Supabase schema-isolation configuration (pre-Milestone 2, ADR-013) is now complete and live-validated:** Nexus reuses an existing, shared Supabase project instead of a dedicated one, isolated entirely inside the `nexus` Postgres schema. `alembic upgrade head` has been run successfully against the real project via `DIRECT_DATABASE_URL` (a true direct endpoint, not the IPv4-compatible session pooler); the `nexus` schema and `nexus.alembic_version` (at revision `0001`) exist; `vector`/`pg_trgm` extensions exist in `public`; no Nexus object exists in `public` or any other schema; no existing non-Nexus object was touched. A SQLAlchemy session opened/closed cleanly via `DATABASE_URL` with `search_path` confirmed as `nexus, public`; `/health` returns 200. Full check suite (pytest, ruff, black, mypy, eslint, prettier, tsc, frontend build, `npm audit`, `pre-commit run --all-files`) passes. **KI-001 is closed.** See `BUILD_LOG.md` "Supabase Schema-Isolation Validation" entry for the full account, including a live-migration anomaly (`pg_trgm` initially installed into `nexus` instead of `public`) found and corrected during validation. Milestone 2 remains **Not Started**, awaiting approval. |
 | **Last Updated** | 2026-08-05 |
 | **Current Git Branch** | main |
-| **Latest Commit** | `c6c2811` — Milestone 1 hardening (pushed to `origin/main`) |
+| **Latest Commit** | `c6c2811` — Milestone 1 hardening (pushed to `origin/main`); Supabase schema-isolation validation commit hash recorded in a follow-up entry per this repo's established two-commit pattern |
 | **Next Milestone** | Milestone 2 — Provenance, `raw_provider_payload`, `calculation`/`calculation_input`, entitlement engine (§18 step 2) |
 
 ---
@@ -68,7 +68,7 @@ milestone completes; it is not itself a log (see `BUILD_LOG.md` for that).
 
 | Milestone | Feature | Status | Completion Date | Git Commit | Notes |
 |---|---|---|---|---|---|
-| 1 | Foundation: Supabase connection, Alembic skeleton, FastAPI `/health`, React shell | Complete (+ hardening) | 2026-08-05 | `79ca395` (foundation), `c6c2811` (hardening) | Full Supabase connectivity (`alembic upgrade head` against a live project, pgvector/pg_trgm verification) pending real Supabase credentials — see Known Issues. Hardening pass (branch rename, `CLAUDE.md`, pre-commit, `README.md`, GitHub templates, GitHub remote — pushed to `origin/main`) tracked as "Milestone 1 Hardening" in `BUILD_LOG.md`, not counted as Milestone 2. |
+| 1 | Foundation: Supabase connection, Alembic skeleton, FastAPI `/health`, React shell | Complete (+ hardening + Supabase schema-isolation validation) | 2026-08-05 | `79ca395` (foundation), `c6c2811` (hardening), see `BUILD_LOG.md` for schema-isolation validation commit | Full Supabase connectivity now verified live: `alembic upgrade head` succeeded against the real, shared project (ADR-013); `nexus` schema, `nexus.alembic_version`, and `vector`/`pg_trgm` extensions all confirmed in place with no cross-contamination of the other application's objects. KI-001 closed — see Known Issues and `BUILD_LOG.md`. Hardening pass (branch rename, `CLAUDE.md`, pre-commit, `README.md`, GitHub templates, GitHub remote) tracked as "Milestone 1 Hardening" in `BUILD_LOG.md`, not counted as Milestone 2. |
 | 2 | Provenance, `raw_provider_payload`, `calculation`/`calculation_input`, entitlement engine | Not Started | — | — | |
 | 3 | SEC adapter vertical slice (real issuer + filing + financial fact, full domain-layer path) | Not Started | — | — | |
 | 4 | Credit Universe initial page (seeded canonical securities) | Not Started | — | — | |
@@ -106,7 +106,7 @@ already made in §1–23; will grow with genuine shortcuts taken during implemen
 
 | ID | Description | Impact | Status |
 |---|---|---|---|
-| KI-001 | No real Supabase project credentials available yet. `DATABASE_URL`/`DIRECT_DATABASE_URL` are unset locally; `alembic upgrade head` against a live database, pgvector/pg_trgm extension creation, and Railway/Vercel deploys have not been exercised end-to-end. | Blocks full closure of Milestone 1's "Supabase connects" / "Alembic migration succeeds" success criteria and all of Milestone 15 (deployment validation). | Open — needs a Supabase project + credentials from the project owner |
+| KI-001 | ~~No real Supabase project credentials available.~~ **Resolved 2026-08-05.** `DIRECT_DATABASE_URL` (a true direct endpoint, port 5432 — not the IPv4-compatible session pooler) was supplied and `alembic upgrade head` run successfully against the live, shared Supabase project (ADR-013). Verified live: `nexus` schema exists; `nexus.alembic_version` exists at revision `0001`; `vector`/`pg_trgm` extensions exist in `public`; no Nexus object exists in `public` or any other schema; no existing non-Nexus object was modified; a SQLAlchemy session opened/closed cleanly via `DATABASE_URL` with `search_path` confirmed as `nexus, public`; `/health` returns 200. One anomaly was found and corrected during validation: the migration's original `CREATE EXTENSION IF NOT EXISTS pg_trgm` (no explicit target schema) installed into `nexus` rather than `public`, because the connection's `search_path` is `nexus, public` and `pg_trgm` did not previously exist. Corrected live via one approved `ALTER EXTENSION pg_trgm SET SCHEMA public` (verified relocatable, verified freshly created by this same run, not a pre-existing/shared extension being moved) and fixed at the source by pinning `WITH SCHEMA public` explicitly in `0001_enable_extensions.py` for all future runs. Full details in `BUILD_LOG.md`. | Blocked Milestone 2 start and full closure of Milestone 1 / Milestone 15 success criteria — now unblocked. | **Closed** |
 
 This section tracks open defects discovered during and after each milestone; entries
 are added here (current state) and also narrated in `BUILD_LOG.md` (how/when they
@@ -116,20 +116,15 @@ were found and fixed).
 
 # Next Immediate Goal
 
-**Milestone 1 is complete**, except for the Supabase-dependent checks blocked on
-KI-001 (real project credentials). Two things can happen next, and they're
-independent:
-
-1. **Owner action (unblocks KI-001):** provide a Supabase project's `DATABASE_URL`
-   and `DIRECT_DATABASE_URL` (dev/test project, per §2) — either by populating
-   `backend/.env` locally (git-ignored) or supplying them another way. Once available,
-   run `alembic upgrade head` from `backend/` to prove migration + pgvector/pg_trgm
-   extension creation against the real database, closing out KI-001.
-2. **Next milestone (on approval):** begin **Milestone 2** (§18 step 2) —
-   `provenance`, `raw_provider_payload`, `calculation`/`calculation_input`, and the
-   entitlement engine (`policy_check`), with pytest coverage for the gating logic
-   before any real provider adapter exists. Do not begin Milestone 3 until Milestone 2
-   satisfies every gate in **Implementation Rules** below.
+**Milestone 1 is complete, including live-validated Supabase schema isolation
+(ADR-013, KI-001 closed).** Nexus reuses an existing, shared Supabase project,
+fully isolated inside the `nexus` Postgres schema, proven end-to-end against the
+real database. **Milestone 2 remains Not Started**, awaiting explicit approval to
+begin: `provenance`, `raw_provider_payload`, `calculation`/`calculation_input`,
+and the entitlement engine (`policy_check`), with pytest coverage for the gating
+logic before any real provider adapter exists (§18 step 2). Do not begin
+Milestone 3 until Milestone 2 satisfies every gate in **Implementation Rules**
+below.
 
 ---
 
@@ -235,8 +230,23 @@ If implementation reveals that an architectural change is genuinely required:
 - Supabase-managed PostgreSQL only, in every environment (local dev, test, staging,
   production). No local PostgreSQL container, no Docker Compose database service, no
   SQLite.
+- **Shared Supabase project, schema-isolated** (ADR-013): Nexus reuses an existing
+  Supabase project that also supports another application, rather than provisioning
+  a dedicated one. Isolation is enforced by Postgres schema, not by project: every
+  Nexus-owned object (tables, indexes, sequences, enum types where practical, views,
+  the Alembic version table) lives in the `nexus` schema. Nexus never reads, writes,
+  migrates, renames, truncates, or drops anything belonging to the other
+  application, and never drops/recreates a shared extension. `Base.metadata` (SQLAlchemy)
+  defaults to schema `nexus`; Alembic runs with `include_schemas=True`,
+  `version_table_schema="nexus"`, and an `include_name` filter restricting
+  autogenerate/comparison to the `nexus` schema only. The connection's
+  `search_path` is set to `nexus, public` as a second layer, never relied on alone.
+  The `nexus` schema is not exposed to PostgREST/the Supabase Data API — the
+  frontend reaches Nexus data only through FastAPI.
 - Extensions enabled in Supabase: `pgvector` (gated embeddings, §4.9) and `pg_trgm`
-  (trigram fuzzy search, §7).
+  (trigram fuzzy search, §7). Extensions are database-wide, shared with the other
+  application on this project — Nexus migrations only ever `CREATE EXTENSION IF NOT
+  EXISTS`, never drop/downgrade/relocate one.
 - SQLAlchemy 2 (ORM + Core) and Alembic for migrations.
 - `DATABASE_URL` — Supabase pooled/runtime connection string, used by the running app.
 - `DIRECT_DATABASE_URL` — Supabase direct connection, used by Alembic when a
@@ -1024,11 +1034,14 @@ Commit at each numbered milestone.
 ## 19. Environment variables (`.env.example`, never commit real values)
 
 ```
-# Supabase / database
+# Supabase / database — shared project, isolated via the `nexus` Postgres schema
+# (ADR-013). SUPABASE_ANON_KEY is reserved for future frontend/RLS use;
+# SUPABASE_SERVICE_KEY is backend-only, never exposed via VITE_ vars or frontend code.
 DATABASE_URL=
 DIRECT_DATABASE_URL=
 SUPABASE_URL=
-SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_KEY=
 SUPABASE_STORAGE_BUCKET=
 
 # Public data providers
@@ -1134,6 +1147,10 @@ VITE_API_BASE_URL=
     `user_role`/`audit_event` and route dependencies are built to support Supabase
     Auth JWT validation being switched on later without a route-logic rewrite.
 14. **Git**: this directory has no repo yet; `git init` and commit at each milestone.
+15. **Supabase project sharing** (ADR-013): Nexus reuses an existing Supabase project
+    shared with another application instead of a dedicated one; isolation is by
+    Postgres schema (`nexus`), never by convention alone — see §2 Stack and
+    `ARCHITECTURE_DECISIONS.md` ADR-013.
 
 ---
 

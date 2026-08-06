@@ -613,3 +613,280 @@ the backend test suite grows past "fast," the `backend-pytest` hook should be
 narrowed (e.g. to a marked `-m fast` subset) or removed from pre-commit rather than
 left to slow down every commit; that tradeoff call belongs to whoever notices it
 first getting slow, not a preemptive guess made here.
+
+---
+
+## 2026-08-05 — Supabase Schema-Isolation Configuration & Live Validation (pre-Milestone 2)
+
+**Summary**
+
+Before Milestone 2, the project owner directed that Nexus reuse an existing
+Supabase project already supporting another application, instead of a dedicated
+project, isolated entirely inside a `nexus` Postgres schema — documented as
+ADR-013. This entry covers both the configuration/code work and its live
+validation against the real, shared Supabase project, which closes KI-001.
+Explicitly **not** Milestone 2: no canonical domain models, providers, or product
+features were touched.
+
+**Features Completed**
+
+- `backend/app/config.py`: renamed `supabase_service_role_key` →
+  `supabase_service_key` (env `SUPABASE_SERVICE_KEY`, matching the existing
+  application's convention rather than Nexus's originally planned
+  `SUPABASE_SERVICE_ROLE_KEY`); added `supabase_anon_key` (env
+  `SUPABASE_ANON_KEY`, reserved for future frontend/RLS use). `DATABASE_URL`,
+  `DIRECT_DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_STORAGE_BUCKET` names
+  unchanged.
+- `backend/app/db/base.py`: added `NEXUS_SCHEMA = "nexus"` constant;
+  `Base.metadata` now defaults to schema `nexus`, so every SQLAlchemy model is
+  schema-qualified by construction and can never land in `public` by accident.
+- `backend/app/db/session.py`: app engine now sets `search_path=nexus,public` via
+  `connect_args` — a second layer of isolation, never relied on alone.
+- `backend/alembic/env.py`: added `include_schemas=True`,
+  `version_table_schema="nexus"`, and an `include_name` filter restricting
+  reflection/autogenerate comparison to the `nexus` schema only, on both the
+  offline and online migration paths.
+- `backend/alembic/versions/0001_enable_extensions.py`: upgrade now creates the
+  `nexus` schema (`CREATE SCHEMA IF NOT EXISTS`) alongside the `vector`/`pg_trgm`
+  extensions; downgrade no longer drops the extensions (shared, database-wide,
+  possibly relied on by the other application) — it only drops the by-then-empty
+  `nexus` schema, without `CASCADE`.
+- `.env.example`, `README.md`, `PLAN.md` (§2 Stack, §19 env vars, §21 decisions
+  log), `CLAUDE.md` (new "Supabase Project & Schema Isolation" section): updated
+  to the new variable names and the shared-project/schema-isolation model.
+- `ARCHITECTURE_DECISIONS.md`: added **ADR-013**, documenting this as a
+  deliberate, approved deviation from ADR-001's dedicated-project assumption.
+- **Pre-existing driver bug found and fixed** (unrelated to schema isolation, but
+  blocking any real connection): `backend/.env`'s `DATABASE_URL` and, later,
+  `DIRECT_DATABASE_URL` used a bare `postgresql://` scheme, which SQLAlchemy
+  resolves to the `psycopg2` driver — not installed, since this project depends
+  on `psycopg` v3 (`pyproject.toml`). Patched both to `postgresql+psycopg://`
+  (scheme only; no secret values were displayed or logged at any point).
+- **Alembic version-table bootstrap bug found and fixed**: Alembic creates its
+  version table (`nexus.alembic_version`) before running any migration —
+  including migration `0001`, which is what actually owns creating the `nexus`
+  schema. The very first `alembic upgrade head` against a fresh database failed
+  with `psycopg.errors.InvalidSchemaName: schema "nexus" does not exist`. Fixed
+  in `backend/alembic/env.py`'s `run_migrations_online()` by having it execute
+  `CREATE SCHEMA IF NOT EXISTS nexus` immediately after connecting, before
+  `context.configure()`/Alembic's own version-table bookkeeping runs. Migration
+  `0001` still independently issues its own `CREATE SCHEMA IF NOT EXISTS`
+  (idempotent), so the migration file remains correct and self-contained on its
+  own for anyone reading it in isolation.
+- **Live migration anomaly found and corrected** (see Problems Encountered):
+  `pg_trgm` was installed into `nexus` instead of `public` on the first live
+  `alembic upgrade head` run, due to the `search_path=nexus,public` connection
+  setting affecting Postgres's default extension-install target when no explicit
+  `SCHEMA` clause is given. Corrected live with one explicitly user-approved
+  `ALTER EXTENSION pg_trgm SET SCHEMA public` (a relocate, not a drop — verified
+  relocatable, and verified to be the extension this same run had just created
+  seconds earlier, not a pre-existing/shared extension being moved). Fixed at the
+  source for all future/fresh databases by pinning `WITH SCHEMA public`
+  explicitly on both `CREATE EXTENSION` statements in
+  `0001_enable_extensions.py`, so this can't recur regardless of connection
+  `search_path`.
+
+**Files Created**
+
+None.
+
+**Files Modified**
+
+`backend/app/config.py`, `backend/app/db/base.py`, `backend/app/db/session.py`,
+`backend/alembic/env.py`, `backend/alembic/versions/0001_enable_extensions.py`,
+`.env.example`, `README.md`, `PLAN.md`, `CLAUDE.md`, `ARCHITECTURE_DECISIONS.md`.
+`backend/.env` (local, git-ignored, never committed): `DATABASE_URL` and
+`DIRECT_DATABASE_URL` schemes corrected to `postgresql+psycopg://`.
+
+**Database Changes**
+
+Against the real, shared Supabase project (via `DIRECT_DATABASE_URL`):
+- `CREATE SCHEMA IF NOT EXISTS nexus` (both via `env.py`'s bootstrap step and
+  migration `0001` itself).
+- `CREATE EXTENSION IF NOT EXISTS vector` — no-op; `vector` already existed in
+  `public` (pre-existing, untouched, not created by Nexus).
+- `CREATE EXTENSION IF NOT EXISTS pg_trgm` — created fresh (did not previously
+  exist), initially landing in `nexus`, then relocated to `public` via one
+  explicitly approved `ALTER EXTENSION pg_trgm SET SCHEMA public`.
+- `CREATE TABLE nexus.alembic_version` (Alembic's own bookkeeping table),
+  currently at revision `0001`.
+
+No tables belonging to the other application were read, written, migrated,
+renamed, truncated, or deleted. No unrelated schema's contents were inspected
+beyond listing schema *names* (not contents) to confirm isolation.
+
+**API Endpoints Added**
+
+None.
+
+**Frontend Pages Added**
+
+None.
+
+**Environment Variables Added**
+
+`SUPABASE_ANON_KEY` (new). `SUPABASE_SERVICE_ROLE_KEY` renamed to
+`SUPABASE_SERVICE_KEY`. `DATABASE_URL`, `DIRECT_DATABASE_URL`, `SUPABASE_URL`,
+`SUPABASE_STORAGE_BUCKET` names unchanged (`SUPABASE_STORAGE_BUCKET` remains
+optional/unused this milestone).
+
+**Tests Added**
+
+None (config/infrastructure change, not new application logic). Existing backend
+test suite (2 tests) re-verified passing, both before and after the live
+migration.
+
+**Test Results**
+
+```
+backend: pytest -q                    -> 2 passed
+backend: ruff check .                 -> All checks passed!
+backend: black --check .              -> 15 files would be left unchanged.
+backend: mypy .                       -> Success: no issues found in 14 source files
+
+frontend: npm run lint                -> clean
+frontend: npm run format:check        -> All matched files use Prettier code style!
+frontend: npm run typecheck           -> clean (tsc -b)
+frontend: npm run build               -> succeeded (dist/assets bundle 428.68 kB / gzip 136.05 kB)
+frontend: npm audit                   -> found 0 vulnerabilities
+
+pre-commit run --all-files            -> all hooks passed
+
+alembic upgrade head (live)           -> upgraded base -> 0001
+GET /health (live DB config)          -> 200 {"status": "healthy", ...}
+SQLAlchemy session open/close (live)  -> OK; SHOW search_path -> nexus,public
+```
+
+All of the above was re-run in full a second time after the `pg_trgm` correction,
+with identical results.
+
+**Live Isolation Verification** (sanitized — no hostnames, credentials, project
+identifiers, or full connection strings recorded anywhere in this entry)
+
+- `DATABASE_URL`: transaction pooler (Supavisor), port 6543.
+- `DIRECT_DATABASE_URL`: **true direct endpoint**, port 5432 — the IPv6 direct
+  path worked; no fallback to the IPv4-compatible session pooler was needed.
+- `nexus` schema: exists.
+- `nexus.alembic_version`: exists, contains `0001`.
+- `vector` extension: `public` (pre-existing, untouched).
+- `pg_trgm` extension: `public` (created by this migration, corrected from an
+  initial `nexus` placement — see Problems Encountered).
+- Objects in `nexus` schema: exactly one — `alembic_version`. No other Nexus
+  tables exist yet (expected; no models exist before Milestone 2).
+- Objects in `public` matching Nexus's `alembic_version` table name: none.
+- Other schemas on the shared project: confirmed present by name only (not
+  inspected further); none were created, modified, or touched by this work.
+- App-side `search_path` (as seen by an opened `SessionLocal` session via
+  `DATABASE_URL`): `nexus,public`.
+
+**Commands Executed** (representative; no secret values shown at any point)
+
+```
+# DATABASE_URL / DIRECT_DATABASE_URL scheme fix (local .env, git-ignored)
+python -c "... patch postgresql:// -> postgresql+psycopg:// ..."
+
+cd backend
+./.venv/Scripts/python -m pytest -q
+./.venv/Scripts/python -m ruff check .
+./.venv/Scripts/python -m black --check .
+./.venv/Scripts/python -m mypy .
+./.venv/Scripts/python -m alembic upgrade head
+
+# sanitized connection classification + live isolation checks (host/port
+# category only, via urlsplit / information_schema / pg_extension queries)
+./.venv/Scripts/python -c "... classify DATABASE_URL / DIRECT_DATABASE_URL ..."
+./.venv/Scripts/python -c "... verify nexus schema / alembic_version / extensions ..."
+
+# pg_trgm correction (explicitly approved before running)
+./.venv/Scripts/python -c "... ALTER EXTENSION pg_trgm SET SCHEMA public ..."
+./.venv/Scripts/python -c "... re-verify pg_trgm/vector/nexus state post-fix ..."
+
+./.venv/Scripts/python -c "... FastAPI TestClient GET /health ..."
+./.venv/Scripts/python -c "... SessionLocal open/close + SHOW search_path ..."
+
+cd ../web
+npm run lint && npm run format:check && npm run typecheck && npm run build && npm audit
+
+cd ..
+backend/.venv/Scripts/python -m pre_commit run --all-files
+
+git status ; git diff --stat
+```
+
+**Deployment Validation**
+
+Not exercised — Railway/Vercel deployment remains Milestone 15 scope, unaffected
+by this entry.
+
+**Problems Encountered**
+
+1. **Driver/scheme mismatch**: `DATABASE_URL`/`DIRECT_DATABASE_URL` used a bare
+   `postgresql://` scheme; SQLAlchemy defaults that to the `psycopg2` driver,
+   which isn't installed (this project uses `psycopg` v3 per `pyproject.toml`).
+   `create_engine()` failed with `ModuleNotFoundError: No module named
+   'psycopg2'`. **Fixed** by rewriting the scheme to `postgresql+psycopg://` in
+   `backend/.env` (local only, never committed).
+2. **Alembic version-table/schema bootstrap ordering**: see Features Completed —
+   Alembic tries to create `nexus.alembic_version` before running migration
+   `0001` (which creates `nexus` itself), so the very first run against a fresh
+   database failed with `InvalidSchemaName`. **Fixed** by having
+   `alembic/env.py` ensure the `nexus` schema exists immediately after
+   connecting, before `context.configure()`.
+3. **`pg_trgm` extension mislocated on first live run**: `CREATE EXTENSION IF
+   NOT EXISTS pg_trgm` (no explicit `SCHEMA` clause) installed into `nexus`
+   rather than `public`, because the connection's `search_path` is
+   `nexus, public` and `pg_trgm` did not already exist anywhere on this
+   database — Postgres installed it into the first schema on the search path
+   that existed. `vector` was unaffected because it already existed in `public`
+   from before this project touched the database, so `CREATE EXTENSION IF NOT
+   EXISTS vector` was a no-op. This directly conflicted with the project's
+   explicit rule against dropping or relocating extensions, so validation
+   paused and the anomaly was reported to the project owner rather than
+   corrected unilaterally. **Fixed** two ways, both explicitly approved before
+   execution: (a) live, one-time `ALTER EXTENSION pg_trgm SET SCHEMA public`,
+   preceded by verification that `pg_trgm` was relocatable and had been created
+   by this same run (the `nexus` schema itself didn't exist before this
+   migration, so `pg_trgm` could not have pre-existed inside it) — not a
+   pre-existing/shared extension being moved; (b) at the source, migration
+   `0001` now pins `WITH SCHEMA public` explicitly on both `CREATE EXTENSION`
+   statements so this can't recur on any other/future database regardless of
+   connection `search_path`.
+
+**Solutions**
+
+All three problems were root-caused by directly querying live database state
+(`pg_extension`, `information_schema`) rather than guessing, and the one
+corrective action with a real (if narrow) risk — relocating `pg_trgm` — was
+paused for explicit owner approval rather than taken unilaterally, given the
+project's explicit written rule against extension drop/relocate operations.
+
+**Remaining Work**
+
+- KI-001: **closed** (see Known Issues in `PLAN.md`).
+- Everything in Milestone 2 onward per `PLAN.md` § Milestone Status — unstarted;
+  Milestone 2 requires separate approval to begin.
+
+**Git Commit Hash**
+
+Recorded in a follow-up entry, per this repository's established two-commit
+pattern (see "Milestone 1 Hardening" entry above) — the hash of the commit
+containing this entry cannot be known before that commit is created.
+
+**GitHub Remote and Push Results**
+
+Recorded in the same follow-up entry.
+
+**Approximate Time Spent**
+
+Single focused validation session, following directly after the initial
+schema-isolation configuration work.
+
+**Developer Notes**
+
+The `pg_trgm` mislocation is a good illustration of why "never rely on
+`search_path` alone" (PLAN.md §2) matters even for DDL, not just DML —
+`CREATE EXTENSION` without an explicit `SCHEMA` clause is itself
+search-path-sensitive, which isn't always the first place one would think to
+look. Any future migration that creates a database-wide/shared object (another
+extension, a shared type, etc.) should pin its schema explicitly rather than
+depend on connection defaults, exactly as `0001` now does.

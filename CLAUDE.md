@@ -103,6 +103,42 @@ SQLAlchemy / Supabase PostgreSQL
 
 ---
 
+# Supabase Project & Schema Isolation
+
+This project reuses an existing Supabase project that also supports another
+application — it does **not** get a dedicated Supabase project. Isolation is
+enforced at the Postgres **schema** level, not by convention alone (see
+`ARCHITECTURE_DECISIONS.md` ADR-013 and `PLAN.md` §2 Stack):
+
+- Every Nexus-owned object — tables, indexes, sequences, enum types where
+  practical, views, and the Alembic version table — lives in the `nexus` schema.
+  Nothing Nexus-owned may be created in `public` or any other schema.
+- Never modify, rename, truncate, migrate, or delete any table belonging to the
+  other application. Never inspect unrelated schema contents beyond what is
+  necessary to prove Nexus migrations are isolated.
+- `Base.metadata` (`backend/app/db/base.py`) defaults to schema `nexus`. Alembic
+  (`backend/alembic/env.py`) runs with `include_schemas=True`,
+  `version_table_schema="nexus"`, and an `include_name` filter restricting
+  autogenerate/comparison to the `nexus` schema only. The connection's
+  `search_path` is set to `nexus, public` as a second layer — never relied on
+  alone; use schema-qualified SQLAlchemy tables and migration operations.
+- Extensions (`vector`, `pg_trgm`) are database-wide, shared resources. Nexus
+  migrations only ever `CREATE EXTENSION IF NOT EXISTS`; never drop, downgrade,
+  or relocate an extension, including on downgrade.
+- Never `DROP SCHEMA public`, `DROP SCHEMA nexus CASCADE`, `DROP EXTENSION
+  vector`, or `DROP EXTENSION pg_trgm`. Alembic downgrades remove only
+  Nexus-owned schema objects.
+- The `nexus` schema is never exposed to PostgREST/the Supabase Data API. The
+  frontend reaches Nexus data only through FastAPI.
+- Environment variable names are fixed: `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
+  `SUPABASE_SERVICE_KEY` (never renamed to `SUPABASE_SERVICE_ROLE_KEY`),
+  `DATABASE_URL` (pooled, runtime), `DIRECT_DATABASE_URL` (direct, required for
+  Alembic), `SUPABASE_STORAGE_BUCKET` (optional, private bucket, never the other
+  application's bucket). `SUPABASE_SERVICE_KEY` is backend-only — never exposed
+  via `VITE_` variables, frontend code, logs, API responses, or documentation.
+
+---
+
 # Provenance and Entitlement Rules
 
 - No displayed fact may exist without a `provenance` row backing it.

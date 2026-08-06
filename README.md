@@ -210,17 +210,34 @@ This project uses **Supabase-managed PostgreSQL only** — in local development,
 test, staging, and production alike. There is no local or Dockerized Postgres
 fallback.
 
-1. Create a Supabase project (a separate project or schema for dev/test vs.
-   staging/production is recommended where practical).
-2. Enable the `pgvector` and `pg_trgm` extensions (the initial Alembic migration,
-   `0001_enable_extensions`, does this via `CREATE EXTENSION IF NOT EXISTS`, but the
-   project's Postgres role needs privilege to run it).
+**This project reuses an existing Supabase project that also supports another
+application.** Nexus does not get (and does not need) a dedicated Supabase
+project — it is fully isolated inside its own Postgres schema, `nexus`. Every
+Nexus table, index, sequence, and the Alembic version table live in
+`nexus.*`; Nexus never reads, writes, migrates, renames, or drops anything in
+`public` or any other schema, and never drops or recreates the `vector` /
+`pg_trgm` extensions (they're database-wide and may be relied on by the other
+application). See `ARCHITECTURE_DECISIONS.md` ADR-013 for the full rationale.
+
+1. Use the existing Supabase project — no new project is created for Nexus.
+2. Enable the `pgvector` and `pg_trgm` extensions if not already enabled (the
+   initial Alembic migration, `0001_enable_extensions`, does this via
+   `CREATE EXTENSION IF NOT EXISTS` and also creates the `nexus` schema via
+   `CREATE SCHEMA IF NOT EXISTS`; the project's Postgres role needs privilege to
+   run both).
 3. Set `DATABASE_URL` (pooled connection, used by the running app) and
-   `DIRECT_DATABASE_URL` (direct connection, used by Alembic) in `backend/.env`
-   locally, or as Railway environment variables in deployment.
-4. Set `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_STORAGE_BUCKET` for
-   Supabase Storage access (used starting when documents/raw payloads are persisted).
-5. Run migrations: `cd backend && ./.venv/Scripts/python -m alembic upgrade head`.
+   `DIRECT_DATABASE_URL` (direct connection, used by Alembic — get it from
+   Supabase Dashboard > Connect > "Direct connection") in `backend/.env` locally,
+   or as Railway environment variables in deployment.
+4. Set `SUPABASE_URL`, `SUPABASE_ANON_KEY` (reserved for future frontend/RLS use),
+   and `SUPABASE_SERVICE_KEY` (backend-only, never exposed to the frontend) from
+   the same Supabase project's API settings.
+5. `SUPABASE_STORAGE_BUCKET` is optional at this milestone — Supabase Storage
+   integration (a new, private bucket, e.g. `nexus-private-documents`; never the
+   other application's bucket) is deferred to the document/provider milestone
+   that needs it.
+6. Run migrations: `cd backend && ./.venv/Scripts/python -m alembic upgrade head`.
+   This requires `DIRECT_DATABASE_URL` to be set.
 
 **Not yet verified end-to-end against a real Supabase project** — see
 [Project status](#project-status).

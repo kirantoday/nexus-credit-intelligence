@@ -16,11 +16,22 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import get_settings
+from app.db.base import NEXUS_SCHEMA
 
 _settings = get_settings()
 
 _engine = (
-    create_engine(_settings.database_url, pool_pre_ping=True) if _settings.database_url else None
+    create_engine(
+        _settings.database_url,
+        pool_pre_ping=True,
+        # Belt-and-suspenders alongside Base.metadata's schema="nexus": every
+        # connection resolves unqualified names to the nexus schema first, so a
+        # query can never silently fall through to the other application's
+        # tables in public.
+        connect_args={"options": f"-c search_path={NEXUS_SCHEMA},public"},
+    )
+    if _settings.database_url
+    else None
 )
 SessionLocal = (
     sessionmaker(bind=_engine, autocommit=False, autoflush=False) if _engine is not None else None

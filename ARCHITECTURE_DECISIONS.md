@@ -518,3 +518,97 @@ Revisit the process itself (not the architecture) if the sixteen-gate checklist
 proves too heavy for the actual pace of a solo/small-team POC — that would be a
 process ADR, not an architecture ADR, and wouldn't require an architecture version
 bump.
+
+---
+
+## ADR-013: Shared Supabase project, isolated via the `nexus` Postgres schema
+
+**Date:** 2026-08-05
+**Status:** Accepted
+
+**Context**
+ADR-001 established Supabase-managed Postgres in every environment and noted "a
+separate Supabase project or schema is used for dev/test vs. staging/production
+where practical," implicitly assuming Nexus would eventually get project(s) of its
+own. Before Milestone 2, the project owner directed that Nexus instead reuse an
+existing Supabase project that already supports another application, rather than
+provisioning a new one — for cost/operational reasons outside this codebase.
+
+**Decision**
+Nexus reuses the existing Supabase project. Isolation is enforced at the Postgres
+schema level: every Nexus-owned object (tables, indexes, sequences, enum types
+where practical, views, and the Alembic version table) lives in a dedicated
+`nexus` schema, never in `public` or any schema belonging to the other
+application. Concretely:
+- `Base.metadata` (`backend/app/db/base.py`, `NEXUS_SCHEMA` constant) defaults to
+  schema `nexus`, so every SQLAlchemy model is schema-qualified by construction.
+- `backend/alembic/env.py` runs with `include_schemas=True`,
+  `version_table_schema="nexus"`, and an `include_name` filter that restricts
+  reflection/autogenerate comparison to the `nexus` schema only — Alembic never
+  reflects, diffs against, or proposes migrations for the other application's
+  objects.
+- The connection's `search_path` is set to `nexus, public` (`connect_args` on both
+  the app engine and the Alembic migration engine) as a second layer, never relied
+  on alone for correctness.
+- The initial migration (`0001_enable_extensions`) creates the `nexus` schema
+  (`CREATE SCHEMA IF NOT EXISTS`) alongside the `vector`/`pg_trgm` extensions.
+  Extensions are database-wide and may be depended on by the other application, so
+  migrations only ever `CREATE EXTENSION IF NOT EXISTS` — never drop, downgrade, or
+  relocate one, including on downgrade. Downgrade of `0001` drops only the (by then
+  empty) `nexus` schema, without `CASCADE`.
+- The `nexus` schema is not exposed to PostgREST/the Supabase Data API; the
+  frontend continues to reach Nexus data only through FastAPI (§3 domain-layer
+  boundary is unaffected).
+- Environment variable names follow the existing application's convention rather
+  than Nexus's originally planned names: `SUPABASE_SERVICE_KEY` (not
+  `SUPABASE_SERVICE_ROLE_KEY`), plus a new `SUPABASE_ANON_KEY` for future
+  frontend/RLS use. `DATABASE_URL`, `DIRECT_DATABASE_URL`, and
+  `SUPABASE_STORAGE_BUCKET` are unchanged.
+
+**Alternatives Considered**
+- Provision a dedicated Supabase project for Nexus (the original ADR-001
+  assumption) — rejected per explicit direction to reuse the existing project;
+  also would have meant carrying two sets of Supabase credentials/projects for no
+  benefit at this POC's stage.
+- Rely on the Postgres role's grants alone (a role scoped to `public`) without a
+  distinct schema — rejected: a schema is a stronger, more legible isolation
+  boundary than role grants alone, is what Alembic's `version_table_schema`/
+  `include_schemas` machinery is designed around, and makes "list everything
+  Nexus owns" a one-line `information_schema` query scoped to `nexus`.
+- Prefix Nexus table names (e.g. `nexus_issuer`) inside `public` instead of using a
+  real schema — rejected: namespacing by naming convention is exactly the kind of
+  isolation this project's own provenance/entitlement rules would never accept for
+  data; it also does nothing to stop an autogenerate diff from touching the other
+  application's tables, which a schema-scoped `include_name` filter does prevent.
+
+**Tradeoffs**
+Every Nexus model, query, and migration must be schema-aware (schema-qualified
+metadata, `include_name` filtering, explicit `nexus.*` qualification in raw SQL)
+rather than assuming a project boundary does the isolation work for free. In
+exchange: no second Supabase project to provision, fund, or keep credentials for;
+and schema-level isolation is provably auditable (`information_schema` scoped to
+`nexus`) rather than resting on "we just didn't create anything in the wrong
+project."
+
+**Consequences**
+- `backend/app/config.py`, `.env.example`, `README.md`, and `PLAN.md` §2/§19 use
+  the existing application's env var names (`SUPABASE_ANON_KEY`,
+  `SUPABASE_SERVICE_KEY`) instead of Nexus's originally planned
+  `SUPABASE_SERVICE_ROLE_KEY`.
+- `backend/alembic/versions/0001_enable_extensions.py`'s downgrade no longer drops
+  the `vector`/`pg_trgm` extensions (they may be shared); it only drops the
+  (by-then-empty) `nexus` schema.
+- Live Supabase validation (KI-001) now additionally requires proving schema
+  isolation end-to-end (schema exists, `alembic_version` is inside it, no Nexus
+  object lands in `public`, no existing non-Nexus table is touched) before
+  Milestone 2 begins.
+- Supabase Storage is deferred (unchanged from prior plan) but, when enabled, must
+  use a new private bucket — never the other application's bucket.
+
+**Future Revisit Recommendation**
+Revisit only if the shared project's resource limits, another application's schema
+changes, or a compliance requirement (e.g. a hard data-residency/tenant-isolation
+mandate) make schema-level isolation insufficient and a dedicated project becomes
+necessary — at that point, migration is a `pg_dump`/`pg_restore` of the `nexus`
+schema into a new project, not a code rewrite, since every Nexus object is already
+schema-qualified.
