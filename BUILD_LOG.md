@@ -2449,3 +2449,7 @@ milestone's `calculation` usage (VWAP, price-change metrics) was
 documented but never actually built, so this was also the first real proof
 that the pattern designed in Milestone 2 holds up under an actual multi-input
 case, not just a single-input one.
+
+**Git Commit Hash**
+
+`2262e7ce852fd4f81a7894d97815f59292bb5ea2` (`2262e7c`) — implementation.
