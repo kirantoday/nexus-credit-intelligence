@@ -1126,14 +1126,15 @@ proving claims against the real database rather than the migration/tool output.
 
 **Git Commit Hash**
 
-Recorded in a follow-up entry, per this repository's established two-commit
-pattern (see "Milestone 1 Hardening" and "Supabase Schema-Isolation
-Configuration & Live Validation" entries above) — the hash of the commit
-containing this entry cannot be known before that commit is created.
+`27af3c1bcaa1e453c37bc4cb76f48020b8c8a938` (`27af3c1`)
 
 **GitHub Remote and Push Results**
 
-Recorded in the same follow-up entry.
+- `git push origin main` — succeeded: `bd02e15..27af3c1  main -> main`.
+- Post-push verification: `git ls-remote origin` returns
+  `27af3c1bcaa1e453c37bc4cb76f48020b8c8a938` for both `HEAD` and
+  `refs/heads/main`, matching the local commit exactly.
+- Remote branch: https://github.com/kirantoday/nexus-credit-intelligence/tree/main
 
 **Approximate Time Spent**
 
