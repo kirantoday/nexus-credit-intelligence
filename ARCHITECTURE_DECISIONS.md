@@ -612,3 +612,118 @@ mandate) make schema-level isolation insufficient and a dedicated project become
 necessary — at that point, migration is a `pg_dump`/`pg_restore` of the `nexus`
 schema into a new project, not a code rewrite, since every Nexus object is already
 schema-qualified.
+
+---
+
+## ADR-014: Domain-layer implementation conventions (Pydantic domain objects, function-style repositories, text+CHECK over native enums)
+
+**Date:** 2026-08-06
+**Status:** Accepted
+
+**Context**
+Milestone 2 (`provenance`, `calculation`, `calculation_input`, `raw_provider_payload`,
+`data_entitlement`) is the first code to actually populate `backend/app/domain/`,
+`backend/app/models/`, and `backend/app/repositories/` (§3, §17). PLAN.md fixes
+*what* these tables and objects contain but not *how* they're implemented in Python —
+four implementation-shape decisions had to be made that every later milestone's
+canonical entities (issuer, security, financial_fact, and eventually Bloomberg/S&P
+Global/Markit/Octus-backed data) will also follow, so they're recorded here rather
+than left as an unstated convention only visible by reading Milestone 2's code.
+
+**Decision**
+1. **Canonical domain objects are frozen Pydantic 2 models, not dataclasses.**
+   Every `app/domain/**` object (`Provenance`, `RawProviderPayload`,
+   `DataEntitlement`, and their `*Create` variants) is a `BaseModel` with
+   `model_config = ConfigDict(frozen=True)`. Enum-shaped fields (`provider`,
+   `classification`, `transformation`, `environment`, etc.) are typed with the
+   `StrEnum` classes in `app/core/types.py`, not bare `str`. `model_validator`
+   enforces cross-field invariants (e.g. `calculation_id` set iff
+   `transformation == "calculated"`) at construction time, before any I/O.
+2. **ORM enum-shaped columns are `Text` + `CheckConstraint`, never native Postgres
+   `ENUM` types.** PLAN.md's data model tables explicitly type these fields
+   `text`. A native enum type turns "add a new provider" into a schema-altering
+   `ALTER TYPE`; a `CheckConstraint` built from the same `app/core/types.py` enum
+   is exactly as strict and is an ordinary migration to extend. The Pydantic
+   validation in (1) is the primary defense; the DB constraint is deliberate
+   defense-in-depth for any write path that bypasses the domain layer (verified
+   directly in `tests/integration/test_provenance_repository.py`, which
+   constructs an invalid ORM row directly to prove the constraint fires
+   independently of Pydantic).
+3. **Repositories are module-level functions taking `db: Session` as their first
+   argument, not a stateful repository class.** `app/repositories/provenance_repository.py`
+   and its siblings export plain functions (`create_provenance`, `get_provenance`,
+   ...) that accept and return domain objects only, never a SQLAlchemy model.
+   Every function `flush()`s but never `commit()`s — `app/db/session.py`'s
+   `get_db()` was updated to commit once at the end of a successful request (or
+   roll back on exception), so a single request/unit of work can span several
+   repository calls atomically. A class with one `db` attribute and one-line
+   delegating methods would add ceremony without changing behavior; plain
+   functions are simpler and equally mockable/testable.
+4. **Circular foreign keys use `ForeignKey(..., use_alter=True, name=...)`, and
+   the corresponding Alembic migration must hand-verify the emitted DDL.**
+   `provenance.raw_payload_id` and `raw_provider_payload.provenance_id`
+   reference each other by design (PLAN.md 4.1/4.4). Autogenerate's plain
+   output embedded the `use_alter=True` constraint inline inside
+   `op.create_table(...)` for `raw_provider_payload` — compiling that DDL
+   directly (`CreateTable(...).compile()`) proved SQLAlchemy's compiler silently
+   *drops* any `use_alter=True` constraint from an inline `CREATE TABLE`
+   statement, and autogenerate did not also emit the separate `ALTER TABLE`
+   that constraint needs, meaning the FK would never have been created at all.
+   `backend/alembic/versions/0002_provenance_entitlement_foundation.py` was
+   hand-corrected: the inline FK was removed, and an explicit
+   `op.create_foreign_key(...)` was added after both tables exist, with the
+   matching `op.drop_constraint(...)` first in `downgrade()`. Confirmed against
+   the live database (`alembic upgrade head` / `downgrade 0001` / `upgrade
+   head` round-trip, then querying `pg_constraint` directly) rather than trusted
+   on autogenerate's output alone.
+
+**Alternatives Considered**
+- Plain `dataclasses` for domain objects instead of Pydantic — rejected:
+  Pydantic 2 is already a first-class project dependency (`config.py`), and its
+  validators give real, fail-fast correctness at the normalizer/repository
+  boundary (exactly where a malformed canonical object would otherwise silently
+  reach the database) for effectively no extra dependency cost.
+- Native Postgres `ENUM` types for `provider`/`classification`/etc. — rejected:
+  contradicts PLAN.md's explicit `text` typing and makes adding a fourteenth,
+  fifteenth, ... provider (an expected, frequent event given the target
+  integration list: Bloomberg, S&P Global, Markit, Octus, FRED, SEC,
+  CourtListener, TRACE) a schema-altering operation instead of an ordinary
+  migration.
+- Class-based repositories (`class ProvenanceRepository: def __init__(self, db)`)
+  — rejected as unnecessary ceremony for this POC's needs; revisit only if a
+  real need for swappable repository implementations (not just testability,
+  which plain functions already provide) emerges.
+- Trusting Alembic autogenerate's output verbatim for the circular FK — rejected
+  after directly proving (by compiling the DDL) that the naive output would
+  have silently produced a table with a missing constraint; a migration that
+  "runs successfully" but silently omits a constraint is worse than one that
+  fails loudly, since nothing would have surfaced the gap until a bad write
+  succeeded that should have been rejected.
+
+**Tradeoffs**
+More boilerplate per canonical entity (a `*Create` Pydantic model, an ORM model
+with `CheckConstraint`s duplicating the same enum values, and a repository module
+with explicit `_to_domain` mapping functions) than a thinner approach (e.g.
+dataclasses with no validation, or exposing ORM models directly to callers). In
+exchange: every future canonical entity gets fail-fast validation, a
+DB-independent domain layer that's trivially unit-testable, and a persistence
+layer that can never silently accept or emit an ORM object to code outside
+`app/repositories/**`.
+
+**Consequences**
+- `app/core/types.py` is the single source of truth for every enum value used in
+  a `provenance`-family CHECK constraint or Pydantic field; a new provider or
+  classification value is added there once and both layers pick it up.
+- Every future `app/models/**` file that declares a circular or otherwise
+  order-sensitive FK must be paired with a hand-verified (not blindly
+  autogenerated) migration, per point 4 above.
+- `app/repositories/**` functions are the only sanctioned way to read or write
+  these tables; `app/api/routes/**` and future `app/ai/tools/**` call them
+  directly, never the ORM.
+
+**Future Revisit Recommendation**
+Revisit the function-vs-class repository choice only if a concrete need for
+swappable/mockable repository implementations arises (e.g. contract testing
+against multiple backends) — not anticipated for this POC. Revisit the
+text+CHECK vs. native enum choice only if constraint-based validation is proven
+too slow at a row count this project isn't expected to reach.

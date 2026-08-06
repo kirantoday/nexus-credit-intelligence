@@ -74,7 +74,13 @@ repos:
       - id: backend-pytest
         name: backend / pytest (fast unit tests)
         language: system
-        entry: backend\\.venv\\Scripts\\python.exe -m pytest -q
+        # Scoped to tests/unit only: tests/integration/** hits the real, live
+        # Supabase project over the network (no SQLite/local DB is ever used,
+        # per CLAUDE.md), which is correct for CI/manual runs but too slow —
+        # and too fragile w.r.t. network availability — for every commit.
+        # Integration tests run via `pytest tests/integration` manually or in
+        # CI, gracefully skipped wherever DATABASE_URL isn't configured.
+        entry: backend\\.venv\\Scripts\\python.exe -m pytest -q backend/tests/unit backend/tests/test_health.py
         files: ^backend/(app|tests)/.*\.py$
         pass_filenames: false
 

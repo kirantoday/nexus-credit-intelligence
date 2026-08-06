@@ -892,3 +892,261 @@ search-path-sensitive, which isn't always the first place one would think to
 look. Any future migration that creates a database-wide/shared object (another
 extension, a shared type, etc.) should pin its schema explicitly rather than
 depend on connection defaults, exactly as `0001` now does.
+
+---
+
+## 2026-08-06 — Milestone 2: Provenance, raw_provider_payload, calculation/calculation_input, entitlement engine
+
+**Summary**
+
+The platform foundation every later milestone depends on: the provenance spine
+(`provenance`, `calculation`, `calculation_input`), the durable raw-response
+store (`raw_provider_payload`), and the entitlement engine (`data_entitlement` +
+`policy_check`) — implemented, migrated, and tested end-to-end against the live
+Supabase project, with no provider adapters, API routes, or UI touched (out of
+scope per milestone boundary). Also establishes ADR-014, the domain-layer
+implementation conventions (Pydantic domain objects, function-style
+repositories, text+CHECK over native Postgres enums) every later canonical
+entity (issuer, security, financial_fact, and eventual Bloomberg/S&P
+Global/Markit/Octus-backed data) will follow.
+
+**Features Completed**
+
+- `backend/app/core/types.py`: six shared `StrEnum` classes (`ProviderName`,
+  `OriginalSource`, `TransformationType`, `DataClassification`,
+  `EntitlementAction`, `EnvironmentName`) — the single source of truth reused by
+  domain objects, ORM CHECK constraints, and (later) provider adapters.
+- `backend/app/domain/provenance.py`, `raw_provider_payload.py`,
+  `entitlement.py`: frozen Pydantic 2 canonical domain objects
+  (`ProvenanceCreate`/`Provenance`, `CalculationCreate`/`Calculation`,
+  `CalculationInputCreate`/`CalculationInput`, `RawProviderPayloadCreate`/
+  `RawProviderPayload`, `DataEntitlementCreate`/`DataEntitlement`), each with
+  `model_validator`s mirroring the DB-level invariants: `calculation_id` set iff
+  `transformation == "calculated"`; `original_source` only set when
+  `provider == "admin_upload"` (ADR-007); a raw payload must have
+  `payload_json` or `storage_object_path`; `expiration_date >= effective_date`.
+- `backend/app/models/provenance.py`, `raw_provider_payload.py`,
+  `entitlement.py`: SQLAlchemy ORM models, schema-qualified to `nexus` via
+  `Base.metadata`. Enum-shaped columns are `Text` + `CheckConstraint` (built
+  from the same `core/types.py` enums), not native Postgres `ENUM` types —
+  matches PLAN.md's explicit `text` typing and keeps "add a provider" an
+  ordinary migration. `provenance.raw_payload_id` and
+  `raw_provider_payload.provenance_id` are a real, intentional circular FK
+  (PLAN.md 4.1/4.4), resolved via `ForeignKey(..., use_alter=True, name=...)`.
+  FK columns get explicit indexes (Postgres doesn't auto-index them).
+- `backend/app/core/entitlement.py`: `policy_check(action, classification,
+  entitlement, context)` — the pure, single choke point for every licensed-data
+  action (PLAN.md §4.8). Public/synthetic/AI-extracted data always passes;
+  licensed data requires an active `DataEntitlement` matching environment,
+  effective/expiration window, `permitted_users` allow-list, and the specific
+  permission flag for the requested action. Action→flag mapping documented
+  in-module (seven actions map onto five permission flags, since
+  `data_entitlement` has one flag per broad capability, not one per action).
+- `backend/app/repositories/provenance_repository.py`,
+  `raw_provider_payload_repository.py`, `entitlement_repository.py`:
+  function-style repositories (`db: Session` as first arg, domain objects
+  in/out, never an ORM instance) — `flush()` but never `commit()`, so a caller
+  can compose several repository calls into one unit of work.
+  `find_active_entitlement` is the intended pairing with `policy_check`:
+  repository resolves the entitlement (I/O), `policy_check` decides on it
+  (pure) — proven together in
+  `tests/integration/test_entitlement_repository.py::test_repository_lookup_feeds_policy_check_end_to_end`.
+- `backend/app/db/session.py`: `get_db()` now commits once at the end of a
+  successful request and rolls back on any exception (previously neither),
+  matching the flush-not-commit repository convention above.
+- `backend/alembic/env.py`: imports the three new model modules so
+  autogenerate can see them.
+- `backend/alembic/versions/0002_provenance_entitlement_foundation.py`: creates
+  all five tables in `nexus`. **Hand-corrected after autogenerate**: the naive
+  output embedded the circular FK inline inside `raw_provider_payload`'s
+  `op.create_table(...)`, but compiling that DDL directly
+  (`CreateTable(...).compile()`) proved SQLAlchemy's compiler silently *drops*
+  any `use_alter=True` constraint from an inline `CREATE TABLE` — and
+  autogenerate never emitted the separate `ALTER TABLE` that constraint needs,
+  so it would never have been created at all. Fixed: `raw_provider_payload`
+  creates without that FK, `provenance` is created afterward, and an explicit
+  `op.create_foreign_key(...)` adds the constraint once both tables exist;
+  `downgrade()` drops it first, before either table.
+- `.pre-commit-config.yaml`: scoped `backend-pytest` to `tests/unit` +
+  `tests/test_health.py` only. `tests/integration/**` now hits the live,
+  network Supabase project — correct for CI/manual runs, too slow and
+  network-fragile for every commit (flagged as a future risk in the Milestone 1
+  Hardening entry; this is that point).
+- `ARCHITECTURE_DECISIONS.md`: added **ADR-014** (domain-layer implementation
+  conventions).
+
+**Files Created**
+
+`backend/app/core/types.py`, `backend/app/core/entitlement.py`,
+`backend/app/domain/provenance.py`, `backend/app/domain/raw_provider_payload.py`,
+`backend/app/domain/entitlement.py`, `backend/app/models/provenance.py`,
+`backend/app/models/raw_provider_payload.py`, `backend/app/models/entitlement.py`,
+`backend/app/repositories/provenance_repository.py`,
+`backend/app/repositories/raw_provider_payload_repository.py`,
+`backend/app/repositories/entitlement_repository.py`,
+`backend/app/{core,domain,models,repositories}/__init__.py`,
+`backend/alembic/versions/0002_provenance_entitlement_foundation.py`,
+`backend/tests/unit/__init__.py`, `test_policy_check.py`,
+`test_domain_validators.py`, `test_db_session.py`,
+`backend/tests/integration/__init__.py`, `conftest.py`,
+`test_provenance_repository.py`, `test_raw_provider_payload_repository.py`,
+`test_entitlement_repository.py`.
+
+**Files Modified**
+
+`backend/app/db/session.py` (commit/rollback lifecycle in `get_db()`),
+`backend/alembic/env.py` (model imports), `.pre-commit-config.yaml`
+(`backend-pytest` scoped to unit tests), `PLAN.md`, `ARCHITECTURE_DECISIONS.md`.
+
+**Database Changes**
+
+Migration `0002` applied to the live, shared Supabase project: creates
+`nexus.calculation`, `nexus.data_entitlement` (+ index), `nexus.raw_provider_payload`
+(+ index), `nexus.provenance` (+ two indexes), `nexus.calculation_input` (+
+index), then the hand-added `fk_raw_provider_payload_provenance_id` FK. Six
+CHECK constraints enforce enum membership and the two cross-field invariants
+(`calculation_id`/`transformation` linkage, `original_source`/`admin_upload`
+linkage) at the DB level, independent of the Pydantic domain layer. Verified
+with a full round-trip: `upgrade head` → `downgrade 0001` → `upgrade head`,
+confirming clean creation and removal with nothing left behind.
+
+**API Endpoints Added**
+
+None (out of scope — foundation only).
+
+**Frontend Pages Added**
+
+None (out of scope — foundation only, and unaffected; re-verified green).
+
+**Environment Variables Added**
+
+None.
+
+**Tests Added**
+
+60 total (up from 2): 39 unit (`tests/unit/` — full `policy_check` coverage
+across every action/classification/permission/date/environment/`permitted_users`
+edge case; domain `model_validator` coverage; `get_db()` commit/rollback/error
+paths via a mocked session, no I/O) + 21 integration (`tests/integration/` —
+real round-trips against the live `nexus` schema: create/get for all three
+repositories, the full calculation-with-inputs lineage scenario, two DB-level
+CHECK-constraint-violation tests that bypass the Pydantic layer on purpose, and
+the repository→`policy_check` composition test) + 2 pre-existing health tests.
+
+**Test Results**
+
+```
+backend: pytest -v                    -> 60 passed (39 unit, 21 integration [live DB], 2 health)
+backend: ruff check .                 -> All checks passed!
+backend: black --check .              -> 40 files would be left unchanged.
+backend: mypy .                       -> Success: no issues found in 38 source files
+
+frontend: npm run lint                -> clean
+frontend: npm run format:check        -> All matched files use Prettier code style!
+frontend: npm run typecheck           -> clean (tsc -b)
+frontend: npm run build               -> succeeded (dist/assets bundle 428.68 kB / gzip 136.05 kB)
+frontend: npm audit                   -> found 0 vulnerabilities
+
+pre-commit run --all-files            -> all hooks passed (backend-pytest now scoped to unit tests)
+
+alembic upgrade head (live)           -> upgraded 0001 -> 0002
+alembic downgrade 0001 (live)         -> downgraded 0002 -> 0001, nexus schema back to just alembic_version
+alembic upgrade head (live, again)    -> upgraded 0001 -> 0002, clean re-apply
+GET /health (live DB config)          -> 200 {"status": "healthy", ...}
+```
+
+**Commands Executed** (representative)
+
+```
+cd backend
+./.venv/Scripts/python -m alembic revision --autogenerate -m "..."
+# hand-review + correction of the circular-FK handling, see Problems Encountered
+
+./.venv/Scripts/python -m alembic upgrade head
+./.venv/Scripts/python -m alembic downgrade 0001
+./.venv/Scripts/python -m alembic upgrade head
+
+./.venv/Scripts/python -m pytest -v
+./.venv/Scripts/python -m ruff check . / black --check . / mypy .
+
+cd ../web
+npm run lint / format:check / typecheck / build / audit
+
+cd ..
+backend/.venv/Scripts/python -m pre_commit run --all-files
+```
+
+**Deployment Validation**
+
+Not exercised — Railway/Vercel deployment remains Milestone 15 scope.
+
+**Problems Encountered**
+
+1. **Circular FK silently dropped by autogenerate** — see Features Completed
+   and ADR-014 point 4. Root-caused by compiling `CreateTable(...)` directly
+   (`str(CreateTable(RawProviderPayload.__table__).compile(dialect=postgresql.dialect()))`)
+   and observing the `use_alter=True` constraint simply isn't in the emitted
+   SQL, before touching the live database with a migration that would have
+   quietly omitted a constraint.
+2. **Alembic version-table/nexus-schema bootstrap ordering** (carried over from
+   the prior entry's `env.py` fix) did not resurface here since it was already
+   fixed, but is what made this migration's `alembic upgrade head` from a clean
+   `0001` state work on the first attempt.
+3. **`create_calculation`'s original API design was awkward**: the first draft
+   required callers to pass `CalculationInput` rows with a placeholder
+   `calculation_id` (since the real one doesn't exist until the calculation row
+   is inserted), to be silently overwritten. Caught during test-writing, before
+   any test relied on the awkward shape — fixed by splitting `CalculationInput`
+   into `CalculationInputCreate` (no `calculation_id`, what callers actually
+   have) and `CalculationInput` (the persisted row, with `calculation_id`,
+   returned by `list_calculation_inputs`).
+4. **mypy caught a real gap in initial repository code**: the first draft of
+   each repository's `_to_domain` mapper passed ORM `str` columns straight into
+   Pydantic fields typed as `StrEnum` subclasses without conversion. mypy
+   flagged all seven occurrences (`error: Argument "provider" ... incompatible
+   type "str"; expected "ProviderName"`, etc.) before any test ran — fixed by
+   explicitly constructing the enum (`ProviderName(row.provider)`) at every
+   read boundary.
+
+**Solutions**
+
+Every problem above was caught by directly verifying behavior (compiling DDL,
+running mypy, writing the integration test that exercises the exact shape
+`create_calculation` callers need) rather than assuming autogenerate, review,
+or type hints alone were sufficient — consistent with this project's pattern of
+proving claims against the real database rather than the migration/tool output.
+
+**Remaining Work**
+
+- TD-005 (new): `data_entitlement.derived_data_permission` is modeled but not
+  yet used by `policy_check` — deferred until a real licensed provider exists
+  to test the calculation-lineage-walk logic against (Milestone 14+).
+- Everything in Milestone 3 onward per `PLAN.md` § Milestone Status —
+  unstarted; Milestone 3 requires separate approval to begin.
+
+**Git Commit Hash**
+
+Recorded in a follow-up entry, per this repository's established two-commit
+pattern (see "Milestone 1 Hardening" and "Supabase Schema-Isolation
+Configuration & Live Validation" entries above) — the hash of the commit
+containing this entry cannot be known before that commit is created.
+
+**GitHub Remote and Push Results**
+
+Recorded in the same follow-up entry.
+
+**Approximate Time Spent**
+
+Single focused implementation session, following directly after Supabase
+schema-isolation validation and Milestone 1/1-hardening approval.
+
+**Developer Notes**
+
+The two mypy catches and the autogenerate/circular-FK catch are the load-bearing
+example for this milestone: every one of them would have been a silent, or
+much-later-discovered, correctness bug in a domain-layer/migration workflow
+that otherwise "ran successfully." Treat a clean `mypy`/`alembic upgrade`/
+`pytest` run as a floor, not a ceiling — this milestone's actual bugs were all
+found by going one level deeper (compiling DDL, reading the type error instead
+of suppressing it, writing the integration test that uses the API the way a
+real caller would) than the tool's surface-level "success."

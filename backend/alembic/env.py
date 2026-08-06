@@ -28,9 +28,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.config import get_settings  # noqa: E402
 from app.db.base import NEXUS_SCHEMA, Base  # noqa: E402
 
-# Model modules are imported here as they're added (Milestone 2+) so autogenerate
-# can see them, e.g.:
-# from app.models import provenance  # noqa: F401
+# Model modules are imported here as they're added so autogenerate can see them.
+from app.models import entitlement, provenance, raw_provider_payload  # noqa: E402, F401
 
 config = context.config
 

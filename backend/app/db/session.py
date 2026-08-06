@@ -2,10 +2,14 @@
 
 Per PLAN.md section 3 (Domain layer), only repository modules are permitted to
 import `get_db`/`SessionLocal` and open a session — providers and API routes
-never touch SQLAlchemy directly. Milestone 1 has no repositories yet; this
-module exists so later milestones have a single, already-tested place to get a
-session from, and so `/health` can stay a zero-dependency liveness check while
-the rest of the app is already wired for a real database.
+never touch SQLAlchemy directly. This module exists so `/health` can stay a
+zero-dependency liveness check while the rest of the app is already wired for a
+real database.
+
+Repository functions (`app/repositories/**`) `flush()` but never `commit()` —
+`get_db()` owns the transaction boundary: commit once, at the end of a
+successful request, or roll back on any exception. This lets a single request
+call several repository functions as one atomic unit of work.
 """
 
 from __future__ import annotations
@@ -52,5 +56,9 @@ def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
         yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
