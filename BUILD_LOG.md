@@ -868,13 +868,15 @@ project's explicit written rule against extension drop/relocate operations.
 
 **Git Commit Hash**
 
-Recorded in a follow-up entry, per this repository's established two-commit
-pattern (see "Milestone 1 Hardening" entry above) — the hash of the commit
-containing this entry cannot be known before that commit is created.
+`9f753c4cf53f3015eae4e04da91c3cb70c22646f` (`9f753c4`)
 
 **GitHub Remote and Push Results**
 
-Recorded in the same follow-up entry.
+- `git push origin main` — succeeded: `e8a5082..9f753c4  main -> main`.
+- Post-push verification: `git ls-remote origin` returns
+  `9f753c4cf53f3015eae4e04da91c3cb70c22646f` for both `HEAD` and
+  `refs/heads/main`, matching the local commit exactly.
+- Remote branch: https://github.com/kirantoday/nexus-credit-intelligence/tree/main
 
 **Approximate Time Spent**
 
