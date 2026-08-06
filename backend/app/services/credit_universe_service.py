@@ -12,10 +12,38 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.core.entitlement import PolicyContext, policy_check
 from app.core.freshness import compute_freshness
-from app.core.types import EntitlementAction, InstrumentType
-from app.repositories import security_repository
-from app.repositories.security_repository import SortDirection, SortField
+from app.core.types import EntitlementAction, InstrumentType, ProviderName
+from app.domain.fred import FredObservation
+from app.repositories import fred_repository, security_repository
+from app.repositories.security_repository import SecurityWithIssuer, SortDirection, SortField
 from app.schemas.credit_universe import CreditUniversePage, CreditUniverseRow
+
+# Maps a security's own `benchmark` text (e.g. "SOFR") to the FRED series
+# this platform syncs for it (`providers/fred/provider.py`). Only benchmarks
+# Milestone 5 actually syncs are listed — a security referencing a benchmark
+# not in this map simply gets `benchmark_rate=None`, never a guess.
+_BENCHMARK_TO_FRED_SERIES: dict[str, str] = {"SOFR": "SOFR"}
+
+
+def _latest_benchmark_observations(
+    db: Session, rows: list[SecurityWithIssuer]
+) -> dict[str, FredObservation]:
+    """One cheap lookup per *distinct* benchmark actually present on this
+    page (not per row) — e.g. a page of 50 loans all referencing "SOFR" is
+    one query, not fifty."""
+    benchmarks = {
+        row.security.benchmark
+        for row in rows
+        if row.security.benchmark in _BENCHMARK_TO_FRED_SERIES
+    }
+    observations: dict[str, FredObservation] = {}
+    for benchmark in benchmarks:
+        observation = fred_repository.get_latest_observation(
+            db, _BENCHMARK_TO_FRED_SERIES[benchmark]
+        )
+        if observation is not None:
+            observations[benchmark] = observation
+    return observations
 
 
 def get_credit_universe_page(
@@ -41,6 +69,7 @@ def get_credit_universe_page(
     )
 
     context = PolicyContext(environment=get_settings().environment)
+    benchmark_observations = _latest_benchmark_observations(db, rows)
 
     # No licensed provider is connected yet (Milestone 14), so `entitlement`
     # is always None and `policy_check` always allows public/synthetic rows
@@ -56,6 +85,9 @@ def get_credit_universe_page(
         )
         if not decision.allowed:
             continue
+        benchmark_observation = (
+            benchmark_observations.get(row.security.benchmark) if row.security.benchmark else None
+        )
         visible_rows.append(
             CreditUniverseRow(
                 security_id=row.security.id,
@@ -84,6 +116,15 @@ def get_credit_universe_page(
                 as_of_date=row.provenance_as_of_date,
                 retrieved_at=row.provenance_retrieved_at,
                 freshness=compute_freshness(row.provenance_retrieved_at, row.provenance_provider),
+                benchmark_rate=(
+                    benchmark_observation.value if benchmark_observation is not None else None
+                ),
+                benchmark_rate_as_of_date=(
+                    benchmark_observation.obs_date if benchmark_observation is not None else None
+                ),
+                benchmark_rate_provider=(
+                    ProviderName.FRED if benchmark_observation is not None else None
+                ),
             )
         )
 

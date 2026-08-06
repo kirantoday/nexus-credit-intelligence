@@ -53,13 +53,24 @@ def test_synthetic_data_never_goes_stale() -> None:
     assert compute_freshness(retrieved_at, ProviderName.SYNTHETIC, now=_NOW) is FreshnessTier.LIVE
 
 
+def test_openfigi_reference_data_has_a_long_lived_policy() -> None:
+    # FIGI/maturity/coupon on a bond issue don't change once assigned —
+    # still LIVE a week after retrieval, unlike SEC_EDGAR's 24h window.
+    one_week_ago = _NOW - timedelta(days=7)
+    assert compute_freshness(one_week_ago, ProviderName.OPENFIGI, now=_NOW) is FreshnessTier.LIVE
+    assert compute_freshness(one_week_ago, ProviderName.SEC_EDGAR, now=_NOW) is FreshnessTier.CACHED
+
+
 def test_unknown_provider_falls_back_to_default_policy() -> None:
-    # ProviderName.OPENFIGI has no explicit policy entry yet.
+    # ProviderName.COURTLISTENER has no explicit policy entry yet.
     retrieved_at = _NOW - timedelta(minutes=30)
-    assert compute_freshness(retrieved_at, ProviderName.OPENFIGI, now=_NOW) is FreshnessTier.LIVE
+    assert (
+        compute_freshness(retrieved_at, ProviderName.COURTLISTENER, now=_NOW) is FreshnessTier.LIVE
+    )
     retrieved_at_old = _NOW - timedelta(hours=2)
     assert (
-        compute_freshness(retrieved_at_old, ProviderName.OPENFIGI, now=_NOW) is FreshnessTier.CACHED
+        compute_freshness(retrieved_at_old, ProviderName.COURTLISTENER, now=_NOW)
+        is FreshnessTier.CACHED
     )
 
 

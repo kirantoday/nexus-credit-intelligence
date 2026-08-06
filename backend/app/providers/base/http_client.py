@@ -43,19 +43,32 @@ class ThrottledHttpClient:
         user_agent: str,
         min_interval_seconds: float = 0.15,
         timeout_seconds: float = 30.0,
+        extra_headers: dict[str, str] | None = None,
     ) -> None:
         if not user_agent:
             raise ValueError("user_agent is required for provider HTTP requests")
         self._min_interval_seconds = min_interval_seconds
-        self._client = httpx.Client(
-            timeout=timeout_seconds,
-            headers={"User-Agent": user_agent, "Accept": "application/json"},
-        )
+        headers = {"User-Agent": user_agent, "Accept": "application/json"}
+        if extra_headers:
+            headers.update(extra_headers)
+        self._client = httpx.Client(timeout=timeout_seconds, headers=headers)
         self._last_request_at: float | None = None
 
     def get(self, url: str) -> HttpResponse:
         self._throttle()
         response = self._client.get(url)
+        response.raise_for_status()
+        return HttpResponse(
+            raw_bytes=response.content,
+            content_type=response.headers.get("content-type", "application/octet-stream"),
+            status_code=response.status_code,
+        )
+
+    def post_json(self, url: str, json_body: object) -> HttpResponse:
+        """POST with a JSON body (e.g. OpenFIGI's search/mapping endpoints,
+        which take their query as a POST body rather than query params)."""
+        self._throttle()
+        response = self._client.post(url, json=json_body)
         response.raise_for_status()
         return HttpResponse(
             raw_bytes=response.content,

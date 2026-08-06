@@ -64,6 +64,15 @@ export interface CreditUniverseRow {
   as_of_date: string;
   retrieved_at: string;
   freshness: FreshnessTier;
+  /**
+   * The security's own `benchmark` (e.g. "SOFR") re-priced against a real,
+   * live FRED observation — a plain reported fact, not blended with `spread`
+   * into a new calculated number. `null` whenever `benchmark` isn't a series
+   * this platform syncs (or the security has no benchmark at all).
+   */
+  benchmark_rate: string | null;
+  benchmark_rate_as_of_date: string | null;
+  benchmark_rate_provider: ProviderName | null;
 }
 
 export interface CreditUniversePage {

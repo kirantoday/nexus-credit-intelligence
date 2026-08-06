@@ -1,7 +1,9 @@
 """ORM model for `security` (PLAN.md section 4.5).
 
 Single `provenance_id` per row, not per-field — see `app/domain/security.py`'s
-module docstring and PLAN.md Technical Debt TD-007 for why.
+module docstring and PLAN.md Technical Debt TD-007 for why (still open, but
+not because Milestone 5 needed it: OpenFIGI-sourced bonds are new rows, not
+enrichments of the existing SEC-sourced aggregate row).
 """
 
 from __future__ import annotations
@@ -52,6 +54,7 @@ class Security(Base):
             "ix_security_cusip", "cusip", unique=True, postgresql_where=text("cusip IS NOT NULL")
         ),
         Index("ix_security_isin", "isin", unique=True, postgresql_where=text("isin IS NOT NULL")),
+        Index("ix_security_figi", "figi", unique=True, postgresql_where=text("figi IS NOT NULL")),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

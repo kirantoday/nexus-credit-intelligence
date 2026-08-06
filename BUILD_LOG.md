@@ -1796,3 +1796,337 @@ provider adapter and every future load-bearing query — it was silent under
 light, isolated test runs and only surfaced under the kind of concurrent/
 sequential connection churn a full test suite or a real multi-request server
 session produces.
+
+---
+
+## 2026-08-06 — Milestone 5: OpenFIGI + FRED adapters
+
+**Summary**
+
+Approved with an explicit instruction: think like an investment analyst
+first — integrate a provider only because it answers a real question, not
+because it exists. OpenFIGI answers "what security is this?"; FRED answers
+"what macroeconomic environment surrounds this credit?". Both adapters were
+scoped and verified against real, live API behavior before any code was
+written (same discipline as Milestones 3-4), and Credit Universe is
+measurably more useful for it: five real, specific Apple bonds replace what
+was previously one non-actionable aggregate figure, and every SOFR-linked
+loan row now shows a live, real benchmark rate.
+
+**Features Completed**
+
+- OpenFIGI provider (`providers/openfigi/`): a live `POST /v3/search` for
+  "APPLE INC" (`marketSecDes=Corp`), filtered to `exchCode=TRACE` (USD
+  domestic corporate bonds — the same universe Milestone 11's TRACE adapter
+  will eventually price), identifies real, specific bond issues. Verified
+  live before design: the free API returns no CUSIP/ISIN at all (a genuine
+  provider limitation, not a shortcut) but does return a real FIGI and a
+  `ticker` field following a parseable `"COUPON MM/DD/YY"` convention (e.g.
+  `"AAPL 3.85 05/04/43"`), regexed into real `maturity_date`/`coupon` —
+  falling back to maturity-only parsing for floating-rate notes (ticker'd
+  `"F"`, not a numeric coupon), and to `(None, None)` for anything
+  unrecognized, never a guess.
+- FRED provider (`providers/fred/`): syncs a series' metadata plus its most
+  recent observations (default latest 10 — a deliberate first-slice scope,
+  not a bulk historical loader, TD-009). FRED's real `"."`
+  missing-observation marker (holidays, etc.) is filtered out before any
+  `provenance` row is created for it — no row is created for a missing date,
+  not a fabricated null one. `provenance.source_url` never carries the API
+  key (a `public_url` built separately from the actual key-bearing request
+  URL, per PLAN.md 4.1's "no API keys embedded" rule).
+- `security.figi` unique index (Milestone 5 is the first to populate it);
+  `fred_series_registry`/`fred_observation` tables (PLAN.md 4.5) —
+  `category`/`discontinued`/`redistribution_allowed` are honestly
+  documented as curator-assigned/sync-time defaults, not fields FRED's
+  `/fred/series` response actually contains (verified live).
+  `security_repository.get_security_by_figi` added for OpenFIGI idempotency,
+  mirroring the existing `get_issuer_by_legal_name` pattern.
+- Credit Universe gained a "Current Benchmark Rate" column: for a row whose
+  `benchmark` matches a FRED series this platform syncs (currently just
+  "SOFR"), the latest real FRED observation is shown as a plain reported
+  fact — deliberately NOT blended with `spread` into a new "all-in rate"
+  number, per the explicit instruction not to derive a new calculated macro
+  score this milestone. A new `GET /api/market-context` endpoint +
+  `MarketContextPanel` surface real SOFR + ICE BofA US High Yield OAS
+  (`BAMLH0A0HYM2`) together, honestly `None` (rendered as "—") for a series
+  that hasn't been synced rather than a placeholder value.
+- `ThrottledHttpClient` extended with `post_json` (OpenFIGI's search API is
+  POST-only) and optional `extra_headers` (for `X-OPENFIGI-APIKEY`);
+  `raw_payload_store.fingerprint_request` extended to optionally hash a
+  request body, since a POST API's URL alone doesn't distinguish two
+  different queries against the same endpoint the way a GET URL does.
+- `FRED_API_KEY` supplied directly by the user into `backend/.env`
+  (git-ignored, never printed/logged/committed) and loaded through the
+  existing `pydantic-settings` `Settings.fred_api_key` field, which was
+  already scaffolded in Milestone 1's environment-variable contract.
+
+**Files Created**
+
+`backend/alembic/versions/0005_figi_unique_index_and_fred_tables.py`,
+`backend/app/api/routes/market_context.py`, `backend/app/domain/fred.py`,
+`backend/app/models/fred.py`, `backend/app/providers/fred/__init__.py`,
+`backend/app/providers/fred/client.py`, `backend/app/providers/fred/dto.py`,
+`backend/app/providers/fred/normalizer.py`,
+`backend/app/providers/fred/provider.py`,
+`backend/app/providers/openfigi/__init__.py`,
+`backend/app/providers/openfigi/client.py`,
+`backend/app/providers/openfigi/dto.py`,
+`backend/app/providers/openfigi/normalizer.py`,
+`backend/app/providers/openfigi/provider.py`,
+`backend/app/repositories/fred_repository.py`,
+`backend/app/schemas/market_context.py`,
+`backend/app/services/market_context_service.py`,
+`backend/tests/unit/test_openfigi_normalizer.py`,
+`backend/tests/unit/test_fred_normalizer.py`,
+`backend/tests/integration/test_fred_repository.py`,
+`backend/tests/integration/test_openfigi_live_ingestion.py`,
+`backend/tests/integration/test_fred_live_ingestion.py`,
+`backend/tests/integration/test_market_context_service.py`,
+`web/src/api/marketContext.ts`, `web/src/components/MarketContextPanel.tsx`,
+`web/src/components/MarketContextPanel.test.tsx`,
+`web/src/queries/useMarketContext.ts`.
+
+**Files Modified**
+
+`backend/app/core/freshness.py` (OpenFIGI freshness policy — reference data,
+long-lived), `backend/app/domain/security.py` (TD-007 docstring updated to
+explain why this milestone didn't force its resolution),
+`backend/app/main.py` (mounts `market_context_router`),
+`backend/app/models/__init__.py` (imports `fred`),
+`backend/app/models/security.py` (`figi` unique index, docstring),
+`backend/app/providers/base/http_client.py` (`post_json`, `extra_headers`),
+`backend/app/providers/base/raw_payload_store.py` (body-aware fingerprint),
+`backend/app/repositories/security_repository.py`
+(`get_security_by_figi`), `backend/app/schemas/credit_universe.py`
+(`benchmark_rate`/`benchmark_rate_as_of_date`/`benchmark_rate_provider`),
+`backend/app/services/credit_universe_service.py` (benchmark-rate
+attachment, one query per distinct benchmark on a page, not per row),
+`backend/tests/integration/conftest.py` (pgbouncer fix on its own engine;
+new `openfigi_http_client`/`fred_http_client`/`fred_api_key` fixtures),
+`backend/tests/integration/test_credit_universe_service.py`
+(benchmark-rate tests), `backend/tests/unit/test_freshness.py` (OpenFIGI
+policy test; swapped the "unknown provider" example off OpenFIGI now that
+it has a real policy), `web/src/api/creditUniverse.ts` (benchmark-rate
+fields), `web/src/pages/CreditUniversePage.tsx` (benchmark-rate column,
+`MarketContextPanel` mounted), `web/src/pages/CreditUniversePage.test.tsx`
+(mocks `fetchMarketContext`), `web/vite.config.ts` (`testTimeout: 15000` —
+see Problems Encountered).
+
+**Database Changes**
+
+Migration `0005` applied to the live, shared Supabase project: adds a
+partial unique index on `security.figi` (`WHERE figi IS NOT NULL`,
+mirroring `cusip`/`isin`); creates `nexus.fred_series_registry`
+(`series_id` text primary key, per PLAN.md 4.5's column list, which lists no
+separate surrogate id for this table) and `nexus.fred_observation`
+(`(series_id, obs_date)` unique for idempotent re-sync). Verified with a
+full round-trip: `upgrade head` → `downgrade 0004` → `upgrade head`, plus a
+follow-up autogenerate check against the fully-migrated state that detected
+zero further diffs.
+
+Separately, a genuine (non-test, committed) live seed was run:
+`nexus.security` now permanently contains five real Apple corporate bonds
+(real FIGI, real maturity/coupon, e.g. `BBG004HST0K7` / "AAPL 3.85
+05/04/43" / matures 2043-05-04 / 3.85%), each backed by a real `provenance`
+row (`provider = openfigi`). `nexus.fred_series_registry` contains real
+`SOFR` and `BAMLH0A0HYM2` registry rows; `nexus.fred_observation` contains
+10 real observations for each series, each with its own `provenance` row
+(`provider = fred`) and a shared `raw_provider_payload` row per API call.
+Re-running the seed script twice consecutively confirmed full idempotency:
+0 of 25 rows reported as newly created on the second run.
+
+**API Endpoints Added**
+
+`GET /api/market-context` — returns `{ sofr, high_yield_oas }`, each `null`
+or a `{ series_id, title, value, units, as_of_date, freshness, provider }`
+observation. `GET /api/credit-universe` unchanged in shape except three new
+fields per row: `benchmark_rate`, `benchmark_rate_as_of_date`,
+`benchmark_rate_provider`.
+
+**Frontend Pages Added**
+
+None new — `CreditUniversePage` gained a column and a panel component
+(`MarketContextPanel`), not a new route.
+
+**Environment Variables Added**
+
+`FRED_API_KEY` (already scaffolded in `Settings`/`.env.example` since
+Milestone 1; supplied by the user directly into `backend/.env`, git-ignored,
+never printed/logged in this session or committed). `OPENFIGI_API_KEY`
+remains optional and unset — OpenFIGI's unauthenticated tier is sufficient
+for this milestone's scope, with the code already wired to use a key
+automatically once one is configured (see Problems Encountered).
+
+**Tests Added**
+
+32 new backend tests (134 → 166): `test_openfigi_normalizer.py` (8 — ticker
+parsing incl. floating-rate/unrecognized-shape cases, never-fabricate-
+CUSIP/ISIN), `test_fred_normalizer.py` (6 — missing-observation filtering,
+curator-assigned category not parsed from the API), `test_fred_repository.py`
+(6), `test_openfigi_live_ingestion.py` (4, genuinely live),
+`test_fred_live_ingestion.py` (3, genuinely live, incl. asserting the API key
+never leaks into a persisted raw payload), `test_market_context_service.py`
+(2, against genuinely live-synced data), plus 3 new
+`test_credit_universe_service.py` tests (SOFR-benchmarked row gets a real
+rate; unsynced-benchmark and no-benchmark rows correctly get none) and 1 new
+`test_freshness.py` test (OpenFIGI's long-lived reference-data policy).
+
+3 new frontend tests (26 → 29): `MarketContextPanel.test.tsx` (real
+observations render; a `null` series renders "—", not a fabricated value;
+API failure shows the unavailable message).
+
+**Test Results**
+
+```
+backend: pytest -q (x2 consecutive full runs)  -> 166 passed each time
+backend: pytest -q tests/integration/test_openfigi_live_ingestion.py (x2)  -> 4 passed each time
+                                                    (after the throttle fix — see Problems Encountered)
+backend: ruff check .                          -> All checks passed!
+backend: black --check .                       -> 100 files would be left unchanged.
+backend: mypy .                                -> Success: no issues found in 95 source files
+backend: alembic current                       -> 0005 (head)
+backend: alembic check                         -> No new upgrade operations detected.
+
+frontend: npm run test (x2)                    -> 29 passed (5 test files) each time
+frontend: npm run lint                         -> clean
+frontend: npm run format:check                 -> All matched files use Prettier code style!
+frontend: npm run typecheck                    -> clean (tsc -b)
+frontend: npm run build                        -> succeeded (dist/assets bundle 597.43 kB / gzip 183.10 kB)
+
+pre-commit run --all-files                     -> all hooks passed
+
+GET /health (live server, port 8000)           -> 200 {"status": "healthy", ...}
+GET /api/market-context (live server)          -> 200, real SOFR (3.64%) + HY OAS (2.73%)
+GET /api/credit-universe (live server)         -> 200, real benchmark_rate on SOFR-linked rows
+```
+
+**Commands Executed** (representative)
+
+```
+# real API shape verification before writing DTOs (not guessed at)
+curl -X POST https://api.openfigi.com/v3/search -d '{"query":"APPLE INC","marketSecDes":"Corp"}'
+curl "https://api.stlouisfed.org/fred/series?series_id=SOFR&api_key=$FRED_API_KEY&file_type=json"
+curl "https://api.stlouisfed.org/fred/series/observations?series_id=SOFR&api_key=$FRED_API_KEY&file_type=json&sort_order=desc&limit=5"
+
+cd backend
+./.venv/Scripts/python -m alembic revision --autogenerate -m "figi unique index and fred tables"
+./.venv/Scripts/python -m alembic upgrade head
+./.venv/Scripts/python -m alembic downgrade 0004
+./.venv/Scripts/python -m alembic upgrade head
+./.venv/Scripts/python -m alembic revision --autogenerate -m "drift check"  # confirmed empty, deleted
+
+# genuine, committed (non-test) live seed — see Database Changes
+./.venv/Scripts/python seed_milestone5.py   # OpenFIGI bonds + FRED SOFR/HY OAS sync + commit
+./.venv/Scripts/python seed_milestone5.py   # re-run: confirmed 0/25 rows newly created
+
+./.venv/Scripts/python -m pytest -q   # run 2x consecutively
+./.venv/Scripts/python -m ruff check . / black --check . / mypy .
+
+cd ../web
+npm run test / lint / typecheck / build
+
+cd ..
+backend/.venv/Scripts/python -m pre_commit run --all-files
+
+# manual browser verification (Chrome, via claude-in-chrome tools)
+# real Apple bonds render with real maturity/coupon; Market Context panel
+# shows live SOFR/HY OAS; SOFR-linked loan row shows a matching benchmark
+# rate; console-error check — see Problems Encountered
+```
+
+**Deployment Validation**
+
+Not exercised — Railway/Vercel deployment remains Milestone 15 scope. Both
+the backend (`uvicorn`, port 8000 — the documented default, see Problems
+Encountered) and frontend (`vite dev`, port 5173) dev servers were run
+locally and confirmed booting and serving real, live-Supabase-backed data.
+
+**Problems Encountered**
+
+1. **A real pgbouncer/psycopg3 gap in the test suite's own engine.**
+   `tests/integration/conftest.py`'s `db_engine` fixture builds its own
+   SQLAlchemy engine, separate from `app/db/session.py` — Milestone 4's fix
+   (`prepare_threshold=None`) only patched the latter. Since every
+   integration test uses this fixture, the exact same intermittent
+   `InvalidSqlStatementName`/`DuplicatePreparedStatement` vulnerability was
+   still live in the test suite the whole time; it happened not to trigger
+   in Milestone 4's specific runs. Found by re-reading the fixture while
+   adding new ones for OpenFIGI/FRED, not by a fresh failure — fixed
+   proactively with the identical `connect_args` change.
+2. **A real live 429 from OpenFIGI's unauthenticated tier.** Running
+   `test_openfigi_live_ingestion.py`'s four tests back-to-back (this module
+   alone makes ~10 live search calls at the base `0.15s` throttle) triggered
+   a genuine `HTTP/1.1 429 Too Many Requests` from `api.openfigi.com` on a
+   full-suite run; the same module passed reliably run in isolation. Fixed
+   by raising the `openfigi_http_client` fixture's throttle to 6s between
+   requests and wiring `X-OPENFIGI-APIKEY` through automatically whenever
+   `OPENFIGI_API_KEY` is configured (it isn't, in this environment — the
+   unauthenticated tier is sufficient for this milestone's scope, but the
+   code now self-heals once a key exists rather than requiring a second
+   code change).
+3. **A frontend test timing out under full-suite load, not a logic bug.**
+   `CreditUniversePage.test.tsx`'s first test occasionally exceeded
+   Vitest's default 5000ms timeout only when run alongside the other four
+   test files (consistently ~5.8s in that configuration), while passing in
+   1-2s every time in isolation — this sandbox showed anomalously high
+   `import`/`environment` setup overhead (100s+) during this session
+   specifically. Fixed by raising `testTimeout` to 15000ms globally in
+   `vite.config.ts`, giving real headroom rather than chasing a phantom
+   logic bug that isolated runs disproved.
+4. **Manual browser verification initially hit the wrong backend port.**
+   The frontend's `client.ts` defaults `VITE_API_BASE_URL` to
+   `http://localhost:8000` (confirmed against `README.md`'s documented dev
+   instructions), but this session's backend had been running on `8010`
+   since Milestone 4 (an arbitrary port choice, never corrected). The
+   browser's own network tab showed the real symptom directly: `OPTIONS`/
+   `GET` to `http://localhost:8000/api/*` returning `503` from something
+   other than this project's backend, not a CORS or code error. Fixed by
+   restarting the backend on the documented port `8000`; both the Credit
+   Universe table and Market Context panel then rendered real data
+   immediately.
+
+**Solutions**
+
+All four were caught by direct verification: re-reading a fixture that
+looked "already fixed" rather than assuming Milestone 4's patch covered
+every engine, running the same live test module in isolation vs. the full
+suite to separate a real rate limit from a flaky assertion, comparing
+isolated vs. full-suite timing before deciding a timeout bump was the
+honest fix rather than a cover-up, and reading the actual network request
+log in the browser (not guessing at CORS) to find the real port mismatch.
+
+**Remaining Work**
+
+- TD-009 (new): FRED sync pulls only the latest N observations, not a full
+  historical backfill — deferred until a feature (e.g. a rate chart) needs
+  trend history.
+- TD-007 stays open (per-field `security` provenance) — this milestone
+  found a way to avoid needing it rather than resolving it; see PLAN.md's
+  updated note.
+- TD-008 partially addressed: OpenFIGI now supplies real per-instrument
+  FIGI/maturity/coupon where SEC EDGAR's aggregate-only API couldn't;
+  CUSIP/ISIN remain unavailable from either provider.
+- Everything in Milestone 6 onward per `PLAN.md` § Milestone Status —
+  unstarted; Milestone 6 requires separate approval to begin.
+
+**Git Commit Hash**
+
+**Approximate Time Spent**
+
+Single focused implementation session, following directly after Milestone 4
+approval (continued across a context interruption; resumed cleanly from
+committed task-list/file state with no rework).
+
+**Developer Notes**
+
+The "think like an analyst, not a provider checklist" framing shaped real
+design decisions, not just marketing copy: it's why OpenFIGI results became
+new `security` rows instead of forcing TD-007's resolution onto the
+existing aggregate row, why the benchmark-rate column stayed a plain
+reported fact instead of a tempting-but-out-of-scope blended calculation,
+and why FRED sync intentionally isn't a bulk historical loader (TD-009) —
+each choice traces back to "what real question does this actually answer
+right now," not "what could this data support eventually." The
+domain/provider-layer conventions from Milestones 2-4 again needed zero
+changes for two more provider adapters, which is the strongest evidence yet
+that ADR-014's conventions are the right long-term shape.

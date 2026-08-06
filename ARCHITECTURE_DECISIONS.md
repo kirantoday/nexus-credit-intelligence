@@ -727,3 +727,90 @@ swappable/mockable repository implementations arises (e.g. contract testing
 against multiple backends) — not anticipated for this POC. Revisit the
 text+CHECK vs. native enum choice only if constraint-based validation is proven
 too slow at a row count this project isn't expected to reach.
+
+---
+
+## ADR-015: A second provider identifying a more specific entity creates a new row, not a mixed-provenance enrichment of an existing one
+
+**Date:** 2026-08-06
+**Status:** Accepted
+
+**Context**
+`security` (PLAN.md §4.5) carries a single `provenance_id` per row, not
+per-field provenance (Technical Debt TD-007, recorded in Milestone 4).
+Milestone 4 predicted TD-007 would need resolving in Milestone 5, once the
+OpenFIGI adapter had a concrete case to attribute individual fields
+(`cusip`/`isin`/`figi`) to a different provider than the rest of an existing
+row. That case arrived: Milestone 4 already created one `security` row for
+Apple Inc. representing SEC EDGAR's aggregate long-term-debt figure (no
+CUSIP/ISIN/FIGI/maturity/coupon — a real API limitation, TD-008). Milestone
+5's OpenFIGI adapter then identified five real, *specific* Apple bond issues
+(each with its own real FIGI and maturity/coupon). The naive move — set
+`figi`/`maturity_date`/`coupon` directly on the existing SEC-sourced row —
+was rejected before being implemented: that row's `description` and
+`amount_outstanding` describe Apple's whole aggregate balance-sheet debt
+figure, not any one of these five specific bonds. Attaching one specific
+bond's FIGI to it would assert "this aggregate figure *is* this specific
+bond," which is false, and would misattribute the fact under a
+`provenance_id` that in reality only vouches for the SEC-sourced fields.
+
+**Decision**
+When a provider identifies an entity that is genuinely distinct from an
+already-existing row (not the same fact re-observed, but a more specific or
+different real-world thing), it becomes a **new** canonical row, entirely
+sourced from that provider — never a partial-field write onto an existing
+row whose `provenance_id` only covers a different provider's facts. A
+`security` row's single `provenance_id` remains correct precisely because
+every field on that row traces to the same ingestion event. This is a
+narrower, immediately-actionable version of the eventual TD-007 fix
+(per-field provenance) that requires no schema change: it avoids the
+mixed-provenance problem instead of solving it.
+
+**Alternatives Considered**
+- Implement full per-field provenance now (a `security_field_provenance`
+  join table, analogous to `calculation_input`, PLAN.md §4.3) — rejected for
+  Milestone 5: it's real, necessary work for the case TD-007 actually
+  describes (attributing *different fields of the same real-world
+  instrument* to different providers), but that case didn't arise this
+  milestone. Building the join table now, with no real caller needing
+  multiplicity, would repeat the exact mistake ADR-014 warned against
+  (speculative infrastructure with nothing to validate its shape against).
+- Overwrite the existing aggregate row's `cusip`/`isin`/`figi`/
+  `maturity_date`/`coupon` fields with one arbitrarily-chosen OpenFIGI bond's
+  values — rejected: factually false (the aggregate figure is not that one
+  bond), and would make `amount_outstanding` (the whole aggregate) sit
+  alongside one specific bond's `maturity_date`, an internally inconsistent
+  row no honest UI label could fix.
+- Silently drop the aggregate SEC row once OpenFIGI data exists — rejected:
+  the aggregate figure is real, independently useful data (a company-wide
+  leverage figure) with its own provenance; nothing about a newer, more
+  granular source invalidates an older, differently-scoped fact.
+
+**Tradeoffs**
+An issuer with both an aggregate SEC-sourced figure and several
+OpenFIGI-identified specific bonds now has multiple `security` rows that a
+naive reader might assume double-count `amount_outstanding` if summed
+carelessly — mitigated by `description` explicitly stating which kind of
+figure each row is (`"... (SEC XBRL aggregate; not a specific instrument)"`
+vs. a real bond ticker string), and by every row's own `provenance` making
+the source unambiguous on inspection.
+
+**Consequences**
+- TD-007 remains open, unblocked but unresolved: the per-field provenance
+  table is still deferred until a milestone has a *genuine* multi-provider,
+  single-entity case (e.g. a future provider reporting a *coupon change* on
+  one of these same five OpenFIGI-identified bonds, which would need to
+  update that specific row's `coupon` while preserving `figi`'s original
+  OpenFIGI provenance).
+- Every future provider adapter facing this same shape of decision (a new
+  provider identifies something that might be "the same thing, more
+  detail" or "a genuinely different thing") should default to treating it
+  as a new row unless the two facts are provably about the identical
+  real-world instrument.
+
+**Future Revisit Recommendation**
+Implement the `security_field_provenance` join table (or an equivalent) the
+first time a real caller needs to attribute two fields on the *same*
+`security` row to two different providers — not before. This ADR's pattern
+(new row when in doubt) is the interim answer for every provider adapter
+until that happens.

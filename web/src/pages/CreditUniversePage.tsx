@@ -11,10 +11,12 @@ import {
   TextField,
   ToggleButton,
   ToggleButtonGroup,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import TablePagination from "@mui/material/TablePagination";
 import { DataTable } from "../components/DataTable";
+import { MarketContextPanel } from "../components/MarketContextPanel";
 import { ProvenanceBadge } from "../components/ProvenanceBadge";
 import { SyntheticDataBadge } from "../components/SyntheticDataBadge";
 import { useCreditUniverse } from "../queries/useCreditUniverse";
@@ -184,6 +186,23 @@ export function CreditUniversePage(): ReactElement {
         },
       },
       {
+        id: "benchmark_rate",
+        header: "Current Benchmark Rate",
+        enableSorting: false,
+        accessorFn: (row) => row.benchmark_rate,
+        cell: ({ row }) => {
+          const { benchmark, benchmark_rate, benchmark_rate_as_of_date } = row.original;
+          if (benchmark_rate === null) return "—";
+          return (
+            <Tooltip
+              title={`Source: FRED (${benchmark}) · As of ${formatDate(benchmark_rate_as_of_date)}`}
+            >
+              <span>{formatPercent(benchmark_rate)}</span>
+            </Tooltip>
+          );
+        },
+      },
+      {
         id: "sector",
         header: "Sector",
         enableSorting: false,
@@ -225,6 +244,8 @@ export function CreditUniversePage(): ReactElement {
           synthetic loan positions clearly labeled. Every value carries provenance.
         </Typography>
       </Box>
+
+      <MarketContextPanel />
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ sm: "center" }}>

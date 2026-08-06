@@ -11,6 +11,7 @@ intact: provider code never imports `app.db.session` or opens a session.
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime
 from typing import Any
 
@@ -21,9 +22,16 @@ from app.domain.raw_provider_payload import RawProviderPayload, RawProviderPaylo
 from app.repositories import raw_provider_payload_repository
 
 
-def fingerprint_request(url: str) -> str:
-    """Hash of the request URL, for idempotent re-fetch checks (PLAN.md 4.4)."""
-    return hashlib.sha256(url.encode("utf-8")).hexdigest()
+def fingerprint_request(url: str, *, body: object | None = None) -> str:
+    """Hash of the request, for idempotent re-fetch checks (PLAN.md 4.4).
+
+    `body` matters for POST-based APIs (e.g. OpenFIGI's search/mapping
+    endpoints): the URL alone is the same for every query, so two distinct
+    queries against it would otherwise collide on the same fingerprint.
+    Omitted (the common GET case) for identical behavior to before.
+    """
+    fingerprint_input = url if body is None else f"{url}|{json.dumps(body, sort_keys=True)}"
+    return hashlib.sha256(fingerprint_input.encode("utf-8")).hexdigest()
 
 
 def checksum(raw_bytes: bytes) -> str:
@@ -41,13 +49,14 @@ def store_raw_payload(
     payload_json: dict[str, Any] | list[Any] | None,
     content_type: str,
     retrieved_at: datetime,
+    request_body: object | None = None,
 ) -> RawProviderPayload:
     return raw_provider_payload_repository.create_payload(
         db,
         RawProviderPayloadCreate(
             provider=provider,
             source_record_id=source_record_id,
-            request_fingerprint=fingerprint_request(url),
+            request_fingerprint=fingerprint_request(url, body=request_body),
             payload_json=payload_json,
             retrieved_at=retrieved_at,
             checksum=checksum(raw_bytes),

@@ -30,7 +30,17 @@ def db_engine() -> Iterator[Engine]:
         pytest.skip("DATABASE_URL not configured; skipping integration tests")
     engine = create_engine(
         settings.database_url,
-        connect_args={"options": f"-c search_path={NEXUS_SCHEMA},public"},
+        connect_args={
+            "options": f"-c search_path={NEXUS_SCHEMA},public",
+            # Same fix as app/db/session.py (Milestone 4): Supabase's pooled
+            # connection string runs pgbouncer in transaction-pooling mode,
+            # which is incompatible with psycopg3's server-side prepared
+            # statement cache. This fixture builds its own engine separate
+            # from the app's, so it needed the identical fix independently —
+            # without it, a long test run can hit the same intermittent
+            # InvalidSqlStatementName/DuplicatePreparedStatement errors.
+            "prepare_threshold": None,
+        },
     )
     yield engine
     engine.dispose()
@@ -67,6 +77,57 @@ def sec_http_client() -> Iterator[ThrottledHttpClient]:
         yield client
     finally:
         client.close()
+
+
+@pytest.fixture
+def openfigi_http_client() -> Iterator[ThrottledHttpClient]:
+    """A real HTTP client for live OpenFIGI calls. OpenFIGI doesn't require a
+    descriptive User-Agent the way SEC does, but reuses the same configured
+    identifier for consistency; skipped gracefully if unconfigured.
+
+    OpenFIGI's unauthenticated tier has a materially tighter rate limit than
+    SEC EDGAR's — a real live 429 was hit running this module's four tests
+    back-to-back at the base 0.15s throttle. A longer interval avoids it;
+    `X-OPENFIGI-APIKEY` is attached automatically once `OPENFIGI_API_KEY` is
+    configured, which raises the real limit substantially.
+    """
+    settings = get_settings()
+    if not settings.sec_user_agent:
+        pytest.skip("SEC_USER_AGENT not configured; skipping live OpenFIGI test")
+    extra_headers = (
+        {"X-OPENFIGI-APIKEY": settings.openfigi_api_key} if settings.openfigi_api_key else None
+    )
+    client = ThrottledHttpClient(
+        user_agent=settings.sec_user_agent, min_interval_seconds=6.0, extra_headers=extra_headers
+    )
+    try:
+        yield client
+    finally:
+        client.close()
+
+
+@pytest.fixture
+def fred_http_client() -> Iterator[ThrottledHttpClient]:
+    """A real HTTP client for live FRED calls, skipped gracefully if
+    SEC_USER_AGENT or FRED_API_KEY isn't configured."""
+    settings = get_settings()
+    if not settings.sec_user_agent:
+        pytest.skip("SEC_USER_AGENT not configured; skipping live FRED test")
+    if not settings.fred_api_key:
+        pytest.skip("FRED_API_KEY not configured; skipping live FRED test")
+    client = ThrottledHttpClient(user_agent=settings.sec_user_agent)
+    try:
+        yield client
+    finally:
+        client.close()
+
+
+@pytest.fixture
+def fred_api_key() -> str:
+    settings = get_settings()
+    if not settings.fred_api_key:
+        pytest.skip("FRED_API_KEY not configured; skipping live FRED test")
+    return settings.fred_api_key
 
 
 def reported_public_provenance(**overrides: object) -> ProvenanceCreate:

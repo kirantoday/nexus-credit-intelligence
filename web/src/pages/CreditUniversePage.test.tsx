@@ -6,6 +6,7 @@ import { MemoryRouter } from "react-router";
 import { CreditUniversePage } from "./CreditUniversePage";
 import * as creditUniverseApi from "../api/creditUniverse";
 import type { CreditUniversePage as CreditUniversePageResponse } from "../api/creditUniverse";
+import * as marketContextApi from "../api/marketContext";
 
 function renderWithProviders(ui: ReactElement): void {
   const queryClient = new QueryClient({
@@ -50,12 +51,17 @@ const ONE_ROW_RESPONSE: CreditUniversePageResponse = {
       as_of_date: "2026-06-27",
       retrieved_at: "2026-08-06T04:47:38.603954Z",
       freshness: "live",
+      benchmark_rate: null,
+      benchmark_rate_as_of_date: null,
+      benchmark_rate_provider: null,
     },
   ],
   total: 1,
   page: 1,
   page_size: 25,
 };
+
+const EMPTY_MARKET_CONTEXT = { sofr: null, high_yield_oas: null };
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -64,6 +70,7 @@ afterEach(() => {
 describe("CreditUniversePage", () => {
   it("renders a row for each security returned by the API", async () => {
     vi.spyOn(creditUniverseApi, "fetchCreditUniverse").mockResolvedValue(ONE_ROW_RESPONSE);
+    vi.spyOn(marketContextApi, "fetchMarketContext").mockResolvedValue(EMPTY_MARKET_CONTEXT);
 
     renderWithProviders(<CreditUniversePage />);
 
@@ -80,6 +87,7 @@ describe("CreditUniversePage", () => {
       page: 1,
       page_size: 25,
     });
+    vi.spyOn(marketContextApi, "fetchMarketContext").mockResolvedValue(EMPTY_MARKET_CONTEXT);
 
     renderWithProviders(<CreditUniversePage />);
 
@@ -92,6 +100,7 @@ describe("CreditUniversePage", () => {
     vi.spyOn(creditUniverseApi, "fetchCreditUniverse").mockRejectedValue(
       new Error("Network unreachable"),
     );
+    vi.spyOn(marketContextApi, "fetchMarketContext").mockResolvedValue(EMPTY_MARKET_CONTEXT);
 
     renderWithProviders(<CreditUniversePage />);
 

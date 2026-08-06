@@ -117,6 +117,14 @@ def list_securities_by_issuer(db: Session, issuer_id: UUID) -> list[Security]:
     return [_to_domain(row) for row in rows]
 
 
+def get_security_by_figi(db: Session, figi: str) -> Security | None:
+    """Idempotency check for FIGI-identified ingestion (OpenFIGI) — not a
+    general-purpose lookup, mirrors `issuer_repository.get_issuer_by_legal_name`."""
+    stmt = select(SecurityModel).where(SecurityModel.figi == figi)
+    row = db.execute(stmt).scalars().first()
+    return _to_domain(row) if row is not None else None
+
+
 def list_credit_universe(
     db: Session,
     *,

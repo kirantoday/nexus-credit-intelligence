@@ -7,14 +7,21 @@ clearly-tagged demo loans, and a future OpenFIGI/Bloomberg/S&P Global adapter
 populates the exact same shape (filling in `cusip`/`isin`/`figi` and other
 fields those providers carry) — no provider-specific field exists here.
 
-Single `provenance_id` per row for now, not per-field (PLAN.md 4.5 notes
-"each field with its own provenance row since fields arrive from different
-providers"). Deferred deliberately: every Milestone 4 security's fields all
-come from one ingestion event each, so a per-field lineage table would have
-no real caller to validate its shape against yet — see PLAN.md Technical Debt
-TD-007. It will be implemented when Milestone 5's OpenFIGI adapter actually
-needs to attribute `cusip`/`isin`/`figi` separately from SEC-sourced fields
-on the same row.
+Single `provenance_id` per row, not per-field (PLAN.md 4.5 notes "each field
+with its own provenance row since fields arrive from different providers").
+Milestone 5's OpenFIGI adapter — the scenario TD-007 anticipated as the first
+real test of this — deliberately did NOT resolve TD-007 by mixing providers
+on one row. OpenFIGI search results identify specific bond *issues* (real
+FIGI + real maturity/coupon parsed from OpenFIGI's own ticker convention)
+that are provably different instruments from the single SEC XBRL aggregate
+debt figure already on file for the same issuer — attaching OpenFIGI's FIGI
+to the existing SEC-sourced aggregate row would misattribute a specific
+bond's identifier to a row that represents a balance-sheet total, not that
+bond. Instead, OpenFIGI-identified bonds become their own new `security`
+rows, each entirely OpenFIGI-sourced — a single `provenance_id` is already
+fully correct for them. TD-007 stays open, for a case this milestone didn't
+need: enriching one *already-existing* row with fields from a *second*
+provider.
 """
 
 from __future__ import annotations

@@ -19,6 +19,7 @@ from __future__ import annotations
 from app.models import (  # noqa: F401
     entitlement,
     financial_fact,
+    fred,
     issuer,
     provenance,
     raw_provider_payload,

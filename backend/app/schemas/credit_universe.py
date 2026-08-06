@@ -56,6 +56,15 @@ class CreditUniverseRow(BaseModel):
     as_of_date: date
     retrieved_at: datetime
     freshness: FreshnessTier
+    # The security's own floating-rate index (e.g. "SOFR") re-priced against
+    # a real, live FRED observation — a plain reported fact (FRED's own
+    # published rate), not a blended/calculated "all-in rate": we don't add
+    # it to `spread` here. `None` whenever `benchmark` doesn't match a FRED
+    # series this platform syncs (e.g. fixed-rate bonds have no benchmark at
+    # all), never a guessed value.
+    benchmark_rate: Decimal | None
+    benchmark_rate_as_of_date: date | None
+    benchmark_rate_provider: ProviderName | None
 
 
 class CreditUniversePage(BaseModel):

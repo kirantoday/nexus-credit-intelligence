@@ -54,6 +54,12 @@ _POLICIES: dict[ProviderName, FreshnessPolicy] = {
     ProviderName.SYNTHETIC: FreshnessPolicy(
         live_within=timedelta(days=36500), cached_within=timedelta(days=36500)
     ),
+    # OpenFIGI identifier/reference data (FIGI, maturity, coupon on a bond
+    # issue) doesn't change once assigned/issued — far slower-moving than
+    # even SEC filings.
+    ProviderName.OPENFIGI: FreshnessPolicy(
+        live_within=timedelta(days=30), cached_within=timedelta(days=180)
+    ),
 }
 
 
