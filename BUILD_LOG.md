@@ -2873,4 +2873,8 @@ noticing why.
 
 **GitHub Remote and Push Results**
 
-_Recorded in a follow-up docs commit, per established repo convention._
+- `git push origin main` — succeeded: `d894a33..ff2321c  main -> main`.
+- Post-push verification: `git ls-remote origin main` returns
+  `ff2321c32a4cf2b59862c74a6b157a6c2975d378`, matching the local commit
+  exactly.
+- Remote branch: https://github.com/kirantoday/nexus-credit-intelligence/tree/main
