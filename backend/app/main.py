@@ -8,8 +8,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes.capital_structure import router as capital_structure_router
 from app.api.routes.credit_universe import router as credit_universe_router
 from app.api.routes.health import router as health_router
+from app.api.routes.issuer import router as issuer_router
 from app.api.routes.market_context import router as market_context_router
 from app.config import get_settings
 from app.logging_config import configure_logging
@@ -40,3 +42,5 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(credit_universe_router)
 app.include_router(market_context_router)
+app.include_router(issuer_router)
+app.include_router(capital_structure_router)

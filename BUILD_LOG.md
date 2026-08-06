@@ -2142,3 +2142,310 @@ right now," not "what could this data support eventually." The
 domain/provider-layer conventions from Milestones 2-4 again needed zero
 changes for two more provider adapters, which is the strongest evidence yet
 that ADR-014's conventions are the right long-term shape.
+
+---
+
+## 2026-08-06 — Milestone 6: Issuer detail page + Capital Structure page/model
+
+**Summary**
+
+Approved with an explicit brief: design Issuer Detail the way a
+distressed-credit analyst mentally organizes a company, not around database
+tables — "what debt exists? which instrument sits where? what matures
+first? what's secured vs. unsecured? what filings support this? what changed
+recently? where did this information come from?" — and make it "the primary
+research workspace, not simply a detail screen." That last phrase drove a
+real, deliberate UI decision: Capital Structure is built as a section
+embedded directly inside Issuer Detail, not a separate top-level page an
+analyst has to navigate away to reach — the data model and API shape PLAN.md
+§4.6/§7 already specify are unchanged, only how the page presents them.
+
+**Features Completed**
+
+- `capital_structure_position` (PLAN.md §4.6): new canonical table, one row
+  per layer of an issuer's debt-and-equity stack, `rank_order` governing
+  top-to-bottom priority rendering. `security_id` is nullable (a revolver or
+  equity layer may have no CUSIP-bearing `security` row). A DB-level CHECK
+  constraint (`ck_capstruct_position_recovery_requires_scenario`) enforces
+  §7's hard labeling rule at the schema layer: `enterprise_value_coverage`/
+  `illustrative_recovery` can never be persisted without `recovery_scenario`
+  describing the assumption — not just a UI convention that could be
+  bypassed by a future caller.
+- `app/synthetic/capital_structure_generator.py`: a pure, independently
+  unit-tested `compute_recovery_waterfall` function (no I/O) plus a seed
+  function with two parts. Part 1 turns each of the eight existing
+  Milestone-4 leveraged-loan issuers' already-seeded loan tranche(s) into a
+  reported (non-scenario) `capital_structure_position` row — no
+  `enterprise_value_coverage`/`illustrative_recovery` asserted, since
+  nothing has modeled a real or illustrative EV for those companies. Part 2
+  seeds one new, entirely fictional issuer, Cobalt Ridge Energy Corp, with a
+  genuine eight-layer stack (revolver → 1L TLB → 1L notes → 2L notes →
+  senior unsecured → subordinated → preferred equity → common equity) and a
+  real illustrative recovery waterfall against a stated $650,000,000
+  base-case Enterprise Value: the three most senior layers recover 100%, the
+  second lien (the layer EV runs out on) recovers 77.14%, and everything
+  junior to it recovers 0% — the exact numbers a real priority waterfall
+  produces, proven first in isolation by unit tests, then again against the
+  persisted rows by integration tests.
+- This is the first real, multi-input caller of `calculation`/
+  `calculation_input` (§4.2/4.3) since Milestone 2 built them: each layer's
+  recovery figure's `provenance` row is `transformation = calculated` with a
+  real `calculation_id`, and its `calculation_input` rows trace to the
+  shared Enterprise Value assumption plus every strictly-senior layer's own
+  principal-fact provenance (not just its own) — so the lineage view can
+  show exactly which facts a given recovery number depends on, closing the
+  loop TD-007's ADR left open for "the first real caller that needs
+  multiplicity."
+- `IssuerPage.tsx` (`/issuers/:issuerId`): the primary research workspace,
+  organized into sections that are literally the analyst's own questions as
+  headings — "What debt exists, where does it sit, and what's secured or
+  unsecured?" (the embedded `CapitalStructureStack`, with a Priority
+  order/Maturity order toggle answering "what matures first" without a
+  second page), "What filings support this?" (financial facts with source
+  links), "What changed recently?" (a computed activity timeline — see
+  below), "Where did this information come from?" (a data-sources summary
+  by provider). When an issuer has no capital structure layers on file
+  (every real issuer, this milestone — see TD-010), the page falls back to
+  a flat, still fully-provenanced Securities table rather than an empty
+  section with no explanation.
+- `CapitalStructureStack.tsx`: whenever any layer carries
+  `enterprise_value_coverage`/`illustrative_recovery`, the component renders
+  the mandatory "Calculated · Scenario-based · Illustrative · Not a market
+  fact" label once per table (every cell also carries the exact
+  `recovery_scenario` text on hover) — verified live in a browser, not just
+  in a unit test.
+- `GET /api/issuers/{issuer_id}` and `GET /api/issuers/{issuer_id}/capital-structure`:
+  new `issuer_service`/`capital_structure_service` assemble responses from
+  `issuer_repository`, `security_repository`, `financial_fact_repository`,
+  `capital_structure_repository`, and `provenance_repository`, each row
+  passing through the same `policy_check(action="display", ...)` choke
+  point Credit Universe already uses. "Recent activity" and "data sources"
+  are computed reads over already-provenanced records' own dates/providers
+  (financial fact filing dates, security/position `retrieved_at`) — no new
+  `credit_event` table, keeping PLAN.md §23.1 out of Version 1 as required.
+- Credit Universe's issuer-name cell now links to `/issuers/:issuerId`,
+  making Issuer Detail reachable as a real drill-down (PLAN.md §5.3), not
+  just a route that exists in isolation.
+- Real issuers (Apple Inc.) deliberately get **no** `capital_structure_position`
+  rows this milestone: neither SEC EDGAR's company-facts API nor OpenFIGI's
+  search endpoint reports seniority/lien position/ranking for a specific
+  instrument (the same underlying gap TD-008 already documents) — asserting
+  a stack position for real debt this platform hasn't actually sourced that
+  fact for would break the provenance discipline every other adapter in this
+  codebase follows. Tracked as new TD-010; Apple's Issuer Detail page
+  correctly falls back to its flat Securities table instead.
+
+**Files Created**
+
+`backend/alembic/versions/0006_capital_structure_position.py`,
+`backend/app/api/routes/capital_structure.py`,
+`backend/app/api/routes/issuer.py`,
+`backend/app/domain/capital_structure.py`,
+`backend/app/models/capital_structure.py`,
+`backend/app/repositories/capital_structure_repository.py`,
+`backend/app/schemas/capital_structure.py`, `backend/app/schemas/issuer.py`,
+`backend/app/services/capital_structure_service.py`,
+`backend/app/services/issuer_service.py`,
+`backend/app/synthetic/capital_structure_generator.py`,
+`backend/tests/unit/test_capital_structure_validators.py`,
+`backend/tests/unit/test_capital_structure_generator.py`,
+`backend/tests/integration/test_capital_structure_repository.py`,
+`backend/tests/integration/test_capital_structure_generator.py`,
+`backend/tests/integration/test_issuer_service.py`,
+`backend/tests/integration/test_capital_structure_service.py`,
+`web/src/api/issuer.ts`, `web/src/api/capitalStructure.ts`,
+`web/src/queries/useIssuerDetail.ts`,
+`web/src/queries/useCapitalStructure.ts`,
+`web/src/components/CapitalStructureStack.tsx`,
+`web/src/components/CapitalStructureStack.test.tsx`,
+`web/src/pages/IssuerPage.tsx`, `web/src/pages/IssuerPage.test.tsx`.
+
+**Files Modified**
+
+`backend/app/core/types.py` (`CapitalStructureInstrumentType` enum),
+`backend/app/main.py` (mounts `issuer_router`/`capital_structure_router`),
+`backend/app/models/__init__.py` (imports `capital_structure`),
+`web/src/App.tsx` (`/issuers/:issuerId` route),
+`web/src/pages/CreditUniversePage.tsx` (issuer-name cell links to Issuer
+Detail).
+
+**Database Changes**
+
+Migration `0006` applied to the live, shared Supabase project (autogenerated
+against the ORM model, hand-reviewed, renamed to the project's `000N_`
+convention): creates `nexus.capital_structure_position` with four CHECK
+constraints (`instrument_type`, `seniority`, `is_synthetic`/
+`synthetic_reason`, and the recovery/scenario pairing rule) and a unique
+`(issuer_id, rank_order)` index. One real bug caught during the first
+`alembic upgrade head` attempt: the auto-generated constraint name
+`ck_capital_structure_position_synthetic_reason_requires_is_synthetic` is 69
+characters, over Postgres's 63-character identifier limit — the error
+surfaced client-side, before any DDL executed (`alembic current` confirmed
+still at `0005`), so the fix (abbreviating `capital_structure_position` to
+`capstruct_position` in constraint names only, never in the table/column
+names themselves) was applied cleanly with no partial-migration state to
+clean up. Verified with `alembic check` afterward: no drift between the ORM
+models and the live schema.
+
+Separately, a genuine (non-test, committed) live seed was run:
+`nexus.issuer` now permanently contains one new fictional issuer, Cobalt
+Ridge Energy Corp (`is_synthetic = true`, `cik = NULL`); `nexus.security`
+gained five new synthetic securities (its TLB/1L notes/2L notes/senior
+unsecured/subordinated tranches); `nexus.capital_structure_position`
+permanently contains its full 8-layer stack plus one reported row per loan
+tranche across all eight of Milestone 4's existing synthetic issuers (10
+rows total: six issuers with one tranche, two with two tranches each).
+Re-running the seed script twice
+consecutively confirmed full idempotency: the second run reported the same
+issuer id and the same 8 Cobalt Ridge positions, and a direct query
+confirmed no duplicate rows for any of the eight existing loan issuers.
+
+**API Endpoints Added**
+
+`GET /api/issuers/{issuer_id}` — returns `IssuerDetail` (identity,
+`securities[]`, `financial_facts[]`, `data_sources[]`, `recent_activity[]`),
+404 if the issuer doesn't exist. `GET /api/issuers/{issuer_id}/capital-structure`
+— returns `CapitalStructureResponse` (`positions[]`, already ordered by
+`rank_order`), 404 if the issuer doesn't exist.
+
+**Frontend Pages Added**
+
+`IssuerPage.tsx` at `/issuers/:issuerId` — the primary research workspace
+described above.
+
+**Environment Variables Added**
+
+None.
+
+**Tests Added**
+
+38 new backend tests (166 → 204): `test_capital_structure_validators.py`
+(8 — synthetic-reason/recovery-scenario domain validators),
+`test_capital_structure_generator.py` (unit, 7 — pure waterfall math: full
+coverage, partial coverage at the shortfall layer, wipeout of junior layers,
+coverage-multiple arithmetic, single-layer and zero-EV edge cases),
+`test_capital_structure_repository.py` (8 — CRUD, rank ordering, nullable
+`security_id`, unique-rank and CHECK constraints enforced at the DB level),
+`test_capital_structure_generator.py` (integration, 7 — the persisted
+Cobalt Ridge stack matches the unit-tested waterfall exactly, calculation
+lineage has the right input roles/counts, idempotency, the eight existing
+loan issuers get reported-only layers), `test_issuer_service.py` (5),
+`test_capital_structure_service.py` (3).
+
+9 new frontend tests (29 → 38): `CapitalStructureStack.test.tsx` (5 — empty
+state, error state, layer rendering, the mandatory four-part label appears
+only when a recovery figure is present), `IssuerPage.test.tsx` (4 — identity
+and data sources render, flat-securities fallback shown/hidden correctly,
+404 handling).
+
+**Test Results**
+
+```
+backend: pytest -q                             -> 204 passed
+backend: ruff check .                          -> All checks passed!
+backend: black --check .                       -> 117 files would be left unchanged.
+backend: mypy .                                -> Success: no issues found in 111 source files
+backend: alembic current                       -> 0006 (head)
+backend: alembic check                         -> No new upgrade operations detected.
+
+frontend: npm run test                         -> 38 passed (7 test files)
+frontend: npm run lint                         -> clean
+frontend: npm run format:check                 -> All matched files use Prettier code style!
+frontend: npm run typecheck                    -> clean (tsc -b)
+frontend: npm run build                        -> succeeded (dist/assets bundle 609.83 kB / gzip 185.80 kB)
+
+GET /health (live server, port 8000)           -> 200 {"status": "healthy", ...}
+GET /api/issuers/{cobalt-ridge-id} (live)      -> 200, full 8-layer stack with correct recovery figures
+GET /api/issuers/{cobalt-ridge-id}/capital-structure (live) -> 200, positions ordered by rank_order
+GET /api/issuers/{random-uuid} (live)          -> 404
+```
+
+**Commands Executed** (representative)
+
+```
+cd backend
+./.venv/Scripts/python -m alembic revision --autogenerate -m "capital structure position"
+mv alembic/versions/<hash>_capital_structure_position.py alembic/versions/0006_capital_structure_position.py
+./.venv/Scripts/python -m alembic upgrade head   # first attempt: identifier-length IntegrityError, see Problems Encountered
+./.venv/Scripts/python -m alembic current        # confirmed still at 0005, no partial state
+./.venv/Scripts/python -m alembic upgrade head   # succeeded after shortening constraint names
+./.venv/Scripts/python -m alembic check          # No new upgrade operations detected.
+
+./.venv/Scripts/python -m pytest -q
+./.venv/Scripts/python -m ruff check . / black --check . / mypy .
+
+# genuine, committed (non-test) live seed — see Database Changes
+./.venv/Scripts/python seed_milestone6.py   # Cobalt Ridge + reported loan-issuer layers + commit
+./.venv/Scripts/python seed_milestone6.py   # re-run: confirmed idempotent, same issuer id/positions
+rm seed_milestone6.py                       # not committed, matching Milestone 4/5 precedent
+
+cd ../web
+npm run format / lint / typecheck / test / build
+
+# manual browser verification (Chrome, via claude-in-chrome tools)
+# Cobalt Ridge Energy Corp's full 8-layer waterfall renders with correct
+# recovery percentages and the mandatory four-part label; a single-tranche
+# synthetic issuer (Summit Building Products Inc) renders correctly with
+# EV Coverage/Illustrative Recovery both honestly "—"; Apple Inc. falls back
+# to its flat Securities table with all 6 real bonds and no capital
+# structure section error
+```
+
+**Deployment Validation**
+
+Not exercised — Railway/Vercel deployment remains Milestone 15 scope. Both
+the backend (`uvicorn`, port 8000) and frontend (`vite dev`, port 5173) dev
+servers were run locally and confirmed booting and serving real,
+live-Supabase-backed data end-to-end in a browser.
+
+**Problems Encountered**
+
+1. **A real Postgres identifier-length limit hit on the first migration
+   attempt.** Autogenerate produced
+   `ck_capital_structure_position_synthetic_reason_requires_is_synthetic`
+   (69 characters) — Postgres silently truncates or, as here, SQLAlchemy's
+   own `validate_identifier` raises before ever reaching the database once a
+   constraint name exceeds 63 characters. Caught immediately by the
+   traceback, not a downstream symptom. Confirmed via `alembic current`
+   that the failed attempt left the database untouched (still at `0005`)
+   before retrying, since `CREATE TABLE ... CHECK (...)` is one statement
+   and the failure was a client-side compile error. Fixed by abbreviating
+   `capital_structure_position` to `capstruct_position` in the four
+   constraint names only (`ck_capstruct_position_*`), keeping the actual
+   table and column names unabbreviated everywhere else.
+
+**Solutions**
+
+The identifier-length issue was caught by the traceback itself pointing
+directly at `sqlalchemy.exc.IdentifierError` with the exact 69-character
+name — no guessing required, just shortening the four names that actually
+needed it and re-running `alembic upgrade head`, then confirming with
+`alembic check` that the model and live schema agreed exactly.
+
+**Remaining Work**
+
+- TD-010 (new): real issuers have no `capital_structure_position` rows —
+  deferred until a provider that actually reports lien/seniority/ranking
+  data exists (a licensed provider, Milestone 14, or a future SEC
+  dimensional-XBRL parse).
+- TD-007 stays open (per-field `security` provenance) — unaffected by this
+  milestone.
+- TD-008 unchanged — SEC/OpenFIGI still can't supply CUSIP/ISIN or
+  per-instrument capital-structure placement.
+- Everything in Milestone 7 onward per `PLAN.md` § Milestone Status —
+  unstarted; Milestone 7 requires separate approval to begin.
+
+**Developer Notes**
+
+The instruction to make Issuer Detail "the primary research workspace, not
+simply a detail screen" was treated as a real design constraint, not just
+framing: it's the reason Capital Structure renders as an embedded section of
+`IssuerPage` rather than a separate page an analyst has to leave and come
+back from, and the reason each section heading is phrased as the analyst's
+own question rather than a database-table name. The Cobalt Ridge Energy
+Corp waterfall is this codebase's first genuine exercise of
+`calculation`/`calculation_input` with real multiplicity — every prior
+milestone's `calculation` usage (VWAP, price-change metrics) was
+documented but never actually built, so this was also the first real proof
+that the pattern designed in Milestone 2 holds up under an actual multi-input
+case, not just a single-input one.

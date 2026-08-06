@@ -115,3 +115,23 @@ class Seniority(StrEnum):
     SUBORDINATED = "subordinated"
     PREFERRED = "preferred"
     COMMON = "common"
+
+
+class CapitalStructureInstrumentType(StrEnum):
+    """`capital_structure_position.instrument_type` (PLAN.md 4.6).
+
+    Distinct from `Seniority`: this names the *instrument* (a loan vs. a
+    bond, both possibly first-lien), while `seniority` names the *ranking
+    class* — a first-lien term loan and first-lien notes share
+    `seniority = first_lien` but are different rows here because they are
+    different instruments with different holders/documentation.
+    """
+
+    REVOLVER = "revolver"
+    FIRST_LIEN_LOAN = "first_lien_loan"
+    FIRST_LIEN_NOTES = "first_lien_notes"
+    SECOND_LIEN = "second_lien"
+    UNSECURED = "unsecured"
+    SUBORDINATED = "subordinated"
+    PREFERRED_EQUITY = "preferred_equity"
+    COMMON_EQUITY = "common_equity"

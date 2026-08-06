@@ -1,10 +1,11 @@
 import { type ReactElement, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router";
+import { Link as RouterLink, useSearchParams } from "react-router";
 import type { ColumnDef, SortingState } from "@tanstack/react-table";
 import {
   Alert,
   Box,
   Chip,
+  Link,
   MenuItem,
   Paper,
   Stack,
@@ -116,9 +117,16 @@ export function CreditUniversePage(): ReactElement {
         accessorFn: (row) => row.issuer_legal_name,
         cell: ({ row }) => (
           <Box>
-            <Typography variant="body2" fontWeight={600}>
-              {row.original.issuer_legal_name}
-            </Typography>
+            <Link
+              component={RouterLink}
+              to={`/issuers/${row.original.issuer_id}`}
+              underline="hover"
+              color="inherit"
+            >
+              <Typography variant="body2" fontWeight={600}>
+                {row.original.issuer_legal_name}
+              </Typography>
+            </Link>
             {row.original.issuer_ticker && (
               <Typography variant="caption" color="text.secondary">
                 {row.original.issuer_ticker}
