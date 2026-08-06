@@ -1433,13 +1433,15 @@ full suite again after leaving genuine data committed to see what broke.
 
 **Git Commit Hash**
 
-Recorded in a follow-up entry, per this repository's established two-commit
-pattern — the hash of the commit containing this entry cannot be known before
-that commit is created.
+`36bfaff946145efcbdf8573fb66b04bb12be1e12` (`36bfaff`)
 
 **GitHub Remote and Push Results**
 
-Recorded in the same follow-up entry.
+- `git push origin main` — succeeded: `cd53fec..36bfaff  main -> main`.
+- Post-push verification: `git ls-remote origin` returns
+  `36bfaff946145efcbdf8573fb66b04bb12be1e12` for both `HEAD` and
+  `refs/heads/main`, matching the local commit exactly.
+- Remote branch: https://github.com/kirantoday/nexus-credit-intelligence/tree/main
 
 **Approximate Time Spent**
 
