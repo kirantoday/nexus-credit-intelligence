@@ -86,3 +86,13 @@ class EnvironmentName(StrEnum):
     TEST = "test"
     STAGING = "staging"
     PRODUCTION = "production"
+
+
+class FormType(StrEnum):
+    """`financial_fact.form_type` (PLAN.md 4.5) — SEC filing form types."""
+
+    FORM_10K = "10-K"
+    FORM_10Q = "10-Q"
+    FORM_8K = "8-K"
+    FORM_6K = "6-K"
+    FORM_20F = "20-F"

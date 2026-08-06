@@ -50,13 +50,13 @@ file beyond a pointer.
 
 | Field | Value |
 |---|---|
-| **Overall Progress** | ~13% — Milestone 2 of 16 complete |
-| **Current Milestone** | Milestone 2 — Provenance, `raw_provider_payload`, `calculation`/`calculation_input`, entitlement engine (complete) |
-| **Current Status** | Milestone 2 is complete. The provenance spine (`provenance`, `calculation`, `calculation_input`), the durable raw-response store (`raw_provider_payload`), and the entitlement engine's data (`data_entitlement`) are implemented end-to-end: `app/core/types.py` (shared enums), `app/domain/**` (frozen Pydantic canonical objects with validators mirroring DB CHECK constraints), `app/models/**` (SQLAlchemy ORM, text+CHECK not native enums, schema-qualified to `nexus`), `app/repositories/**` (function-style, flush-not-commit), and `app/core/entitlement.py` (`policy_check`, the pure single choke point for licensed-data actions). Migration `0002` applied and round-tripped (`upgrade head` / `downgrade 0001` / `upgrade head`) against the live, shared Supabase project with all objects confirmed inside `nexus` and nothing touching the other application's schema. 60 tests pass (39 unit — full `policy_check` and domain-validator coverage, no I/O — plus 21 integration tests against the live `nexus` schema, transaction-isolated so nothing persists between runs), alongside ruff/black/mypy/eslint/prettier/tsc/frontend build/`npm audit`/`pre-commit run --all-files`. See `ARCHITECTURE_DECISIONS.md` ADR-014 for the domain-layer implementation conventions this milestone established (Pydantic domain objects, function-style repositories, text+CHECK over native Postgres enums) that all later canonical entities (issuer, security, financial_fact, ...) will follow. No API routes, providers, or UI were touched — foundation only, per milestone scope. |
+| **Overall Progress** | ~19% — Milestone 3 of 16 complete |
+| **Current Milestone** | Milestone 3 — SEC adapter vertical slice: real issuer + real filing + real financial fact (complete) |
+| **Current Status** | Milestone 3 is complete. The first real provider adapter and the first two canonical business-entity tables (`issuer`, `financial_fact`, PLAN.md §4.5) are implemented and proven end-to-end against the real SEC EDGAR API and the live, shared Supabase project: `app/providers/base/` (throttled HTTP client with SEC's required descriptive User-Agent; raw-payload persistence helper), `app/providers/sec_edgar/` (DTOs verified against live data.sec.gov responses; a normalizer that is the only place SEC-specific shapes are translated into the provider-neutral canonical schema; an orchestrator that is idempotent on the canonical rows while still logging a fresh `provenance`/`raw_provider_payload` audit-trail entry on every fetch). Migration `0003` applied and round-tripped live. A real, permanently-committed proof now exists in `nexus`: issuer "Apple Inc." (CIK 0000320193) and one real XBRL financial fact (`RevenueFromContractWithCustomerExcludingAssessedTax` from a real 10-Q), both fully backed by provenance and raw-payload lineage — not just a passing test. 91 tests pass (54 unit — including DTO/normalizer coverage against real, trimmed SEC fixtures — plus 37 integration tests, three of which make genuinely live SEC EDGAR + Supabase calls), alongside ruff/black/mypy/eslint/prettier/tsc/frontend build/`npm audit`/`pre-commit run --all-files`. A real Alembic autogenerate bug was found and fixed at the root (see `BUILD_LOG.md` and `alembic/env.py`'s `run_migrations_online` docstring) — search_path on the migration connection was silently causing autogenerate to propose recreating already-existing tables. No API routes or UI were touched — vertical slice through the domain layer only, per milestone scope. |
 | **Last Updated** | 2026-08-06 |
 | **Current Git Branch** | main |
-| **Latest Commit** | `27af3c1` — Milestone 2: provenance spine, raw_provider_payload, entitlement engine (pushed to `origin/main`) |
-| **Next Milestone** | Milestone 3 — SEC adapter vertical slice: real issuer + real filing + real financial fact, through the full domain-layer path (§18 step 3) |
+| **Latest Commit** | Recorded in a follow-up entry, per this repo's established two-commit pattern — see `BUILD_LOG.md`. |
+| **Next Milestone** | Milestone 4 — Credit Universe initial page, backed by seeded canonical securities (§18 step 4) |
 
 ---
 
@@ -70,7 +70,7 @@ milestone completes; it is not itself a log (see `BUILD_LOG.md` for that).
 |---|---|---|---|---|---|
 | 1 | Foundation: Supabase connection, Alembic skeleton, FastAPI `/health`, React shell | Complete (+ hardening + Supabase schema-isolation validation) | 2026-08-05 | `79ca395` (foundation), `c6c2811` (hardening), `9f753c4` (schema-isolation validation) | Full Supabase connectivity now verified live: `alembic upgrade head` succeeded against the real, shared project (ADR-013); `nexus` schema, `nexus.alembic_version`, and `vector`/`pg_trgm` extensions all confirmed in place with no cross-contamination of the other application's objects. KI-001 closed — see Known Issues and `BUILD_LOG.md`. Hardening pass (branch rename, `CLAUDE.md`, pre-commit, `README.md`, GitHub templates, GitHub remote) tracked as "Milestone 1 Hardening" in `BUILD_LOG.md`, not counted as Milestone 2. |
 | 2 | Provenance, `raw_provider_payload`, `calculation`/`calculation_input`, entitlement engine | Complete | 2026-08-06 | `27af3c1` | Migration `0002` applied and round-tripped live against the shared `nexus` schema. 60 tests pass (39 unit, 21 integration against the live DB). ADR-014 records the domain-layer conventions (Pydantic domain objects, function-style repositories, text+CHECK enums) established here for all later canonical entities. |
-| 3 | SEC adapter vertical slice (real issuer + filing + financial fact, full domain-layer path) | Not Started | — | — | |
+| 3 | SEC adapter vertical slice (real issuer + filing + financial fact, full domain-layer path) | Complete | 2026-08-06 | see `BUILD_LOG.md` | Migration `0003` (`issuer`, `financial_fact`) applied and round-tripped live. Real, permanently-committed proof: Apple Inc. (CIK 0000320193) + one real XBRL revenue fact, both with full provenance/raw-payload lineage. 91 tests pass (54 unit, 37 integration incl. 3 genuinely live SEC EDGAR calls). Found and fixed a real Alembic autogenerate bug (search_path on the migration connection made existing tables invisible to schema comparison). |
 | 4 | Credit Universe initial page (seeded canonical securities) | Not Started | — | — | |
 | 5 | OpenFIGI + FRED adapters | Not Started | — | — | |
 | 6 | Issuer detail page + Capital Structure page/model | Not Started | — | — | |
@@ -100,6 +100,7 @@ already made in §1–23; will grow with genuine shortcuts taken during implemen
 | TD-003 | Search index storage shape (single `search_document` table vs. per-table `tsvector` columns, §4.13) not yet decided | Low | Decide during build step 12 based on query-performance testing | Open (deferred by design) |
 | TD-004 | `backend/app/db/session.py` uses synchronous SQLAlchemy (`create_engine`/`sessionmaker`), not an async engine, even though FastAPI/provider adapters are async-capable | Low | Revisit if a provider-heavy milestone (SEC/FRED/CourtListener concurrency) shows the sync DB layer is a real bottleneck; async SQLAlchemy is a drop-in-ish swap behind the repository layer (§3) | Open (pragmatic choice, not a gap) |
 | TD-005 | `data_entitlement.derived_data_permission` exists on the model/domain object (PLAN.md §4.8) but `policy_check` doesn't yet use it — deciding whether a *calculated* value derived from licensed inputs may be treated less restrictively than the raw input requires walking `calculation_input` lineage back to the strictest governing entitlement, which has no real licensed provider to test against yet | Low | Implement once Milestone 14 (disabled licensed-provider capability cards) or a real licensed adapter makes this testable against actual data | Open (deferred by design, ADR-014) |
+| TD-006 | SEC EDGAR company-facts responses (hundreds of us-gaap concepts, several MB for a large filer) are stored inline in `raw_provider_payload.payload_json` (JSONB) rather than Supabase Storage — PLAN.md §4.4 names "SEC JSON" as an example of a *small* inline-appropriate response, but company-facts specifically is not small. `SUPABASE_STORAGE_BUCKET` isn't configured yet (deferred per Milestone 2), so storing large payloads there wasn't an option this milestone; skipping raw-payload persistence entirely was rejected as a correctness violation (breaks "every raw payload must be recoverable") | Medium | Move large provider responses (company-facts JSON, filings, court documents) to Supabase Storage via `storage_object_path` once the bucket is configured (Milestone 9/document milestone, or whenever Storage is first genuinely needed) | Open (deferred by design) |
 
 ---
 
@@ -117,17 +118,19 @@ were found and fixed).
 
 # Next Immediate Goal
 
-**Milestones 1 and 2 are complete and approved.** The provenance spine,
-raw-response store, and entitlement engine are implemented, tested (unit +
-live-DB integration), and documented (ADR-014). **Milestone 3 remains Not
-Started**, awaiting explicit approval to begin: the SEC adapter vertical
-slice — a real issuer, a real filing, and a real financial fact, carried
-through the full domain-layer path (Provider DTO → Normalizer → Canonical
-Object → Repository → Postgres) for one issuer end-to-end before moving on
-(§18 step 3). This is also where `issuer`, `security`, and `financial_fact`
-(PLAN.md §4.5) get their first migration — Milestone 2 intentionally did not
-create them. Do not begin Milestone 4 until Milestone 3 satisfies every gate in
-**Implementation Rules** below.
+**Milestones 1, 2, and 3 are complete and approved.** The provenance spine,
+raw-response store, entitlement engine, and the first real provider adapter
+(SEC EDGAR) with its first two canonical business-entity tables (`issuer`,
+`financial_fact`) are implemented, tested (unit + live-DB + live-network
+integration), and documented (ADR-014). A real issuer and real financial fact
+are permanently committed in `nexus` as tangible proof, not just a passing
+test. **Milestone 4 remains Not Started**, awaiting explicit approval to
+begin: the Credit Universe initial page, backed by seeded canonical
+securities — real SEC-sourced bonds plus clearly-tagged synthetic loan rows
+(§18 step 4, ADR-008). This is also where `security` (PLAN.md §4.5) gets its
+first migration — Milestones 2 and 3 intentionally did not create it, since
+neither had a concrete need for it yet. Do not begin Milestone 5 until
+Milestone 4 satisfies every gate in **Implementation Rules** below.
 
 ---
 

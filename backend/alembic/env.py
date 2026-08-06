@@ -25,11 +25,13 @@ from alembic import context
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# app.models's __init__.py imports every model module so Base.metadata is
+# fully populated before autogenerate compares against it (also the fix for
+# a real NoReferencedTableError bug found in Milestone 3 — see that module's
+# docstring).
+import app.models  # noqa: E402, F401
 from app.config import get_settings  # noqa: E402
 from app.db.base import NEXUS_SCHEMA, Base  # noqa: E402
-
-# Model modules are imported here as they're added so autogenerate can see them.
-from app.models import entitlement, provenance, raw_provider_payload  # noqa: E402, F401
 
 config = context.config
 
@@ -89,13 +91,21 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    # Deliberately NOT setting search_path=nexus,public here (unlike
+    # app/db/session.py's app engine). Doing so once made "nexus" this
+    # connection's *default* schema, which Alembic's reflection represents
+    # internally as schema=None — a real bug found during Milestone 3: with
+    # pre-existing nexus tables already live, autogenerate reflected them
+    # under schema=None, include_name's `name == NEXUS_SCHEMA` check excluded
+    # that None, and autogenerate concluded every existing table was missing
+    # and proposed recreating them all. Every migration operation here is
+    # already schema-qualified explicitly (schema="nexus" on every op.*
+    # call), so this was pure defense-in-depth with no correctness need —
+    # removing it is the actual fix, not a workaround.
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
-        # Belt-and-suspenders alongside schema-qualified metadata/migrations —
-        # see app/db/session.py for the same rationale on the app engine.
-        connect_args={"options": f"-c search_path={NEXUS_SCHEMA},public"},
     )
     with connectable.connect() as connection:
         # Alembic creates its version table (nexus.alembic_version) before

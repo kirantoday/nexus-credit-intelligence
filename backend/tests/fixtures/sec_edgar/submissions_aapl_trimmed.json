@@ -1,0 +1,98 @@
+{
+  "cik": "0000320193",
+  "name": "Apple Inc.",
+  "sic": "3571",
+  "sicDescription": "Electronic Computers",
+  "tickers": [
+    "AAPL"
+  ],
+  "exchanges": [
+    "Nasdaq"
+  ],
+  "lei": null,
+  "category": "Large accelerated filer",
+  "filings": {
+    "recent": {
+      "accessionNumber": [
+        "0000320193-26-000020",
+        "0000320193-26-000018",
+        "0001140361-26-025622"
+      ],
+      "filingDate": [
+        "2026-07-31",
+        "2026-07-30",
+        "2026-06-17"
+      ],
+      "reportDate": [
+        "2026-06-27",
+        "2026-07-30",
+        "2026-06-15"
+      ],
+      "acceptanceDateTime": [
+        "2026-07-31T10:01:02.000Z",
+        "2026-07-30T20:30:28.000Z",
+        "2026-06-17T22:40:43.000Z"
+      ],
+      "act": [
+        "34",
+        "34",
+        ""
+      ],
+      "form": [
+        "10-Q",
+        "8-K",
+        "4"
+      ],
+      "fileNumber": [
+        "001-36743",
+        "001-36743",
+        ""
+      ],
+      "filmNumber": [
+        "261225227",
+        "261223821",
+        ""
+      ],
+      "items": [
+        "",
+        "2.02,9.01",
+        ""
+      ],
+      "core_type": [
+        "XBRL",
+        "XBRL",
+        "4"
+      ],
+      "size": [
+        5946811,
+        417360,
+        9220
+      ],
+      "isXBRL": [
+        1,
+        1,
+        0
+      ],
+      "isInlineXBRL": [
+        1,
+        1,
+        0
+      ],
+      "isXBRLNumeric": [
+        1,
+        0,
+        0
+      ],
+      "primaryDocument": [
+        "aapl-20260627.htm",
+        "aapl-20260730.htm",
+        "xslF345X06/form4.xml"
+      ],
+      "primaryDocDescription": [
+        "10-Q",
+        "8-K",
+        "FORM 4"
+      ]
+    }
+  }
+}

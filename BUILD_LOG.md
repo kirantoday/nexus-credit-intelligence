@@ -1151,3 +1151,310 @@ that otherwise "ran successfully." Treat a clean `mypy`/`alembic upgrade`/
 found by going one level deeper (compiling DDL, reading the type error instead
 of suppressing it, writing the integration test that uses the API the way a
 real caller would) than the tool's surface-level "success."
+
+---
+
+## 2026-08-06 — Milestone 3: SEC adapter vertical slice (issuer, financial_fact)
+
+**Summary**
+
+The first real provider adapter and the first two canonical business-entity
+tables: one real issuer, one real SEC filing, one real XBRL financial fact,
+proven end-to-end through the full canonical pipeline (Provider -> DTO ->
+Normalizer -> Canonical Domain Object -> Repository -> Postgres, PLAN.md §18
+step 3) against the actual live SEC EDGAR API and the actual live, shared
+Supabase project — not mocked, not fabricated. A real issuer (Apple Inc., CIK
+0000320193) and one real financial fact are permanently committed in `nexus`
+as tangible evidence, in addition to 91 passing tests. No API routes, provider
+adapters beyond SEC EDGAR, or UI were touched — vertical slice through the
+domain layer only, per milestone scope.
+
+**Features Completed**
+
+- `backend/app/core/types.py`: added `FormType` (`10-K`/`10-Q`/`8-K`/`6-K`/
+  `20-F`, PLAN.md §4.5's `financial_fact.form_type`).
+- `backend/app/domain/issuer.py`, `financial_fact.py`: frozen Pydantic
+  canonical objects (`IssuerCreate`/`Issuer`, `FinancialFactCreate`/
+  `FinancialFact`), provider-neutral — no SEC-specific fields.
+- `backend/app/models/issuer.py`, `financial_fact.py`: SQLAlchemy ORM,
+  schema-qualified to `nexus`. `issuer.cik` has a unique index (nullable-safe:
+  any number of `NULL` ciks allowed, but a real CIK can only belong to one
+  issuer). `financial_fact` has a unique dedup index on
+  `(issuer_id, concept, accession_no, fiscal_year, fiscal_period)` so
+  re-ingesting the same filing's same datapoint can never duplicate a row.
+- `backend/app/repositories/issuer_repository.py`,
+  `financial_fact_repository.py`: function-style, matching the Milestone 2
+  convention. `get_issuer_by_cik` and `get_by_dedup_key` are the idempotent
+  re-ingestion checks the provider orchestrator uses.
+- `backend/app/providers/base/http_client.py`: `ThrottledHttpClient` — a
+  synchronous `httpx`-based GET client with a minimum inter-request delay and
+  a required, descriptive `User-Agent` (SEC EDGAR's fair-access policy blocks
+  generic/browser-like User-Agents and enforces a rate limit; this project's
+  is `Nexus Credit Intelligence kiran.dbat@gmail.com`, configured via the
+  existing `SEC_USER_AGENT` setting). Returns raw bytes, not parsed JSON —
+  different responses need different JSON-parsing options (see below).
+- `backend/app/providers/base/raw_payload_store.py`: computes the request
+  fingerprint and content checksum and calls `raw_provider_payload_repository`
+  — the only persistence-adjacent thing a provider adapter does, still never
+  opening a session itself.
+- `backend/app/providers/sec_edgar/dto.py`: `SecSubmissionsDTO`,
+  `SecCompanyFactsDTO`, `SecXbrlUnitDatapoint` — verified against live
+  `data.sec.gov` responses for CIK 0000320193 (Apple Inc.), not guessed at.
+  `SecXbrlUnitDatapoint.val` is typed `Decimal`; `client.py` parses company-
+  facts JSON with `parse_float=Decimal` so financial values never pass through
+  a binary `float` at all (avoids precision loss before Pydantic even sees
+  them).
+- `backend/app/providers/sec_edgar/client.py`: `SecEdgarClient` fetching
+  `submissions` and `companyfacts`; `format_cik10` (int or unpadded/padded
+  string -> SEC's canonical zero-padded 10-digit form).
+- `backend/app/providers/sec_edgar/normalizer.py`: the only place SEC-specific
+  shapes (CIKs, XBRL concept tags, SIC codes, accession numbers) become
+  PLAN.md's provider-neutral canonical schema. `sicDescription` is
+  deliberately *not* mapped to `issuer.sector` — SIC and a GICS-style sector
+  are different taxonomies, and conflating them would make `sector`'s meaning
+  provider-dependent (a future Bloomberg/S&P Global adapter should be able to
+  populate true sector data into that same column without SEC's SIC text
+  fighting it).
+- `backend/app/providers/sec_edgar/provider.py`:
+  `ingest_issuer_and_one_financial_fact` — the orchestrator. Idempotent on the
+  canonical `issuer`/`financial_fact` rows (re-running with the same
+  `cik`/`concept` reuses them); every call still fetches fresh and logs a new
+  `raw_provider_payload` + `provenance` row per fetch, since each retrieval is
+  its own audit event even when it confirms unchanged data.
+  `_select_most_recent_datapoint` picks the datapoint with the latest `end`
+  date among those with complete fiscal metadata (see Problems Encountered).
+- `backend/app/models/__init__.py`: now imports every model module (was
+  empty) — see Problems Encountered for why this is a correctness fix, not
+  cosmetic.
+- `backend/alembic/env.py`: `run_migrations_online` no longer sets
+  `search_path` on the migration connection — see Problems Encountered.
+- `backend/pyproject.toml`: `httpx` moved from the `dev` extra to main
+  `dependencies` (providers now make real runtime HTTP calls, not just tests).
+
+**Files Created**
+
+`backend/app/domain/issuer.py`, `financial_fact.py`,
+`backend/app/models/issuer.py`, `financial_fact.py`,
+`backend/app/repositories/issuer_repository.py`,
+`financial_fact_repository.py`,
+`backend/app/providers/__init__.py`,
+`backend/app/providers/base/{__init__,http_client,raw_payload_store}.py`,
+`backend/app/providers/sec_edgar/{__init__,dto,client,normalizer,provider}.py`,
+`backend/alembic/versions/0003_issuer_financial_fact.py`,
+`backend/tests/fixtures/sec_edgar/{submissions_aapl_trimmed,companyfacts_aapl_trimmed}.json`,
+`backend/tests/unit/test_sec_edgar_normalizer.py`,
+`backend/tests/integration/test_issuer_repository.py`,
+`test_financial_fact_repository.py`, `test_sec_edgar_live_ingestion.py`.
+
+**Files Modified**
+
+`backend/app/core/types.py` (`FormType`), `backend/app/models/__init__.py`
+(now imports every model), `backend/alembic/env.py` (search_path removed from
+migration connection; model imports simplified),
+`backend/tests/integration/conftest.py` (`sec_http_client` fixture),
+`backend/pyproject.toml` (`httpx` -> main deps), `PLAN.md`,
+`backend/.env` (local, git-ignored: `SEC_USER_AGENT` added).
+
+**Database Changes**
+
+Migration `0003` applied to the live, shared Supabase project: creates
+`nexus.issuer` (+ unique `cik` index) and `nexus.financial_fact` (+ dedup
+unique index, issuer_id index, provenance_id index, `form_type` CHECK
+constraint). No circular FK this time (unlike migration 0002) — straightforward
+dependency order. Verified with a full round-trip:
+`upgrade head` → `downgrade 0002` → `upgrade head`, plus a follow-up
+autogenerate run against the fully-migrated state that detected **zero**
+further diffs, confirming the models and live schema match exactly.
+
+Separately, a genuine (non-test, committed) ingestion was run against the live
+database: `nexus.issuer` now permanently contains one real row (Apple Inc.,
+CIK 0000320193, ticker AAPL, SIC 3571) and `nexus.financial_fact` one real row
+(`RevenueFromContractWithCustomerExcludingAssessedTax`, $364,357,000,000, from
+a real 10-Q, accession `0000320193-26-000020`), both backed by real
+`provenance` and `raw_provider_payload` rows fetched live from
+`data.sec.gov`. This is Milestone 3's primary objective made tangible, not
+just asserted by a test that immediately rolls back.
+
+**API Endpoints Added**
+
+None (out of scope — vertical slice through the domain layer only).
+
+**Frontend Pages Added**
+
+None (out of scope; unaffected, re-verified green).
+
+**Environment Variables Added**
+
+`SEC_USER_AGENT` was already in `.env.example`/`config.py` since Milestone 1
+but unset; now configured locally (`backend/.env`, git-ignored) as
+`Nexus Credit Intelligence kiran.dbat@gmail.com` per explicit approval, since
+SEC EDGAR requires a real, reachable identifier on every request.
+
+**Tests Added**
+
+91 total (up from 60): 54 unit (15 new SEC EDGAR DTO/normalizer tests against
+real, trimmed fixtures captured from live `data.sec.gov` responses — including
+a genuine real-world edge case, datapoints with null `fiscal_year`/
+`fiscal_period` on pre-2011-ish filings — plus the existing 39) + 37
+integration (13 new: 6 `issuer_repository`, 7 `financial_fact_repository`,
+plus 3 that make genuinely live SEC EDGAR *and* Supabase calls in
+`test_sec_edgar_live_ingestion.py`, on top of the existing 19 from Milestone 2
+minus adjustments — see Problems Encountered) + 2 health.
+
+**Test Results**
+
+```
+backend: pytest -v                    -> 91 passed (54 unit, 37 integration [3 genuinely live], 2 health)
+backend: ruff check .                 -> All checks passed!
+backend: black --check .              -> 60 files would be left unchanged.
+backend: mypy .                       -> Success: no issues found in 57 source files
+
+frontend: npm run lint                -> clean
+frontend: npm run format:check        -> All matched files use Prettier code style!
+frontend: npm run typecheck           -> clean (tsc -b)
+frontend: npm run build               -> succeeded (dist/assets bundle 428.68 kB / gzip 136.05 kB)
+frontend: npm audit                   -> found 0 vulnerabilities
+
+pre-commit run --all-files            -> all hooks passed (unit tests only, fast)
+
+alembic upgrade head (live)           -> upgraded 0002 -> 0003
+alembic downgrade 0002 (live)         -> downgraded 0003 -> 0002, issuer/financial_fact removed cleanly
+alembic upgrade head (live, again)    -> upgraded 0002 -> 0003, clean re-apply
+alembic revision --autogenerate       -> zero diffs detected against fully-migrated live state
+GET /health (live DB config)          -> 200 {"status": "healthy", ...}
+```
+
+**Commands Executed** (representative)
+
+```
+# real API shape verification before writing DTOs (not guessed at)
+curl -H "User-Agent: ..." https://data.sec.gov/submissions/CIK0000320193.json
+curl -H "User-Agent: ..." https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json
+
+cd backend
+./.venv/Scripts/python -m alembic revision --autogenerate -m "issuer and financial_fact"
+# discovered + fixed the search_path/autogenerate bug here, see Problems Encountered
+./.venv/Scripts/python -m alembic upgrade head
+./.venv/Scripts/python -m alembic downgrade 0002
+./.venv/Scripts/python -m alembic upgrade head
+./.venv/Scripts/python -m alembic revision --autogenerate -m "drift check"  # confirmed empty, deleted
+
+./.venv/Scripts/python -m pytest -v
+./.venv/Scripts/python -m ruff check . / black --check . / mypy .
+
+# genuine, committed (non-test) live ingestion — see Database Changes
+./.venv/Scripts/python -c "... SessionLocal + ThrottledHttpClient + ingest_issuer_and_one_financial_fact + db.commit() ..."
+
+cd ../web
+npm run lint / format:check / typecheck / build / audit
+
+cd ..
+backend/.venv/Scripts/python -m pre_commit run --all-files
+```
+
+**Deployment Validation**
+
+Not exercised — Railway/Vercel deployment remains Milestone 15 scope.
+
+**Problems Encountered**
+
+1. **A real Alembic autogenerate bug, found before it could do damage.**
+   Generating migration `0003` against a database that already had
+   Milestone 2's tables live, autogenerate proposed recreating *all five* of
+   them alongside the two genuinely new ones. Root cause: `run_migrations_online`
+   set `search_path=nexus,public` on the migration connection (defense-in-depth,
+   carried over from Milestone 2), which made `nexus` that connection's
+   *default* schema (confirmed via `inspector.default_schema_name == 'nexus'`).
+   Alembic's reflection represents the default schema internally as
+   `schema=None`, which `include_name`'s `name == NEXUS_SCHEMA` check then
+   excluded (`None != 'nexus'`) — so autogenerate's "already exists" check
+   silently found nothing on the reflected side for every pre-existing table,
+   while the metadata side (explicit `schema='nexus'`) passed fine, producing
+   a false "table is new" diff for all five. Fixed by removing the
+   `search_path` connect_arg from the migration engine entirely: every
+   migration operation is already schema-qualified explicitly
+   (`schema="nexus"` on every `op.*` call), so it was pure defense-in-depth
+   with no correctness need, and it was actively wrong here. Verified the fix
+   by re-running autogenerate (only the 2 real new tables detected) and, after
+   applying, running autogenerate again against the fully-migrated state
+   (zero diffs).
+2. **A real, latent `NoReferencedTableError` risk, not just a test artifact.**
+   Running only the new repository test files in isolation failed with
+   `NoReferencedTableError: ... could not find table 'nexus.raw_provider_payload'`.
+   Cause: SQLAlchemy models only register into `Base.metadata` when their
+   module is actually imported, and foreign keys are resolved lazily by
+   string; `app/models/__init__.py` was empty, so nothing guaranteed every
+   model module got imported before a mapper configuration triggered FK
+   resolution. This wasn't only a test-collection-order artifact — the exact
+   same failure was reachable from any production code path that touched one
+   model without every other model having been imported first (e.g. a route
+   using only `financial_fact_repository` without `provenance`'s module ever
+   having loaded). Fixed at the source: `app/models/__init__.py` now imports
+   every model module, so any `from app.models.x import Y` transitively
+   imports all of them first, regardless of call order.
+3. **SEC XBRL data itself: real datapoints with null `fy`/`fp`.** Parsing the
+   full live company-facts response for validation failed with over a
+   thousand Pydantic errors — older (roughly pre-2011) datapoints genuinely
+   omit `fy`/`fp` tagging. Not an edge case to special-case away: `dto.py`'s
+   `SecXbrlUnitDatapoint` types both as `int | None`/`str | None` (the real
+   shape), and `_select_most_recent_datapoint` explicitly filters to
+   datapoints with both present before selecting, with `normalizer.py`
+   independently re-checking the same invariant as defense-in-depth.
+4. **Test fixtures collided with the genuine live data left in the database.**
+   After committing the real Apple issuer/financial_fact as tangible Milestone
+   3 evidence, `tests/integration/test_issuer_repository.py`'s default test
+   fixture (which reused CIK `0000320193`) and
+   `test_sec_edgar_live_ingestion.py`'s hard `issuer_created is True`
+   assertion both broke on the next full test run — correctly, since the
+   application code (uniqueness constraint, idempotency logic) was doing
+   exactly what it should. Fixed by moving all test-owned CIKs in
+   `test_issuer_repository.py` to an unambiguously-fake `9999900xxx` range
+   (real SEC CIKs are currently well under 2,000,000) and by relaxing the live
+   ingestion tests to assert data correctness and internal (first-call vs.
+   second-call) idempotency rather than a fixed created/found boolean, since
+   that boolean legitimately depends on prior runs and on SEC's own filing
+   cadence, not on anything this test controls.
+
+**Solutions**
+
+All four were caught by direct verification rather than assumption: compiling
+Alembic's actual reflected state and comparing schema names, running the full
+test suite (not just new files) to surface the import-order dependency, fully
+parsing real (not sampled) live data before writing the DTO, and running the
+full suite again after leaving genuine data committed to see what broke.
+
+**Remaining Work**
+
+- TD-006 (new): SEC company-facts payloads (several MB for a large filer) are
+  stored inline as `payload_json` pending Supabase Storage configuration —
+  deferred to whichever milestone first genuinely needs Storage.
+- Everything in Milestone 4 onward per `PLAN.md` § Milestone Status —
+  unstarted; Milestone 4 requires separate approval to begin.
+
+**Git Commit Hash**
+
+Recorded in a follow-up entry, per this repository's established two-commit
+pattern — the hash of the commit containing this entry cannot be known before
+that commit is created.
+
+**GitHub Remote and Push Results**
+
+Recorded in the same follow-up entry.
+
+**Approximate Time Spent**
+
+Single focused implementation session, following directly after Milestone 2
+approval.
+
+**Developer Notes**
+
+Milestone 2's ADR-014 domain-layer conventions (Pydantic domain objects,
+function-style repositories, text+CHECK enums) held up cleanly for the first
+real canonical entities built on top of them — no changes needed to that
+pattern itself. The provider-layer conventions established here
+(`http_client`/`raw_payload_store` in `providers/base/`, and the
+DTO/normalizer/provider module shape in `providers/sec_edgar/`) are now the
+template for every future provider adapter (OpenFIGI, FRED, CourtListener,
+TRACE, and eventually the disabled licensed-vendor stubs); none of them needed
+their own architectural decision beyond what PLAN.md §3/§17 already specified,
+which is why this entry has no accompanying ADR.

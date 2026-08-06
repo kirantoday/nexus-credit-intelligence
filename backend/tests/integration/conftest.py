@@ -20,6 +20,7 @@ from app.config import get_settings
 from app.core.types import DataClassification, ProviderName, TransformationType
 from app.db.base import NEXUS_SCHEMA
 from app.domain.provenance import ProvenanceCreate
+from app.providers.base.http_client import ThrottledHttpClient
 
 
 @pytest.fixture(scope="session")
@@ -52,6 +53,20 @@ def db_session(db_engine: Engine) -> Iterator[Session]:
         if transaction.is_active:
             transaction.rollback()
         connection.close()
+
+
+@pytest.fixture
+def sec_http_client() -> Iterator[ThrottledHttpClient]:
+    """A real HTTP client for live SEC EDGAR calls, skipped gracefully if
+    SEC_USER_AGENT isn't configured — same gating pattern as `db_engine`."""
+    settings = get_settings()
+    if not settings.sec_user_agent:
+        pytest.skip("SEC_USER_AGENT not configured; skipping live SEC EDGAR test")
+    client = ThrottledHttpClient(user_agent=settings.sec_user_agent)
+    try:
+        yield client
+    finally:
+        client.close()
 
 
 def reported_public_provenance(**overrides: object) -> ProvenanceCreate:
