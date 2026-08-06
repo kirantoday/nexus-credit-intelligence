@@ -2869,7 +2869,7 @@ noticing why.
 
 **Git Commit Hash**
 
-_Recorded in a follow-up docs commit, per established repo convention._
+`4900162175e6e30825f6089910f77c5c06f26fa6` (`4900162`) — implementation.
 
 **GitHub Remote and Push Results**
 
