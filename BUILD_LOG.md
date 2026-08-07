@@ -3233,7 +3233,7 @@ across any of the interruptions.
 
 **Git Commit Hash**
 
-_Recorded in a follow-up docs commit, per established repo convention._
+`9154e9e841fe320dfc40d8502bd2c9469a7ffe8c` (`9154e9e`) — implementation.
 
 **GitHub Remote and Push Results**
 
