@@ -1,10 +1,12 @@
 """Canonical domain object for `research_evidence` (PLAN.md section 24.3, ADR-018).
 
 Generalized — **not** `distress_evidence`. `evidence_provider` names which
-provider produced this evidence (`sec_edgar` today; future providers add
-their own value, never a table rename). `filing_id` is this milestone's one
-concrete source pointer; see the ORM model's docstring for why a polymorphic
-association isn't built yet (TD-007/ADR-015 precedent).
+provider produced this evidence (`sec_edgar`, `courtlistener` today; future
+providers add their own value, never a table rename). `filing_id` and
+`docket_entry_id` are each provider's own concrete, nullable source
+pointer — exactly the pattern ADR-018 documented Milestone 7 would follow
+before Milestone 7 existed; see the ORM model's docstring for why a
+polymorphic association isn't built yet (TD-007/ADR-015 precedent).
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ class ResearchEvidenceCreate(BaseModel):
     evidence_provider: str
     source_type: str
     filing_id: UUID | None = None
+    docket_entry_id: UUID | None = None
     evidence_type: EvidenceType
     severity: EvidenceSeverity
     source_section: str | None = None

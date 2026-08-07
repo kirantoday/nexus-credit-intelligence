@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.alerts import router as alerts_router
 from app.api.routes.capital_structure import router as capital_structure_router
+from app.api.routes.court_dockets import router as court_dockets_router
 from app.api.routes.credit_universe import router as credit_universe_router
 from app.api.routes.filing_monitor import router as filing_monitor_router
 from app.api.routes.health import router as health_router
@@ -54,3 +55,4 @@ app.include_router(filing_monitor_router)
 app.include_router(research_evidence_router)
 app.include_router(alerts_router)
 app.include_router(morning_brief_router)
+app.include_router(court_dockets_router)

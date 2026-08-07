@@ -23,6 +23,7 @@ from app.core.types import DataClassification, ProviderName, TransformationType
 from app.db.base import NEXUS_SCHEMA
 from app.domain.provenance import ProvenanceCreate
 from app.providers.base.http_client import ThrottledHttpClient
+from app.providers.courtlistener.client import build_http_client
 
 
 @pytest.fixture(scope="session")
@@ -129,6 +130,24 @@ def fred_http_client() -> Iterator[ThrottledHttpClient]:
     if not settings.fred_api_key:
         pytest.skip("FRED_API_KEY not configured; skipping live FRED test")
     client = ThrottledHttpClient(user_agent=settings.sec_user_agent)
+    try:
+        yield client
+    finally:
+        client.close()
+
+
+@pytest.fixture
+def courtlistener_http_client() -> Iterator[ThrottledHttpClient]:
+    """A real, authenticated HTTP client for live CourtListener calls
+    (Milestone 7), skipped gracefully if `COURTLISTENER_API_TOKEN` isn't
+    configured — same gating pattern as `sec_http_client`."""
+    settings = get_settings()
+    if not settings.courtlistener_api_token:
+        pytest.skip("COURTLISTENER_API_TOKEN not configured; skipping live CourtListener test")
+    client = build_http_client(
+        user_agent="nexus-credit-intelligence-research (tests)",
+        api_token=settings.courtlistener_api_token,
+    )
     try:
         yield client
     finally:

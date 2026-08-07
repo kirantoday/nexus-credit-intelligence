@@ -235,6 +235,17 @@ class EvidenceType(StrEnum):
     ADVERSE_AUDIT_DEVELOPMENT = "adverse_audit_development"
     STRATEGIC_ALTERNATIVES = "strategic_alternatives"
 
+    # Docket-specific values added in Milestone 7 (ADR-018's documented
+    # forward path) — real docket-entry language patterns confirmed live
+    # against CourtListener's actual RECAP data before being encoded here
+    # (see BUILD_LOG.md), not guessed at.
+    PLAN_CONFIRMED = "plan_confirmed"
+    CASE_DISMISSED = "case_dismissed"
+    CASE_CONVERTED = "case_converted"
+    TRUSTEE_APPOINTED = "trustee_appointed"
+    CLAIMS_BAR_DATE_SET = "claims_bar_date_set"
+    RELIEF_FROM_STAY_MOTION = "relief_from_stay_motion"
+
 
 class EvidenceSeverity(StrEnum):
     """`research_evidence.severity` / `alert_event.severity`."""
@@ -290,6 +301,24 @@ class FilingMonitorRunMode(StrEnum):
     BASELINE = "baseline"
     DELTA = "delta"
     BACKFILL = "backfill"
+
+
+class DocketDocumentAvailability(StrEnum):
+    """`docket_document.availability` (PLAN.md 4.5, section 15).
+
+    `RECAP_AVAILABLE` — a real RECAP copy exists and was retrieved via
+    CourtListener; never set for a sealed document, regardless of what the
+    API otherwise reports as "available" (section 22 — never fetch sealed
+    material). `UNAVAILABLE_ADMIN_UPLOAD_NEEDED` — the document is known to
+    exist (an entry references it) but no RECAP copy exists yet; a real
+    PACER purchase would be required, which this build never performs.
+    `ADMIN_UPLOADED` — reserved for a future admin-upload flow (PLAN.md
+    section 9); not populated by this milestone's live ingestion.
+    """
+
+    RECAP_AVAILABLE = "recap_available"
+    UNAVAILABLE_ADMIN_UPLOAD_NEEDED = "unavailable_admin_upload_needed"
+    ADMIN_UPLOADED = "admin_uploaded"
 
 
 # SEC form types the overnight monitor watches (PLAN.md 24.5). Filtering

@@ -69,6 +69,12 @@ _TOPIC_PHRASES: dict[EvidenceType, str] = {
     EvidenceType.AUDITOR_RESIGNATION: "auditor resignation",
     EvidenceType.ADVERSE_AUDIT_DEVELOPMENT: "adverse audit development",
     EvidenceType.STRATEGIC_ALTERNATIVES: "review of strategic alternatives",
+    EvidenceType.PLAN_CONFIRMED: "confirmation of a plan of reorganization",
+    EvidenceType.CASE_DISMISSED: "dismissal of a bankruptcy case",
+    EvidenceType.CASE_CONVERTED: "conversion of a bankruptcy case to Chapter 7",
+    EvidenceType.TRUSTEE_APPOINTED: "appointment of a bankruptcy trustee",
+    EvidenceType.CLAIMS_BAR_DATE_SET: "a claims bar date being set",
+    EvidenceType.RELIEF_FROM_STAY_MOTION: "a motion for relief from the automatic stay",
 }
 
 

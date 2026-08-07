@@ -25,6 +25,7 @@ def _to_domain(row: ResearchEvidenceModel) -> ResearchEvidence:
         evidence_provider=row.evidence_provider,
         source_type=row.source_type,
         filing_id=row.filing_id,
+        docket_entry_id=row.docket_entry_id,
         evidence_type=EvidenceType(row.evidence_type),
         severity=EvidenceSeverity(row.severity),
         source_section=row.source_section,
@@ -49,6 +50,7 @@ def create_evidence(db: Session, data: ResearchEvidenceCreate) -> ResearchEviden
         evidence_provider=data.evidence_provider,
         source_type=data.source_type,
         filing_id=data.filing_id,
+        docket_entry_id=data.docket_entry_id,
         evidence_type=data.evidence_type.value,
         severity=data.severity.value,
         source_section=data.source_section,
@@ -77,6 +79,14 @@ def get_evidence(db: Session, evidence_id: UUID) -> ResearchEvidence | None:
 
 def list_evidence_by_filing(db: Session, filing_id: UUID) -> list[ResearchEvidence]:
     stmt = select(ResearchEvidenceModel).where(ResearchEvidenceModel.filing_id == filing_id)
+    rows = db.execute(stmt).scalars().all()
+    return [_to_domain(row) for row in rows]
+
+
+def list_evidence_by_docket_entry(db: Session, docket_entry_id: UUID) -> list[ResearchEvidence]:
+    stmt = select(ResearchEvidenceModel).where(
+        ResearchEvidenceModel.docket_entry_id == docket_entry_id
+    )
     rows = db.execute(stmt).scalars().all()
     return [_to_domain(row) for row in rows]
 

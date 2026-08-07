@@ -2878,3 +2878,363 @@ noticing why.
   `ff2321c32a4cf2b59862c74a6b157a6c2975d378`, matching the local commit
   exactly.
 - Remote branch: https://github.com/kirantoday/nexus-credit-intelligence/tree/main
+
+---
+
+## 2026-08-07 — Milestone 7: CourtListener adapter + docket view
+
+**Summary**
+
+CourtListener/RECAP integration — "what happened in court?" — wired into
+the exact provider-agnostic evidence/alert pipeline ADR-018 documented
+before this milestone existed: `evidence_provider = courtlistener`, a
+nullable `docket_entry_id` FK on `research_evidence` alongside the existing
+`filing_id`, and a CourtListener-specific source-describer injected into
+the unchanged `alert_synthesis_service`/`alert_event` schema. Real API
+research came first, live, before any code: confirmed CourtListener's
+Search API works anonymously but the actual docket-entries/RECAPDocument
+detail endpoints return `401` without a real `COURTLISTENER_API_TOKEN`
+(user-supplied, one malformed-`.env`-line bug and one truncated-token bug
+found and fixed live before the token worked — see Problems Encountered).
+Docket discovery turned out to require a materially different design from
+SEC's automatic per-CIK feed — no equivalent "list new PACER cases for
+issuer X" endpoint exists — recorded as ADR-019 rather than silently
+built around.
+
+**Features Completed**
+
+- `court_docket`/`court_docket_entry`/`docket_document` (PLAN.md §4.5, §15):
+  the frozen schema, extended with real, necessary idempotency columns
+  (`courtlistener_docket_id`/`courtlistener_entry_id`/`courtlistener_document_id`,
+  each uniquely indexed — the same role `sec_filing.accession_no` plays for
+  SEC) and a `chapter` column (real, valuable data the Search API already
+  returns). `docket_document.is_sealed` is enforced at both the domain
+  validator and a DB CHECK constraint (`ck_docket_document_sealed_never_recap_available`)
+  — never `recap_available` when sealed, PLAN.md §22.
+- `app/providers/courtlistener/` (`client.py`, `dto.py`, `normalizer.py`,
+  `provider.py`): the same Provider DTO → Normalizer → Canonical Domain
+  Object → Repository pipeline every other provider follows. `search_dockets`
+  (anonymous-capable, used for discovery) and `sync_docket_entries`
+  (token-required, paginated, idempotent by `courtlistener_entry_id`) are
+  the two real entry points. Document `plain_text` arrives inline on the
+  docket-entries response itself — confirmed live — so no second per-document
+  fetch is needed the way SEC's separate filing-document fetch is.
+- `app.core.distress_rules` extended with 6 new docket-specific
+  `EvidenceType` values and phrase rules (`plan_confirmed`, `case_dismissed`,
+  `case_converted`, `trustee_appointed`, `claims_bar_date_set`,
+  `relief_from_stay_motion`) grounded in real CourtListener docket-entry
+  language confirmed live (e.g. the real "Receipt of Motion for Relief From
+  Stay" text from Diebold Nixdorf's docket). Existing SEC-filing phrase
+  rules (`phrase_chapter_11_petition`, `phrase_dip_financing`, etc.) are
+  reused unchanged for docket text — both are just English prose to this
+  layer, no separate rule engine needed. `DOCKET_EXCLUDED_RULE_IDS` excludes
+  the two ambiguous "bare mention" rules from docket text specifically — see
+  Problems Encountered for the real noise problem this fixes.
+- `app.domain.evidence_bundle._source_key` extended to check
+  `docket_entry_id` alongside `filing_id` — a real bug caught before
+  shipping (see Problems Encountered) that would have merged every
+  docket-sourced evidence item for an issuer into one bundle.
+- `app.services.court_docket_service`: the CourtListener-specific
+  orchestrator, mirroring `filing_monitor_service`'s per-unit error
+  isolation and provenance-per-match pattern. `sync_one_docket` takes an
+  injectable `sync_docket_entries_fn` (mirrors `filing_monitor_service`'s
+  injectable fetch functions) so evidence/alert-synthesis logic is
+  unit-testable without hitting live CourtListener, and — unplanned but
+  genuinely useful — let a live data-quality bug be fixed via a local-only
+  reprocessing pass with zero new network calls (see Problems Encountered).
+  `_describe_courtlistener_source` is the one place CourtListener-specific
+  source formatting happens, injected into the still-unchanged
+  `alert_synthesis_service`.
+- `app.scripts.link_court_dockets`: the curated, live-verified discovery
+  step (ADR-019) — searches CourtListener by name, confirms the result
+  matches an expected `courtlistener_docket_id` before linking, rejects and
+  documents anything that doesn't match (the same live-verification
+  discipline `seed_research_universes` established). `app.scripts.sync_court_dockets`:
+  the repeatable half, idempotent per entry, `--backfill` flag for the
+  historical-demo labeling.
+- `GET /api/court-dockets`, `GET /api/court-dockets/{id}` (`court_docket_api_service`,
+  thin routes) and a new `court_dockets` field on `GET /api/issuers/{id}`.
+  Issuer Detail gained a "What happened in court?" section (`CourtDocketSection.tsx`)
+  embedded the same way Capital Structure is — real docket header (case
+  name, docket number, court, chapter, filed date, CourtListener link) plus
+  the 10 most recent entries with document-availability status, honestly
+  showing "(no description on file)"/"Not on RECAP" for genuinely
+  incomplete real PACER data rather than hiding or fabricating it.
+  `research-evidence`/`alerts`/`morning-brief` routes needed **zero**
+  changes — already provider-agnostic per ADR-018, confirmed live: a
+  CourtListener-sourced alert renders correctly through the exact same
+  `AlertCard`/Morning Research Brief UI an SEC-sourced alert does.
+
+**Files Created**
+
+`backend/alembic/versions/0008_court_dockets.py`,
+`backend/alembic/versions/0009_research_evidence_docket_types.py`,
+`backend/app/api/routes/court_dockets.py`,
+`backend/app/domain/{court_docket,court_docket_entry,docket_document}.py`,
+`backend/app/models/{court_docket,court_docket_entry,docket_document}.py`,
+`backend/app/providers/courtlistener/{__init__,client,dto,normalizer,provider}.py`,
+`backend/app/repositories/{court_docket_repository,court_docket_entry_repository,docket_document_repository}.py`,
+`backend/app/schemas/court_docket.py`,
+`backend/app/scripts/{link_court_dockets,sync_court_dockets}.py`,
+`backend/app/services/{court_docket_api_service,court_docket_service}.py`,
+`backend/tests/integration/{test_court_docket_repository,test_court_docket_service,test_court_docket_api_service}.py`,
+`web/src/api/courtDocket.ts`,
+`web/src/components/{CourtDocketSection,CourtDocketSection.test}.tsx`,
+`web/src/queries/useCourtDockets.ts`,
+`docs/VISION.md`.
+
+**Files Modified**
+
+`ARCHITECTURE_DECISIONS.md` (ADR-019), `PLAN.md` (Product Philosophy
+trimmed to a `docs/VISION.md` pointer, Milestone 7 completion record),
+`backend/app/ai/providers/anthropic_provider.py` (explicit request
+timeout — see Problems Encountered), `backend/app/core/distress_rules.py`
+(6 new docket rules, `DOCKET_EXCLUDED_RULE_IDS`, `exclude_rule_ids` param
+on `match_rules`), `backend/app/core/types.py` (6 new `EvidenceType`
+values, `DocketDocumentAvailability` enum), `backend/app/domain/evidence_bundle.py`
+(`_source_key` checks `docket_entry_id`), `backend/app/domain/research_evidence.py`/
+`backend/app/models/research_evidence.py` (`docket_entry_id` FK),
+`backend/app/main.py` (mounts the new router), `backend/app/models/__init__.py`,
+`backend/app/providers/base/http_client.py` (opt-in `retry_on_status`/`max_retries`
+for 429 backoff), `backend/app/repositories/research_evidence_repository.py`,
+`backend/app/schemas/{filing_monitor,issuer}.py`, `backend/app/services/{alert_synthesis_service,filing_monitor_api_service,issuer_service}.py`,
+`backend/tests/integration/conftest.py` (`courtlistener_http_client` fixture),
+`backend/tests/unit/{test_distress_rules,test_evidence_bundling}.py`,
+`web/src/api/issuer.ts`, `web/src/pages/{IssuerPage,IssuerPage.test}.tsx`.
+
+**Database Changes**
+
+Migration `0008` applied to the live, shared Supabase project and
+round-tripped (`upgrade head` → `downgrade 0007` → `upgrade head`) at
+creation time: creates `nexus.court_docket`, `nexus.court_docket_entry`,
+`nexus.docket_document`, and `research_evidence.docket_entry_id`. Migration
+`0009` (corrective, see Problems Encountered) also applied and
+round-tripped. Verified with `alembic check` afterward — no drift.
+
+Real, permanently-committed live data: 3 real CourtListener dockets linked
+to 3 already-seeded real issuers (Diebold Nixdorf → docket `23-90602`, S.D.
+Tex. Bankr., filed 2023-06-01; EchoStar Corp → Hughes Satellite Systems
+Corporation, docket `26-90739`, S.D. Tex. Bankr., filed 2026-08-02; Office
+Properties Income Trust → SIR Santa Clara LP and Office Properties Income
+Trust, docket `25-90592`, S.D. Tex. Bankr., filed 2025-10-30). 665 real
+`court_docket_entry` rows ingested (429 + 111 + 125) with 665 corresponding
+`docket_document` rows. 28 real `research_evidence` rows (17 Diebold, 9
+EchoStar, 2 OPI) produced 27 real `alert_event` rows (24 high / 2 medium /
+1 low severity, all AI-reviewed), bringing the Morning Research Brief's
+combined total (SEC + CourtListener) to 55 real alerts (28 high / 7 medium
+/ 20 low, 54 AI-assisted). Re-running `link_court_dockets` confirmed full
+idempotency (all 3 already linked, no duplicates).
+
+**API Endpoints Added**
+
+`GET /api/court-dockets` (optional `issuer_id` filter),
+`GET /api/court-dockets/{docket_id}` (404 if unknown). `GET /api/issuers/{id}`
+gained a `court_dockets` field.
+
+**Frontend Pages Added**
+
+None — "What happened in court?" is a new section embedded in the existing
+`IssuerPage.tsx`, matching Capital Structure's precedent of embedding
+rather than a separate page.
+
+**Environment Variables Added**
+
+`COURTLISTENER_API_TOKEN` (already scaffolded in `config.py`/`.env.example`
+from earlier planning; now actually used). Real, live-verified constraint:
+required for the docket-entries/RECAPDocument detail endpoints (`401`
+without one) — the Search API alone works anonymously.
+
+**Tests Added**
+
+26 new backend tests (274 → 300): `test_court_docket_repository.py` (5 —
+idempotent create by `courtlistener_docket_id`/`courtlistener_entry_id`,
+linked-vs-unlinked docket filtering, sealed-document availability
+enforcement), `test_court_docket_service.py` (7 — evidence/alert creation
+via an injected fake `sync_docket_entries_fn`, clean-entry no-op, idempotent
+re-sync, unlinked-docket rejection, the routine-boilerplate noise
+regression, evidence-provider-filter visibility), `test_court_docket_api_service.py`
+(4), plus additions to `test_distress_rules.py` (9 — the 6 new docket
+rules, the exclude-rule-ids regression) and `test_evidence_bundling.py` (2
+— the `docket_entry_id` bundling-key regression).
+
+6 new frontend tests (61 → 67): `CourtDocketSection.test.tsx` (4 — empty
+state, docket header rendering, entries sorted newest-first, error state),
+plus 2 additions to `IssuerPage.test.tsx` (no-docket empty state, a linked
+docket with entries rendering end-to-end).
+
+**Test Results**
+
+```
+backend: pytest tests/ -q                      -> 300 passed
+backend: ruff check .                          -> All checks passed!
+backend: black --check .                       -> 191 files would be left unchanged.
+backend: mypy app                              -> Success: no issues found in 135 source files
+backend: alembic current                       -> 0009 (head)
+backend: alembic check                         -> No new upgrade operations detected.
+
+frontend: npx vitest run                       -> 67 passed (12 test files)
+frontend: npx eslint .                         -> clean
+frontend: npx prettier --check src             -> All matched files use Prettier code style!
+frontend: npx tsc --noEmit                     -> clean
+frontend: npm run build                        -> succeeded (dist/assets bundle 644.58 kB / gzip 193.29 kB)
+
+GET /health (live server, port 8000)                    -> 200 {"status": "healthy", ...}
+GET /api/court-dockets (live)                           -> 200, 3 real dockets with real entry_count
+python -m app.scripts.link_court_dockets                -> 3 linked, 0 rejected
+python -m app.scripts.sync_court_dockets --backfill      -> 3 dockets synced, 665 entries, 27 alerts, 0 errors (final run)
+```
+
+**Commands Executed** (representative)
+
+```
+cd backend
+./.venv/Scripts/python -m alembic revision --autogenerate -m "court dockets"
+mv alembic/versions/<hash>_court_dockets.py alembic/versions/0008_court_dockets.py
+./.venv/Scripts/python -m alembic upgrade head
+./.venv/Scripts/python -m alembic downgrade 0007   # round-trip, before real data existed
+./.venv/Scripts/python -m alembic upgrade head
+
+# corrective migration (hand-written, not autogenerated — see Problems Encountered)
+./.venv/Scripts/python -m alembic upgrade head       # 0009
+./.venv/Scripts/python -m alembic downgrade 0008     # round-trip
+./.venv/Scripts/python -m alembic upgrade head
+
+./.venv/Scripts/python -m pytest tests/ -q
+./.venv/Scripts/python -m ruff check . / black --check . / mypy app
+
+# genuine, committed (non-test) live linking + sync
+./.venv/Scripts/python -m app.scripts.link_court_dockets
+./.venv/Scripts/python -m app.scripts.sync_court_dockets --backfill   # multiple attempts, see Problems Encountered
+
+cd ../web
+npx vitest run / eslint . / prettier --check src / tsc --noEmit / npm run build
+
+# manual browser verification (Chrome, via claude-in-chrome tools)
+# EchoStar's Issuer Detail "What happened in court?" section with real
+# docket header/entries; Diebold's docket showing 429 real entries; Morning
+# Research Brief showing a real CourtListener-sourced alert (Office
+# Properties Income Trust Chapter 11 petition) rendering through the
+# unchanged AlertCard component alongside real SEC-sourced alerts
+```
+
+**Problems Encountered**
+
+1. **A malformed `.env` line and a truncated token, both real, both caught
+   before any code depended on them working.** The user added
+   `COURTLISTENER_API_TOKEN` to `backend/.env`, but the line had a stray
+   leading `=` (`=COURTLISTENER_API_TOKEN=...`) that would have prevented
+   `pydantic-settings` from parsing it as a valid `KEY=VALUE` pair — fixed
+   structurally (stripping only the leading `=` byte) without ever reading
+   or reproducing the token value. A live authenticated request then
+   returned `401 {"detail":"Invalid token."}`; a length check (never a
+   value check) showed 39 characters against the standard 40-character
+   Django REST Framework token format — the user re-pasted the full token
+   and a live call succeeded.
+2. **Alembic's `checkconstraint_byname` autogenerate plugin compares CHECK
+   constraints by name only, not by body.** `EvidenceType` was extended
+   with 6 docket-specific values before migration `0008` was generated, but
+   autogenerate never emitted the corresponding `ck_research_evidence_type`
+   change — confirmed live: `pg_get_constraintdef` on the live constraint
+   showed the old, 26-value list. Caught live when a real docket-entry sync
+   raised `psycopg.errors.CheckViolation` inserting `relief_from_stay_motion`.
+   Fixed with a hand-written corrective migration (`0009`) rather than
+   editing the already-applied `0008` — the standard, safe pattern for a
+   migration that's already run.
+3. **A real signal-to-noise problem, not a hypothetical one.** The
+   deterministic rule engine's ambiguous-context "bare mention" rules
+   (designed for SEC filings, where a bare "chapter 11" mention might be
+   the tax code, not bankruptcy) applied unchanged to docket text produced
+   83 near-duplicate low-value alerts from one real docket's 429 routine
+   entries — an active Chapter 11 case's docket references "the Chapter 11
+   Case(s)" in nearly every procedural entry's boilerplate. A linked docket
+   is by definition already a confirmed case, so that ambiguity never
+   exists there. Fixed with `DOCKET_EXCLUDED_RULE_IDS`, verified by
+   deleting and cleanly re-generating all CourtListener-sourced evidence/alerts.
+4. **A real bundling bug caught before it could ship a duplicate-merging
+   defect.** `group_evidence_into_bundles` only checked `filing_id` for its
+   grouping key; every docket-sourced evidence item has `filing_id = None`,
+   so every piece of CourtListener evidence for one issuer would have
+   collapsed into a single "none" bucket, merging unrelated docket entries
+   into one alert. Fixed by extending `_source_key` to also check
+   `docket_entry_id` — the exact "a future evidence source contributes its
+   own key component" extension the function's own docstring had already
+   anticipated.
+5. **Two real infrastructure stalls during the live backfill, each
+   correctly diagnosed rather than blindly retried.** First: `ThrottledHttpClient`'s
+   30s default timeout was too short for a CourtListener page request
+   retried after a real 429 backoff — a sync run stalled with no error for
+   25+ minutes (confirmed via `pg_stat_activity`: the session was `idle in
+   transaction` with no new queries, and no new `raw_provider_payload` rows
+   were being created). Raised to 60s, then, after an isolated diagnostic
+   call to the live API showed a single page genuinely taking 66.7 real
+   seconds to respond (CourtListener itself was degraded, not a bug here),
+   raised again to 120s. Second, separately: the Anthropic SDK client had
+   no explicit timeout at all (unlike every other provider client in this
+   codebase), a real gap that could independently hang an AI-review call
+   indefinitely — fixed with an explicit 60s timeout. Both stalled
+   processes were identified by PID and terminated safely; in both cases
+   the DB transaction was still uncommitted, so no committed data was ever
+   at risk, confirmed via `pg_stat_activity` before and after.
+6. **Given CourtListener's confirmed real slowness, the fastest, safest
+   path to finish EchoStar's docket avoided the network entirely.**
+   EchoStar's 111 real entries were already fully persisted locally from an
+   earlier successful pagination pass; rather than re-fetching identical
+   data from a currently-degraded API a third time, a small one-off script
+   reused `court_docket_service.sync_one_docket`'s existing
+   `sync_docket_entries_fn` injection point (built for unit testing) with a
+   local-DB-only implementation — zero new CourtListener calls, real data
+   throughout, correct result (9 real evidence rows, 8 real alerts).
+
+**Solutions**
+
+Every problem was caught by live evidence, not assumption: a structural
+byte-level check of the `.env` line (never the value), a live `401`
+response and a length check, a live `pg_get_constraintdef` query showing
+the actual stale constraint body, live-observed alert counts before and
+after the rule fix, `pg_stat_activity` proving a stall rather than slow
+progress, and an isolated timed diagnostic call proving the timeout root
+cause before changing it. None were patched around without understanding
+why.
+
+**Remaining Work**
+
+- TD-012 (new): CourtListener docket sync always re-walks a docket's full
+  pagination on every call, with no incremental-resume mode — real,
+  live-observed cost (a 429-entry docket's re-sync took 20+ minutes at
+  today's degraded API response rate). Deferred until a real caller needs
+  frequent incremental re-sync rather than the current occasional-backfill
+  pattern.
+- TD-001 through TD-011 unchanged, carried forward from prior milestones.
+- Everything in Milestone 8 onward per `PLAN.md` § Milestone Status —
+  unstarted; Milestone 8 (Watchlists) requires separate explicit approval
+  to begin.
+
+**Developer Notes**
+
+The evidence-first architecture ADR-018 committed to during Milestone 6.5
+paid off exactly as designed: adding a second real evidence provider
+required zero changes to `alert_event`'s schema, zero changes to the
+`research-evidence`/`alerts`/`morning-brief` API routes, and zero changes
+to the frontend `AlertCard`/Morning Research Brief components — a
+CourtListener-sourced alert renders through the exact same code a
+SEC-sourced alert does, confirmed live in the browser. The one real
+extension needed (`_source_key` checking `docket_entry_id`) was already
+anticipated in the bundling function's own docstring before this milestone
+existed.
+
+This milestone's live verification work also validated the project's
+"diagnose before retrying" discipline under real, non-trivial failure
+conditions — a stalled background process, a genuinely degraded external
+API, and a real infrastructure gap (no AI-client timeout) — rather than
+either giving up or blindly re-running the same failing command. Each stall
+was independently confirmed via direct database/process inspection before
+any corrective action was taken, and no committed data was ever at risk
+across any of the interruptions.
+
+**Git Commit Hash**
+
+_Recorded in a follow-up docs commit, per established repo convention._
+
+**GitHub Remote and Push Results**
+
+_Recorded in a follow-up docs commit, per established repo convention._

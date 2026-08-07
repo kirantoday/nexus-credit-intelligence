@@ -1048,3 +1048,101 @@ providers genuinely need to join into one bundle (e.g. a CourtListener
 docket event and an SEC 8-K about the same bankruptcy filing, on the same
 day) — that is a real grouping-logic change, not a schema change, and
 belongs in `group_evidence_into_bundles`, not a new migration.
+
+---
+
+## ADR-019: CourtListener docket discovery is a curated, live-verified linking step — not an automatic per-issuer watermark feed like SEC filings
+
+**Date:** 2026-08-06
+**Status:** Accepted
+
+**Context**
+`app.services.filing_monitor_service` (Milestone 6.5) discovers new SEC
+filings automatically: every issuer in a Research Universe has a real CIK,
+and SEC's `filings.recent` endpoint answers "what has issuer X filed since
+date Y?" directly. Milestone 7 needed the equivalent for CourtListener —
+but no equivalent question-answering endpoint exists. Confirmed live during
+development: CourtListener's Search API (`/api/rest/v4/search/?type=r`) is
+free-text, not identifier-keyed — there is no "list every new PACER case for
+issuer X" call, and building one would require either a paid PACER account
+with named-party monitoring (real monetary cost, explicitly out of scope per
+PLAN.md section 22) or a maintained internal party-name-to-issuer index this
+project doesn't have. A second real constraint, also confirmed live: the
+Search API works anonymously, but the actual docket-entries/RECAPDocument
+detail endpoints (the only source of the granular "what happened in court"
+events `court_docket_entry` needs) return `401 Unauthorized` without a real
+`COURTLISTENER_API_TOKEN` — read access to the data this milestone actually
+needs is gated behind registration, unlike SEC EDGAR's fully open APIs.
+
+**Decision**
+Docket discovery is a separate, explicit, curated step
+(`app.scripts.link_court_dockets`), not part of the automatic overnight
+monitor: a real candidate (an issuer already seeded with a genuine,
+independently-confirmed distress event — e.g. a real Chapter 11 filing
+already evidenced via live SEC EDGAR data in Milestone 6.5's backfill) is
+searched for by name via the real Search API, live-verified against an
+expected `courtlistener_docket_id` before linking (the same
+live-verification discipline `app.scripts.seed_research_universes`
+established for SEC issuer identity — never a hand-typed/guessed docket
+id), and only then does `court_docket.issuer_id` get set. Once linked,
+`app.services.court_docket_service.sync_one_docket` (driven by
+`app.scripts.sync_court_dockets`) is the repeatable, idempotent half —
+exactly mirroring `filing_monitor_service`'s per-issuer error isolation and
+provenance-per-match pattern, applied per docket instead. Idempotency is
+per-entry via CourtListener's own stable `courtlistener_entry_id` (the same
+role `sec_filing.accession_no` plays for SEC), so no separate
+`docket_monitor_run`/watermark table was added to PLAN.md section 4.5 — a
+re-sync is always safe and only ever processes genuinely new entries,
+without needing to track "since when."
+
+**Alternatives Considered**
+- Build an automatic per-issuer docket-discovery feed anyway, polling the
+  Search API by issuer legal name on a schedule — rejected: free-text party
+  name search is unreliable for automatic linking (the same issuer's name
+  can match unrelated cases, e.g. a labor lawsuit instead of the actual
+  bankruptcy case — encountered live searching "Diebold Nixdorf," which
+  returned an unrelated 2019 employment case ahead of the real 2023 Chapter
+  11 docket). Automatic, unverified linking would violate this project's
+  core "never fabricate or fuzzy-merge identity" rule (PLAN.md section 8's
+  Universal Search principle, applied here to dockets).
+- Require a paid PACER/CourtListener account with named-party monitoring to
+  get true automatic discovery — rejected: real monetary cost per PLAN.md
+  section 22's explicit "never perform a real PACER purchase in this
+  build," and not needed for a v1 real-data demonstration.
+- Add a `docket_monitor_run` table mirroring `filing_monitor_run` for
+  watermark tracking — rejected: nothing to watermark. A docket's entries
+  are the unit of idempotency, not a discovery run's timestamp; adding the
+  table now would be schema built for a delta-detection problem CourtListener
+  docket sync doesn't actually have.
+
+**Tradeoffs**
+New real distress dockets are not discovered automatically the way new SEC
+filings are — an analyst/admin must identify and link a new docket before
+its entries start flowing into the evidence/alert pipeline. This is a real,
+honest scope limitation, not a hidden one: `app.scripts.link_court_dockets`
+documents it in its own module docstring, and the Research Universe/Morning
+Research Brief UI never implies CourtListener coverage is exhaustive.
+
+**Consequences**
+- `court_docket.issuer_id` stays nullable specifically to support this
+  two-step discover-then-link flow — a docket search result can exist
+  transiently (via `search_dockets`) without ever becoming a linked,
+  monitored docket if a human/script never confirms the match.
+- A future milestone that wants broader automatic coverage (e.g. a licensed
+  PACER monitoring subscription, or a maintained party-name index) plugs in
+  as a new discovery mechanism feeding the same `link_docket` function —
+  `sync_one_docket`/`court_docket_service` need no changes.
+- `app.core.distress_rules.DOCKET_EXCLUDED_RULE_IDS` follows directly from
+  this same "a linked docket is already a confirmed case" premise: rules
+  designed for SEC filings' *ambiguous*-context detection (e.g. a bare
+  "chapter 11" mention that might mean the tax code) are actively wrong for
+  docket-entry text, where the case's chapter is never ambiguous — see
+  BUILD_LOG.md for the real, live-caught noise problem (83 near-duplicate
+  alerts from one docket's 429 routine entries) this exclusion fixes.
+
+**Future Revisit Recommendation**
+If a future milestone adds a licensed PACER monitoring subscription capable
+of real per-party alerting, revisit whether `link_court_dockets`'s curated
+step can be replaced or supplemented by that subscription's own discovery
+feed — `sync_one_docket` itself would not need to change, only what feeds
+it a linked `court_docket` row.

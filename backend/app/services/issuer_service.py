@@ -36,7 +36,7 @@ from app.schemas.issuer import (
     IssuerFinancialFactRow,
     IssuerSecurityRow,
 )
-from app.services import research_universe_service
+from app.services import court_docket_api_service, research_universe_service
 
 _RECENT_ACTIVITY_LIMIT = 15
 
@@ -195,6 +195,7 @@ def get_issuer_detail(db: Session, issuer_id: UUID) -> IssuerDetail | None:
     ]
 
     universe_memberships = research_universe_service.get_issuer_universe_memberships(db, issuer_id)
+    court_dockets = court_docket_api_service.list_dockets(db, issuer_id=issuer_id).dockets
 
     return IssuerDetail(
         issuer_id=issuer.id,
@@ -211,4 +212,5 @@ def get_issuer_detail(db: Session, issuer_id: UUID) -> IssuerDetail | None:
         data_sources=data_sources,
         recent_activity=activity[:_RECENT_ACTIVITY_LIMIT],
         universe_memberships=universe_memberships,
+        court_dockets=court_dockets,
     )

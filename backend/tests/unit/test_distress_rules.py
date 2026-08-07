@@ -5,7 +5,7 @@ No DB, no network — pure pattern matching against real-style filing text.
 
 from __future__ import annotations
 
-from app.core.distress_rules import match_rules
+from app.core.distress_rules import DOCKET_EXCLUDED_RULE_IDS, match_rules
 from app.core.types import EvidenceSeverity, EvidenceType
 
 
@@ -129,3 +129,128 @@ def test_excerpt_includes_surrounding_context() -> None:
     match = next(m for m in matches if m.rule_id == "phrase_event_of_default")
     assert "event of default" in match.excerpt.lower()
     assert len(match.excerpt) < len(text), "excerpt is a window, not the whole document"
+
+
+# Docket-specific rules (Milestone 7) — the same `match_rules` entry point
+# court docket entries share with SEC filing text (PLAN.md 24.4/section 4.5).
+# Text below matches real CourtListener docket-entry language patterns
+# confirmed live during Milestone 7 development (see BUILD_LOG.md), not
+# guessed at.
+
+
+def test_docket_chapter_11_voluntary_petition_matches_existing_sec_rule() -> None:
+    """A real CourtListener docket entry #1 description — deliberately
+    reuses the same `phrase_chapter_11_petition` rule SEC filings already
+    match; no separate docket rule engine is needed for this signal."""
+    text = (
+        "Chapter 11 Voluntary Petition Non-Individual Fee Amount $1738 "
+        "Filed by Diebold Holding Company, Inc.. (Argeroplos, Victoria) (Entered: 06/01/2023)"
+    )
+    matches = match_rules(form_type="Docket Entry", item_codes=None, text=text)
+
+    assert any(m.rule_id == "phrase_chapter_11_petition" for m in matches)
+    assert any(m.evidence_type is EvidenceType.CHAPTER_11 for m in matches)
+
+
+def test_docket_plan_confirmed_phrase() -> None:
+    text = "Order Confirming Debtors' Third Amended Joint Plan of Reorganization."
+    matches = match_rules(form_type="Docket Entry", item_codes=None, text=text)
+
+    assert any(
+        m.rule_id == "phrase_plan_confirmed" and m.evidence_type is EvidenceType.PLAN_CONFIRMED
+        for m in matches
+    )
+
+
+def test_docket_case_dismissed_phrase() -> None:
+    text = "Order Dismissing Chapter 11 Case entered by the Court."
+    matches = match_rules(form_type="Docket Entry", item_codes=None, text=text)
+
+    assert any(
+        m.rule_id == "phrase_case_dismissed" and m.evidence_type is EvidenceType.CASE_DISMISSED
+        for m in matches
+    )
+
+
+def test_docket_case_converted_to_chapter_7_phrase() -> None:
+    text = "Order granting motion to convert case to chapter 7."
+    matches = match_rules(form_type="Docket Entry", item_codes=None, text=text)
+
+    assert any(
+        m.rule_id == "phrase_case_converted_chapter_7"
+        and m.evidence_type is EvidenceType.CASE_CONVERTED
+        and m.severity is EvidenceSeverity.HIGH
+        for m in matches
+    )
+
+
+def test_docket_trustee_appointed_phrase() -> None:
+    text = "Notice of Appointment of Chapter 11 Trustee filed by the U.S. Trustee."
+    matches = match_rules(form_type="Docket Entry", item_codes=None, text=text)
+
+    assert any(
+        m.rule_id == "phrase_trustee_appointed"
+        and m.evidence_type is EvidenceType.TRUSTEE_APPOINTED
+        for m in matches
+    )
+
+
+def test_docket_claims_bar_date_phrase() -> None:
+    text = "Order Establishing Bar Date for Filing Proofs of Claim."
+    matches = match_rules(form_type="Docket Entry", item_codes=None, text=text)
+
+    assert any(
+        m.rule_id == "phrase_claims_bar_date"
+        and m.evidence_type is EvidenceType.CLAIMS_BAR_DATE_SET
+        for m in matches
+    )
+
+
+def test_exclude_rule_ids_suppresses_the_bare_mention_rule() -> None:
+    """Regression test for a real signal-to-noise problem caught live: an
+    active Chapter 11 case's real docket routinely references "the Chapter
+    11 Case(s)" in nearly every procedural entry's boilerplate — one real
+    429-entry docket produced 83 near-duplicate low-value alerts before
+    `court_docket_service` started passing `DOCKET_EXCLUDED_RULE_IDS` (see
+    BUILD_LOG.md)."""
+    text = "Notice of Appearance and Request for Notice Filed in the Chapter 11 Cases."
+
+    unfiltered = match_rules(form_type="Docket Entry", item_codes=None, text=text)
+    assert any(m.rule_id == "phrase_chapter_11_bare_mention" for m in unfiltered)
+
+    filtered = match_rules(
+        form_type="Docket Entry",
+        item_codes=None,
+        text=text,
+        exclude_rule_ids=DOCKET_EXCLUDED_RULE_IDS,
+    )
+    assert not any(m.rule_id == "phrase_chapter_11_bare_mention" for m in filtered)
+    assert filtered == []
+
+
+def test_exclude_rule_ids_does_not_suppress_a_strong_signal() -> None:
+    """The exclusion only removes the two ambiguous "bare mention" rules —
+    a genuinely strong docket-entry signal (e.g. a real petition or relief-
+    from-stay motion) still fires normally."""
+    text = "Receipt of Motion for Relief From Stay Filing Fee. Fee amount $188.00."
+
+    filtered = match_rules(
+        form_type="Docket Entry",
+        item_codes=None,
+        text=text,
+        exclude_rule_ids=DOCKET_EXCLUDED_RULE_IDS,
+    )
+    assert any(m.rule_id == "phrase_relief_from_stay" for m in filtered)
+
+
+def test_docket_relief_from_stay_phrase() -> None:
+    """A real docket-entry pattern confirmed live: 'Receipt of Motion for
+    Relief From Stay' (Diebold Nixdorf docket 23-90602)."""
+    text = "Receipt of Motion for Relief From Stay Filing Fee. Fee amount $188.00."
+    matches = match_rules(form_type="Docket Entry", item_codes=None, text=text)
+
+    assert any(
+        m.rule_id == "phrase_relief_from_stay"
+        and m.evidence_type is EvidenceType.RELIEF_FROM_STAY_MOTION
+        for m in matches
+    )

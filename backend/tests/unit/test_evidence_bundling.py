@@ -144,3 +144,64 @@ def test_primary_evidence_prefers_highest_severity() -> None:
 
 def test_empty_evidence_list_produces_no_bundles() -> None:
     assert group_evidence_into_bundles([]) == []
+
+
+def _docket_evidence(*, issuer_id: object, docket_entry_id: object) -> ResearchEvidence:
+    """Milestone 7: `docket_entry_id` is CourtListener evidence's own
+    concrete source pointer, checked by `_source_key` the same way
+    `filing_id` is for SEC EDGAR evidence."""
+    return ResearchEvidence(
+        id=uuid4(),
+        issuer_id=issuer_id,  # type: ignore[arg-type]
+        evidence_provider="courtlistener",
+        source_type="docket_entry",
+        filing_id=None,
+        docket_entry_id=docket_entry_id,  # type: ignore[arg-type]
+        evidence_type=EvidenceType.CHAPTER_11,
+        severity=EvidenceSeverity.HIGH,
+        source_section=None,
+        source_item=None,
+        matched_rule="phrase_chapter_11_petition",
+        evidence_excerpt="Chapter 11 Voluntary Petition Filed.",
+        evidence_start_offset=None,
+        evidence_end_offset=None,
+        confidence=0.9,
+        detection_method=DetectionMethod.DETERMINISTIC,
+        provenance_id=uuid4(),
+        created_at=datetime.now(UTC),
+        review_status=ReviewStatus.UNREVIEWED,
+        reviewed_by=None,
+        reviewed_at=None,
+    )
+
+
+def test_docket_entries_group_by_docket_entry_id_not_all_into_one_bundle() -> None:
+    """Regression test for a real bug caught before it shipped: with only
+    `filing_id` checked, every docket-sourced evidence item (which always
+    has `filing_id=None`) collapsed into a single "none" bucket per issuer,
+    merging unrelated docket entries into one alert. Each distinct
+    `docket_entry_id` must produce its own bundle, exactly like each
+    distinct `filing_id` does for SEC evidence."""
+    entry_1 = uuid4()
+    entry_2 = uuid4()
+    e1 = _docket_evidence(issuer_id=_ISSUER_A, docket_entry_id=entry_1)
+    e2 = _docket_evidence(issuer_id=_ISSUER_A, docket_entry_id=entry_2)
+
+    bundles = group_evidence_into_bundles([e1, e2])
+
+    assert len(bundles) == 2
+    assert {b.bundle_key for b in bundles} == {
+        f"courtlistener:docket_entry:{entry_1}",
+        f"courtlistener:docket_entry:{entry_2}",
+    }
+
+
+def test_two_evidence_items_from_same_docket_entry_group_into_one_bundle() -> None:
+    entry_id = uuid4()
+    e1 = _docket_evidence(issuer_id=_ISSUER_A, docket_entry_id=entry_id)
+    e2 = _docket_evidence(issuer_id=_ISSUER_A, docket_entry_id=entry_id)
+
+    bundles = group_evidence_into_bundles([e1, e2])
+
+    assert len(bundles) == 1
+    assert len(bundles[0].evidence) == 2

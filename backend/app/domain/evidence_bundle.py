@@ -42,18 +42,31 @@ class EvidenceBundle(BaseModel):
         )[0]
 
 
+def _source_key(item: ResearchEvidence) -> str:
+    """Each provider's own concrete source pointer (`filing_id` for SEC EDGAR,
+    `docket_entry_id` for CourtListener) — checked in a fixed, provider-neutral
+    order, exactly the "a future evidence source contributes its own key
+    component" extension this function's docstring already anticipated
+    before Milestone 7 existed."""
+    if item.filing_id is not None:
+        return str(item.filing_id)
+    if item.docket_entry_id is not None:
+        return str(item.docket_entry_id)
+    return "none"
+
+
 def group_evidence_into_bundles(evidence: list[ResearchEvidence]) -> list[EvidenceBundle]:
     """Group evidence into bundles keyed by (issuer, provider, source_type, source).
 
-    Today `filing_id` is the only real source-specific key, so this produces
-    one bundle per filing. The grouping key itself is generic — a future
-    evidence source contributes its own key component without changing this
-    function's shape.
+    Today `filing_id`/`docket_entry_id` are the only real source-specific
+    keys, so this produces one bundle per filing or per docket entry. The
+    grouping key itself is generic — a future evidence source contributes
+    its own key component (`_source_key`) without changing this function's
+    shape.
     """
     groups: dict[tuple[UUID, str, str, str], list[ResearchEvidence]] = {}
     for item in evidence:
-        source_key = str(item.filing_id) if item.filing_id is not None else "none"
-        key = (item.issuer_id, item.evidence_provider, item.source_type, source_key)
+        key = (item.issuer_id, item.evidence_provider, item.source_type, _source_key(item))
         groups.setdefault(key, []).append(item)
 
     bundles: list[EvidenceBundle] = []

@@ -79,6 +79,7 @@ class ResearchEvidenceRow(BaseModel):
     evidence_provider: str
     source_type: str
     filing_id: UUID | None
+    docket_entry_id: UUID | None
     evidence_type: EvidenceType
     severity: EvidenceSeverity
     source_section: str | None

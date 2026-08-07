@@ -48,63 +48,20 @@ file beyond a pointer.
 
 # Product Philosophy
 
-Full detail lives in `docs/VISION.md` (created after Milestone 7 completes —
-see Next Immediate Goal). This section is a short, execution-relevant summary
-only; `PLAN.md` remains the roadmap, not the vision document.
+Full detail — why Nexus exists, target users, product philosophy, the
+Research Operating System vision, AI philosophy, provider philosophy,
+long-term workflow, and future product direction — lives in
+**`docs/VISION.md`**, the permanent, authoritative source. `PLAN.md` stays
+the execution roadmap (architecture, data model, milestone status) and does
+not duplicate it here.
 
 As of 2026-08-06, this project is treated as the foundation of a commercial
 institutional research platform for distressed-credit investment
-professionals, not an interview/demo artifact. That doesn't relax any
-existing rule in this document or `CLAUDE.md` — provenance discipline, real
-providers over fabricated data, and the milestone-by-milestone stop-and-wait
-workflow all apply with, if anything, a higher bar than before.
-
-**The test for every feature.** Before scoping any feature: *does this
-reduce manual work for an investment professional while increasing
-confidence in the underlying research?* Technology is never added because it
-is interesting — only because it improves an analyst's actual daily
-workflow. When a milestone's design is ambiguous, resolve the ambiguity
-toward how a distressed-credit team actually works, not toward what is
-technically convenient.
-
-**The fact/AI boundary (already enforced by the provenance model in §4, now
-also a permanent product commitment).** Facts are created only by verified
-providers (SEC, CourtListener, OpenFIGI, FRED, TRACE, ratings, Bloomberg, and
-future licensed providers) — never by AI. Canonical facts produce Research
-Evidence (§24.3); Research Evidence produces Alerts. AI explains,
-summarizes, classifies, compares, prioritizes, and connects already-verified
-facts — it never invents one. Under uncertainty: prefer honesty over
-completeness, never fabricate, never silently infer, never hide uncertainty.
-This is the same discipline ADR-018's evidence-first design and the
-Milestone 6.5 AI evidence-review layer's fail-closed behavior already
-encode; it now also governs every future AI-touching feature (Universal
-Search ranking, the AI Research Assistant, investment memo generation).
-
-**Nexus is a research operating system, organized around one analyst
-workflow, not a set of independent pages:**
-
-```
-Morning Research Brief → Research Universe → Issuer → Capital Structure
-   → Evidence → Supporting Documents → Research Notes → Investment Decision
-```
-
-Every future feature should be framed against where it sits in this chain,
-not designed as an isolated page. A new provider, a new page, or a new AI
-capability that doesn't map onto a step in this chain is a signal to
-reconsider its scope before building it.
-
-**Provider integration rule.** Every provider must answer a specific
-business question an analyst actually asks — SEC ("what did the company
-disclose?"), CourtListener ("what happened in court?"), OpenFIGI ("what
-security is this?"), TRACE ("how is the market trading this instrument?"),
-FRED ("what macro environment surrounds this issuer?"), Bloomberg ("what is
-today's market data?"). A provider is never integrated simply because an API
-exists.
-
-**Long-term commitment.** The final Version 1 milestone — Document
-Intelligence, RAG, Embeddings, and Agentic Research (§18 step 13, the AI
-Research Assistant) — is mandatory scope, not an optional stretch goal, and
-must not be permanently deferred even though it is scheduled last.
+professionals, not an interview/demo artifact — established after Milestone
+6.5, formalized into `docs/VISION.md` after Milestone 7. That doesn't relax
+any existing rule in this document or `CLAUDE.md`; if anything, it raises
+the bar for provenance discipline, real providers over fabricated data, and
+the milestone-by-milestone stop-and-wait workflow.
 
 ---
 
@@ -112,13 +69,13 @@ must not be permanently deferred even though it is scheduled last.
 
 | Field | Value |
 |---|---|
-| **Overall Progress** | ~41% — Milestone 6.5 of 16 complete (6.5 inserted, approved) |
-| **Current Milestone** | Milestone 7 — CourtListener adapter + docket view (§18 step 7) (in progress) |
-| **Current Status** | Milestone 6.5 is complete (see its entry below, `BUILD_LOG.md`, and ADR-016/017/018). Milestone 6.5 approved 2026-08-06; a Product Philosophy summary was added to this document (see above) and Milestone 7 — real CourtListener/RECAP docket data wired into the existing evidence/alert pipeline per ADR-018's already-documented forward path — started immediately after, per explicit approved direction. |
-| **Last Updated** | 2026-08-06 |
+| **Overall Progress** | ~44% — Milestone 7 of 16 complete (6.5 inserted, approved) |
+| **Current Milestone** | Milestone 7 — CourtListener adapter + docket view (§18 step 7) (complete) |
+| **Current Status** | Milestone 7 is complete — see its entry above and ADR-019. 3 real CourtListener/RECAP dockets (Diebold Nixdorf, EchoStar/Hughes Satellite Systems Corporation, Office Properties Income Trust) live-verified and linked to already-seeded real issuers; 665 real docket entries ingested; 28 real evidence records and 27 real alerts produced through the same provider-agnostic evidence/alert pipeline SEC filings already use. The Morning Research Brief now shows 55 combined real alerts across two independent real providers (SEC EDGAR + CourtListener). |
+| **Last Updated** | 2026-08-07 |
 | **Current Git Branch** | main |
-| **Latest Commit** | `9554860` — docs: record Milestone 6.5 push results in BUILD_LOG.md |
-| **Next Milestone** | Milestone 7 (in progress); Milestone 8 — Watchlists (§18 step 8) is next after 7, unstarted |
+| **Latest Commit** | `9554860` — docs: record Milestone 6.5 push results in BUILD_LOG.md (Milestone 7's commit hash recorded here in a follow-up docs commit, per established repo convention) |
+| **Next Milestone** | Milestone 8 — Watchlists (§18 step 8), unstarted, pending explicit approval |
 
 ---
 
@@ -137,7 +94,7 @@ milestone completes; it is not itself a log (see `BUILD_LOG.md` for that).
 | 5 | OpenFIGI + FRED adapters | Complete | 2026-08-06 | `a7f11f2` | Migration `0005` (`security.figi` unique index, `fred_series_registry`, `fred_observation`) applied and round-tripped live. Real, permanently-committed proof: five real Apple corporate bonds (real FIGI + maturity/coupon via OpenFIGI) plus real, live-synced SOFR and ICE BofA HY OAS FRED observations. Credit Universe gained a "Current Benchmark Rate" column and a Market Context panel — both real, reported facts, not a blended calculation. Found and fixed two real bugs: `conftest.py`'s separate test engine had the same pgbouncer/psycopg3 issue as Milestone 4's `app/db/session.py` (fixed independently there too), and OpenFIGI's unauthenticated tier hit a live 429 under back-to-back live tests (fixed with a longer test-client throttle + optional API-key header wiring). 166 backend tests pass (134→166), 3 new frontend tests pass (26→29). |
 | 6 | Issuer detail page + Capital Structure page/model | Complete | 2026-08-06 | `2262e7c` | Migration `0006` (`capital_structure_position`) applied and round-tripped live. Real, permanently-committed proof: a new full-stack synthetic issuer (Cobalt Ridge Energy Corp, 8 layers, real illustrative recovery waterfall against a stated EV) plus reported capital-structure layers for all 8 Milestone 4 loan issuers. Issuer Detail (`IssuerPage.tsx`) is the primary research workspace, organized around analyst questions rather than tables; Capital Structure renders as an embedded section, not a separate page, per this milestone's explicit brief. 204 backend tests pass (166→204), 9 new frontend tests pass (29→38). |
 | 6.5 | Research Universes + Overnight Distress Filing Monitor (inserted, approved — see §24) | Complete | 2026-08-06 | `4900162` | Migration `0007` (`collection`, `collection_membership`, `sec_filing`, `filing_monitor_run`, `research_evidence`, `alert_event`) applied and round-tripped live. Real, permanently-committed proof: 23 real SEC-verified issuers (23 accepted / 7 rejected of 30 candidates — RAD/MNK/YELL/BIG/FYBR/SAVE/COMM excluded, none resolvable in SEC's live `company_tickers.json`) organized into 15 Research Universes (14 distress-oriented + Investment Grade Benchmarks, kept visually and structurally separate). A live baseline run + a real, explicitly-labeled 60-day Historical Backfill Demo produced 85 real `sec_filing` rows, 83 `research_evidence` rows, and 28 real `alert_event` rows (4 high / 5 medium / 19 low severity; 0 deterministic-only / 28 AI-reviewed by live Anthropic calls), with zero run errors. AI review demonstrably worked as designed: real high-severity Chapter 11 events (EchoStar/DISH subsidiaries, Office Properties Income Trust) were correctly flagged high, while routine "chapter 11" mentions in benign contexts (JPMorgan tax-code reference, Johnson & Johnson historical subsidiary dismissal, Ford/Microsoft boilerplate) were correctly downgraded to low severity with honest "no distress" wording rather than false alarms. Provider-specific AI credential config (ADR-017) replaced the unused generic `LLM_API_KEY`. 274 backend tests pass (204→274, +70), 61 frontend tests pass (38→61, +23) across 11 files. Found and fixed two genuine test-design defects during this milestone (a CIK/ticker false-positive substring-match bug in the seed script's issuer resolver — corrected with word-boundary matching and cleaned up live; and 5 integration tests whose fake test doubles weren't CIK-scoped, which broke once real seed data existed). Full live browser walkthrough completed: Research Universes (benchmark separation), Morning Research Brief (real alerts, severity filter, evidence expansion with real excerpts), drill-down into Issuer Detail (Research Universe Memberships section), Credit Universe filtered by universe (chip, real Apple securities returned for Investment Grade Benchmarks). See ADR-016/017/018. |
-| 7 | CourtListener adapter + docket view | In Progress | — | — | |
+| 7 | CourtListener adapter + docket view | Complete | 2026-08-07 | `9554860` (hash recorded in follow-up commit) | Migrations `0008` (`court_docket`, `court_docket_entry`, `docket_document`, `research_evidence.docket_entry_id`) and `0009` (corrective — see Problems Encountered) applied and round-tripped live. Real, permanently-committed proof: 3 real CourtListener/RECAP dockets live-searched, live-verified by exact `courtlistener_docket_id` match, and linked to 3 already-seeded real issuers with independently-confirmed real Chapter 11 events (Diebold Nixdorf, EchoStar/Hughes Satellite Systems Corporation, Office Properties Income Trust) — 665 real docket entries ingested (429 + 111 + 125), 28 `research_evidence` rows, 27 `alert_event` rows (24 high / 2 medium / 1 low), all AI-reviewed, all correctly wired into the same provider-agnostic evidence/alert pipeline ADR-018 anticipated before this milestone existed (`evidence_provider=courtlistener`, no `alert_event` schema change). Combined Morning Research Brief now shows 55 total alerts across both real providers (28 SEC + 27 CourtListener). Docket discovery is a curated, live-verified linking step, not an automatic per-issuer feed like SEC filings — see ADR-019 for why. 300 backend tests pass (274→300, +26), 67 frontend tests pass (61→67, +6) across 12 files. Found and fixed three genuine live-caught issues (see Problems Encountered): an Alembic `checkconstraint_byname` blind spot requiring a corrective migration; a real signal-to-noise problem where routine Chapter 11 case boilerplate flooded evidence via the ambiguous-context "bare mention" rule (fixed with `DOCKET_EXCLUDED_RULE_IDS`); and an unbounded Anthropic SDK timeout that let a real, severely degraded CourtListener response (66.7s for a single page, confirmed via isolated diagnostic) stall a sync run with no error. Full live browser walkthrough completed: Issuer Detail's new "What happened in court?" section (real docket header + entries, honest "(no description on file)"/"Not on RECAP" for genuinely incomplete real PACER data), Morning Research Brief showing cross-provider real alerts together. See ADR-019. |
 | 8 | Watchlists (10 coverage + 1 benchmark) + comparison view | Not Started | — | — | |
 | 9 | Research notes/documents + audit events | Not Started | — | — | |
 | 10 | Alerts (rules, engine, panel/page) | Not Started | — | — | |
@@ -169,6 +126,7 @@ already made in §1–23; will grow with genuine shortcuts taken during implemen
 | TD-009 | `providers/fred/provider.py`'s `sync_series` pulls only the most recent `limit` observations (default 10), not a full historical backfill to a series' `observation_start` — a deliberate first-vertical-slice scope choice, not an oversight | Low | Add a bulk/historical sync path once a feature actually needs trend history (e.g. a rate chart) rather than just the latest value | Open (deferred by design, `backend/app/providers/fred/provider.py`) |
 | TD-010 | Real issuers (Apple Inc.) have no `capital_structure_position` rows — neither SEC EDGAR's company-facts API nor OpenFIGI's search endpoint reports seniority/lien position/ranking for a specific instrument (same underlying gap as TD-008), so this milestone deliberately did not force real securities into a stack layer it can't honestly support. The Issuer Detail page falls back to a flat Securities table for any issuer with no capital structure layers on file, so nothing is hidden — it just isn't organized into a priority stack yet | Medium | Populate real capital structure layers once a provider that actually reports lien/seniority/ranking data exists (a licensed provider, Milestone 14, or a future SEC dimensional-XBRL parse) | Open (real external data limitation, not a design shortcut, `backend/app/synthetic/capital_structure_generator.py`) |
 | TD-011 | Issuer Detail's pre-existing "What filings support this?" and "What changed recently?" sections (`issuer_service.py`, Milestone 3) are driven solely by `financial_fact`-linked provenance — they were never extended to also surface the new `sec_filing`/`research_evidence`/`alert_event` rows Milestone 6.5 introduces. Live-verified during the Milestone 6.5 browser walkthrough: EchoStar Corp has 2 real `sec_filing` rows and 2 real `alert_event` rows (visible on the Morning Research Brief, with a working drill-down link into this same Issuer Detail page), yet its own "What filings support this?" section reads "No filings on file for this issuer yet" — correct for the financial-fact-evidentiary question that section actually answers (EchoStar was seeded identity-only, no XBRL pull), but easy to misread as "this issuer has no SEC filings at all." Not a scope violation — PLAN.md §24.9 committed only to a new, separate "Research Universe Memberships" section (present and correct) — but a real UX gap worth closing | Low | Extend `issuer_service.get_issuer_detail` to include `sec_filing`/`alert_event` activity in "What filings support this?"/"What changed recently?", or re-label the existing sections to make their financial-fact scope explicit, once Issuer Detail has a real design pass for it | Open (discovered during Milestone 6.5 browser walkthrough, not a regression) |
+| TD-012 | `app.providers.courtlistener.provider.sync_docket_entries` always re-walks a docket's full pagination from CourtListener on every call — it has no "resume from where a partial run left off" mode. A docket already fully synced re-fetches every page again on the next run (harmless but slow — idempotent inserts are skipped, but the live API calls themselves are not), and a run interrupted mid-docket (e.g. a network stall) loses that docket's entire in-progress pagination on rollback, not just the unsynced remainder. Real, live-observed cost during Milestone 7: a 429-entry docket's ~22-page re-sync took over 20 minutes at CourtListener's live (and, at the time, unusually slow — 60-70s/page) response rate | Low | Track a per-docket pagination cursor (e.g. the last successfully processed page URL or `courtlistener_entry_id`) so a re-run resumes instead of restarting, once a real caller needs frequent incremental re-sync rather than the current occasional-backfill usage pattern | Open (deferred by design, `backend/app/providers/courtlistener/provider.py`) |
 
 ---
 
@@ -212,20 +170,20 @@ suite passes; `PLAN.md`/`BUILD_LOG.md`/ADR-016/017/018 are updated. See §24.10
 for the full completion record.
 
 **Milestone 7 (CourtListener adapter + docket view, §18 step 7) is
-approved and starting now.** Per the frozen §4.5 schema (`court_docket`,
-`court_docket_entry`, `docket_document`) and §15 (PACER handling), plus
-ADR-018's already-documented forward path ("Milestone 7 adds
-`evidence_provider = courtlistener`, its own nullable source FK on
-`research_evidence`, and its own source-describer function injected into
-`alert_synthesis_service` — no schema change to `alert_event`"): real
-CourtListener/RECAP docket data for real issuers, wired into the existing
-evidence/alert pipeline exactly as ADR-018 anticipated, not a new parallel
-alerting mechanism. **After Milestone 7 completes**, create
-`docs/VISION.md` as the permanent, authoritative source for why Nexus
-exists, target users, product philosophy, the Research Operating System
-vision, AI philosophy, provider philosophy, long-term workflow, and future
-product direction — at that point this Product Philosophy section is
-trimmed to a pointer at `docs/VISION.md` rather than duplicating it.
+complete.** Per the frozen §4.5 schema (`court_docket`, `court_docket_entry`,
+`docket_document`) and §15 (PACER handling), plus ADR-018's already-documented
+forward path: 3 real CourtListener/RECAP dockets (Diebold Nixdorf, EchoStar/
+Hughes Satellite Systems Corporation, Office Properties Income Trust)
+live-verified and linked to already-seeded real issuers; 665 real docket
+entries ingested; 28 real evidence records and 27 real alerts produced
+through the exact evidence/alert pipeline ADR-018 anticipated
+(`evidence_provider = courtlistener`, no `alert_event` schema change).
+Docket discovery is a curated, live-verified linking step, not an automatic
+per-issuer feed like SEC filings — see ADR-019. `docs/VISION.md` has been
+created as the permanent, authoritative source for why Nexus exists, target
+users, product philosophy, the Research Operating System vision, AI
+philosophy, provider philosophy, long-term workflow, and future product
+direction; this Product Philosophy section above now only points to it.
 
 **Milestone 8 (Watchlists, §18 step 8) has not started**, and awaits
 explicit approval before beginning, per the same stop-and-wait rule that

@@ -20,6 +20,7 @@ import {
 import { ApiError } from "../api/client";
 import type { IssuerActivityCategory } from "../api/issuer";
 import { CapitalStructureStack } from "../components/CapitalStructureStack";
+import { CourtDocketSection } from "../components/CourtDocketSection";
 import { ProvenanceBadge } from "../components/ProvenanceBadge";
 import { SyntheticDataBadge } from "../components/SyntheticDataBadge";
 import { useCapitalStructure } from "../queries/useCapitalStructure";
@@ -247,6 +248,11 @@ export function IssuerPage(): ReactElement {
             ))}
           </Stack>
         )}
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <SectionHeading>What happened in court?</SectionHeading>
+        <CourtDocketSection dockets={issuer.court_dockets} />
       </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>

@@ -318,6 +318,66 @@ _PHRASE_RULES: tuple[_PhraseRule, ...] = (
         severity=EvidenceSeverity.LOW,
         confidence=0.5,
     ),
+    # Docket-specific rules added in Milestone 7 — real docket-entry
+    # language patterns confirmed live against CourtListener's actual RECAP
+    # data (BUILD_LOG.md), not guessed at. Applied through the same
+    # `match_rules` entry point court docket entries share with SEC filing
+    # text (both are just English prose to this layer) — no separate rule
+    # engine needed.
+    _PhraseRule(
+        rule_id="phrase_plan_confirmed",
+        pattern=re.compile(
+            r"(order confirming.{0,30}plan|confirmation of.{0,20}plan"
+            r"|plan.{0,20}(was |is |has been )?confirmed)",
+            re.IGNORECASE,
+        ),
+        evidence_type=EvidenceType.PLAN_CONFIRMED,
+        severity=EvidenceSeverity.MEDIUM,
+        confidence=0.75,
+    ),
+    _PhraseRule(
+        rule_id="phrase_case_dismissed",
+        pattern=re.compile(
+            r"(order dismissing|case.{0,10}(is |was )?dismissed"
+            r"|dismissal of.{0,20}(case|petition))",
+            re.IGNORECASE,
+        ),
+        evidence_type=EvidenceType.CASE_DISMISSED,
+        severity=EvidenceSeverity.MEDIUM,
+        confidence=0.7,
+    ),
+    _PhraseRule(
+        rule_id="phrase_case_converted_chapter_7",
+        pattern=re.compile(
+            r"convert(ed|ing)?.{0,30}chapter 7|conversion to chapter 7", re.IGNORECASE
+        ),
+        evidence_type=EvidenceType.CASE_CONVERTED,
+        severity=EvidenceSeverity.HIGH,
+        confidence=0.85,
+    ),
+    _PhraseRule(
+        rule_id="phrase_trustee_appointed",
+        pattern=re.compile(
+            r"(appointment of.{0,20}trustee|trustee.{0,20}(is |was )?appointed)", re.IGNORECASE
+        ),
+        evidence_type=EvidenceType.TRUSTEE_APPOINTED,
+        severity=EvidenceSeverity.HIGH,
+        confidence=0.8,
+    ),
+    _PhraseRule(
+        rule_id="phrase_claims_bar_date",
+        pattern=re.compile(r"(claims )?bar date", re.IGNORECASE),
+        evidence_type=EvidenceType.CLAIMS_BAR_DATE_SET,
+        severity=EvidenceSeverity.LOW,
+        confidence=0.5,
+    ),
+    _PhraseRule(
+        rule_id="phrase_relief_from_stay",
+        pattern=re.compile(r"relief from.{0,10}(the )?(automatic )?stay", re.IGNORECASE),
+        evidence_type=EvidenceType.RELIEF_FROM_STAY_MOTION,
+        severity=EvidenceSeverity.MEDIUM,
+        confidence=0.55,
+    ),
 )
 
 
@@ -327,7 +387,31 @@ def _excerpt_window(text: str, match: re.Match[str]) -> tuple[str, int, int]:
     return text[start:end].strip(), start, end
 
 
-def match_rules(*, form_type: str, item_codes: str | None, text: str) -> list[RuleMatch]:
+# Rules deliberately excluded from docket-entry text (PLAN.md sections 4.5,
+# 15, Milestone 7). Their whole purpose is flagging an *ambiguous* mention
+# in a context where distress status is otherwise unknown (e.g. "chapter
+# 11" appearing in an SEC filing might mean the Internal Revenue Code, not
+# bankruptcy). A docket entry never has that ambiguity — this codebase only
+# ever syncs entries for a docket already confirmed to *be* the bankruptcy
+# case (`app.scripts.link_court_dockets` requires live verification before
+# linking). Live-caught real signal-to-noise problem, not a hypothetical:
+# an active Chapter 11 case's docket routinely references "the Chapter 11
+# Case"/"Chapter 11 Cases" in the boilerplate of nearly every procedural
+# entry (hearing notices, receipts, appearances) — applying the bare-mention
+# rule there produced 83 near-duplicate low-value alerts from one real
+# docket's 429 entries before this exclusion existed (see BUILD_LOG.md).
+DOCKET_EXCLUDED_RULE_IDS: frozenset[str] = frozenset(
+    {"phrase_chapter_11_bare_mention", "phrase_going_concern_bare_mention"}
+)
+
+
+def match_rules(
+    *,
+    form_type: str,
+    item_codes: str | None,
+    text: str,
+    exclude_rule_ids: frozenset[str] = frozenset(),
+) -> list[RuleMatch]:
     """Run every Layer 1 rule against one filing's item codes + extracted
     text. A filing can trigger several rules — the caller (`filing_monitor_service`)
     decides how to aggregate matches into evidence/alerts, this function only
@@ -337,11 +421,18 @@ def match_rules(*, form_type: str, item_codes: str | None, text: str) -> list[Ru
     rule only makes sense for 8-K filings, which is naturally already true
     since only 8-Ks carry `items`) — no rule currently filters on it, kept in
     the signature so the caller doesn't need to change when one does.
+
+    `exclude_rule_ids` lets a caller opt specific rule ids out entirely —
+    used by `app.services.court_docket_service` to exclude
+    `DOCKET_EXCLUDED_RULE_IDS` (see that constant's docstring); empty by
+    default so every existing SEC-filing caller is unaffected.
     """
     matches: list[RuleMatch] = []
 
     codes = {code.strip() for code in (item_codes or "").split(",") if code.strip()}
     for item_rule in _ITEM_CODE_RULES:
+        if item_rule.rule_id in exclude_rule_ids:
+            continue
         if item_rule.item_code in codes:
             matches.append(
                 RuleMatch(
@@ -358,6 +449,8 @@ def match_rules(*, form_type: str, item_codes: str | None, text: str) -> list[Ru
             )
 
     for phrase_rule in _PHRASE_RULES:
+        if phrase_rule.rule_id in exclude_rule_ids:
+            continue
         for m in phrase_rule.pattern.finditer(text):
             if phrase_rule.exclude_if_nearby is not None:
                 window_start = max(0, m.start() - _EXCERPT_CONTEXT_CHARS)

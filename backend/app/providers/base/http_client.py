@@ -44,6 +44,9 @@ class ThrottledHttpClient:
         min_interval_seconds: float = 0.15,
         timeout_seconds: float = 30.0,
         extra_headers: dict[str, str] | None = None,
+        retry_on_status: frozenset[int] = frozenset(),
+        max_retries: int = 0,
+        default_retry_after_seconds: float = 15.0,
     ) -> None:
         if not user_agent:
             raise ValueError("user_agent is required for provider HTTP requests")
@@ -53,16 +56,39 @@ class ThrottledHttpClient:
             headers.update(extra_headers)
         self._client = httpx.Client(timeout=timeout_seconds, headers=headers)
         self._last_request_at: float | None = None
+        # Opt-in: every existing caller (SEC EDGAR/OpenFIGI/FRED) passes
+        # neither, so `get()` raises on the first non-2xx exactly as before.
+        # Added for CourtListener (Milestone 7), whose real, live-observed
+        # throttle (429 "Rate limit exceeded: 10/min") this project's own
+        # conservative per-request interval doesn't always avoid under a
+        # shared token.
+        self._retry_on_status = retry_on_status
+        self._max_retries = max_retries
+        self._default_retry_after_seconds = default_retry_after_seconds
 
     def get(self, url: str) -> HttpResponse:
-        self._throttle()
-        response = self._client.get(url)
-        response.raise_for_status()
-        return HttpResponse(
-            raw_bytes=response.content,
-            content_type=response.headers.get("content-type", "application/octet-stream"),
-            status_code=response.status_code,
-        )
+        for attempt in range(self._max_retries + 1):
+            self._throttle()
+            response = self._client.get(url)
+            if response.status_code in self._retry_on_status and attempt < self._max_retries:
+                time.sleep(self._retry_after_seconds(response))
+                continue
+            response.raise_for_status()
+            return HttpResponse(
+                raw_bytes=response.content,
+                content_type=response.headers.get("content-type", "application/octet-stream"),
+                status_code=response.status_code,
+            )
+        raise AssertionError("unreachable: loop always returns or raises")
+
+    def _retry_after_seconds(self, response: httpx.Response) -> float:
+        header_value = response.headers.get("Retry-After")
+        if header_value is not None:
+            try:
+                return max(0.0, float(header_value))
+            except ValueError:
+                pass
+        return self._default_retry_after_seconds
 
     def post_json(self, url: str, json_body: object) -> HttpResponse:
         """POST with a JSON body (e.g. OpenFIGI's search/mapping endpoints,

@@ -7,6 +7,7 @@ import type {
   Seniority,
   TransformationType,
 } from "./creditUniverse";
+import type { CourtDocketRow } from "./courtDocket";
 import type { IssuerUniverseMembership } from "./researchUniverse";
 
 /**
@@ -94,6 +95,10 @@ export interface IssuerDetail {
    * above: membership is a coverage decision, never a current-status
    * assertion (PLAN.md 24.1). */
   universe_memberships: IssuerUniverseMembership[];
+  /** Milestone 7 — real, linked CourtListener dockets ("what happened in
+   * court?"), empty for the common case of an issuer with no known
+   * bankruptcy/litigation docket on file. */
+  court_dockets: CourtDocketRow[];
 }
 
 export async function fetchIssuerDetail(issuerId: string): Promise<IssuerDetail> {

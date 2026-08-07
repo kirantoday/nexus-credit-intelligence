@@ -2,11 +2,12 @@
 
 Generalized — **not** `distress_evidence`. Represents any research signal,
 not only SEC-filing-derived distress signals: `evidence_provider` names which
-provider produced it (`sec_edgar` today; CourtListener/FRED/ratings/macro
-providers add their own value later without a table rename). `filing_id` is
-this milestone's one concrete, FK-enforced source pointer — future providers
-add their own nullable source-specific FK the same way (TD-007/ADR-015
-precedent), rather than a premature polymorphic association.
+provider produced it (`sec_edgar`, `courtlistener` today; FRED/ratings/macro
+providers add their own value later without a table rename). `filing_id`/
+`docket_entry_id` are each provider's own concrete, FK-enforced,
+nullable source pointer — future providers add their own nullable
+source-specific FK the same way (TD-007/ADR-015 precedent), rather than a
+premature polymorphic association.
 """
 
 from __future__ import annotations
@@ -46,6 +47,7 @@ class ResearchEvidence(Base):
         ),
         Index("ix_research_evidence_issuer_id", "issuer_id"),
         Index("ix_research_evidence_filing_id", "filing_id"),
+        Index("ix_research_evidence_docket_entry_id", "docket_entry_id"),
         Index("ix_research_evidence_provenance_id", "provenance_id"),
     )
 
@@ -59,6 +61,9 @@ class ResearchEvidence(Base):
     source_type: Mapped[str] = mapped_column(Text, nullable=False)
     filing_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("sec_filing.id"), nullable=True
+    )
+    docket_entry_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("court_docket_entry.id"), nullable=True
     )
     evidence_type: Mapped[str] = mapped_column(Text, nullable=False)
     severity: Mapped[str] = mapped_column(Text, nullable=False)

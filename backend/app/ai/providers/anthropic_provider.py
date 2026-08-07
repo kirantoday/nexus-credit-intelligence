@@ -11,10 +11,22 @@ import anthropic
 
 from app.ai.providers.base import CompletionRequest, CompletionResponse
 
+# Live-caught real gap (Milestone 7, see BUILD_LOG.md): every HTTP-based
+# provider client in this codebase (SEC/OpenFIGI/FRED/CourtListener) sets an
+# explicit, bounded `timeout_seconds` via `ThrottledHttpClient`. The
+# Anthropic SDK client had none, defaulting to its own library default
+# (several minutes) — a real overnight docket sync stalled with no error and
+# no progress for 25+ minutes on what looked like a hung AI-review call, with
+# nothing in this codebase bounding it. 60s matches the timeout this
+# milestone already set for CourtListener, and is generous for a single
+# completion call that Milestone 6.5's live testing consistently finished in
+# a few seconds.
+_REQUEST_TIMEOUT_SECONDS = 60.0
+
 
 class AnthropicProvider:
     def __init__(self, *, api_key: str, model: str) -> None:
-        self._client = anthropic.Anthropic(api_key=api_key)
+        self._client = anthropic.Anthropic(api_key=api_key, timeout=_REQUEST_TIMEOUT_SECONDS)
         self._model = model
 
     def complete(self, request: CompletionRequest) -> CompletionResponse:

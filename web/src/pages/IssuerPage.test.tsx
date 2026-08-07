@@ -5,10 +5,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { IssuerPage } from "./IssuerPage";
 import * as capitalStructureApi from "../api/capitalStructure";
+import * as courtDocketApi from "../api/courtDocket";
 import * as issuerApi from "../api/issuer";
 import { ApiError } from "../api/client";
 import type { IssuerDetail } from "../api/issuer";
 import type { CapitalStructureResponse } from "../api/capitalStructure";
+import type { CourtDocketDetail, CourtDocketRow } from "../api/courtDocket";
 
 function renderIssuerPage(issuerId = "iss-1"): void {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -44,6 +46,7 @@ const BASE_ISSUER: IssuerDetail = {
   ],
   recent_activity: [],
   universe_memberships: [],
+  court_dockets: [],
 };
 
 const EMPTY_CAPITAL_STRUCTURE: CapitalStructureResponse = {
@@ -155,6 +158,69 @@ describe("IssuerPage", () => {
       expect(screen.getByText("Revolving Credit Facility (drawn)")).toBeInTheDocument();
     });
     expect(screen.queryByText("Securities on file")).not.toBeInTheDocument();
+  });
+
+  it("shows the empty state when the issuer has no court docket", async () => {
+    vi.spyOn(issuerApi, "fetchIssuerDetail").mockResolvedValue(BASE_ISSUER);
+    vi.spyOn(capitalStructureApi, "fetchCapitalStructure").mockResolvedValue(
+      EMPTY_CAPITAL_STRUCTURE,
+    );
+
+    renderIssuerPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("What happened in court?")).toBeInTheDocument();
+    });
+    expect(screen.getByText("No court docket on file for this issuer.")).toBeInTheDocument();
+  });
+
+  it("renders a linked court docket and its entries", async () => {
+    const docket: CourtDocketRow = {
+      id: "docket-1",
+      issuer_id: "iss-1",
+      issuer_legal_name: "Cobalt Ridge Energy Corp",
+      courtlistener_docket_id: 67460054,
+      court: "United States Bankruptcy Court, S.D. Texas",
+      docket_number: "23-90602",
+      case_name: "Cobalt Ridge Holding Company, Inc.",
+      nature_of_suit: null,
+      chapter: "11",
+      date_filed: "2023-06-01",
+      courtlistener_url: "https://www.courtlistener.com/docket/67460054/",
+      entry_count: 1,
+      created_at: "2026-08-06T12:00:00Z",
+    };
+    const detail: CourtDocketDetail = {
+      docket,
+      entries: [
+        {
+          id: "entry-1",
+          entry_number: 1,
+          entry_date: "2023-06-01",
+          description: "Chapter 11 Voluntary Petition Filed.",
+          document_available: true,
+          documents: [],
+        },
+      ],
+    };
+    vi.spyOn(issuerApi, "fetchIssuerDetail").mockResolvedValue({
+      ...BASE_ISSUER,
+      court_dockets: [docket],
+    });
+    vi.spyOn(capitalStructureApi, "fetchCapitalStructure").mockResolvedValue(
+      EMPTY_CAPITAL_STRUCTURE,
+    );
+    vi.spyOn(courtDocketApi, "fetchCourtDocketDetail").mockResolvedValue(detail);
+
+    renderIssuerPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Cobalt Ridge Holding Company, Inc.")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/23-90602/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("Chapter 11 Voluntary Petition Filed.")).toBeInTheDocument();
+    });
   });
 
   it("shows a not-found message for a 404 response", async () => {

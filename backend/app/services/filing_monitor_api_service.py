@@ -126,6 +126,7 @@ def _evidence_to_row(db: Session, evidence: ResearchEvidence) -> ResearchEvidenc
         evidence_provider=evidence.evidence_provider,
         source_type=evidence.source_type,
         filing_id=evidence.filing_id,
+        docket_entry_id=evidence.docket_entry_id,
         evidence_type=evidence.evidence_type,
         severity=evidence.severity,
         source_section=evidence.source_section,

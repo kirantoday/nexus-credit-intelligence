@@ -29,6 +29,7 @@ from app.core.types import (
     Seniority,
     TransformationType,
 )
+from app.schemas.court_docket import CourtDocketRow
 from app.schemas.research_universe import IssuerUniverseMembership
 
 
@@ -131,3 +132,7 @@ class IssuerDetail(BaseModel):
     # sections above: membership is a coverage decision, never itself a
     # current-status assertion (PLAN.md 24.1).
     universe_memberships: list[IssuerUniverseMembership]
+    # Milestone 7 — real, linked CourtListener dockets for this issuer
+    # ("what happened in court?"), empty for the common case of an issuer
+    # with no known bankruptcy/litigation docket on file.
+    court_dockets: list[CourtDocketRow]
