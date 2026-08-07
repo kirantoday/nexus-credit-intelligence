@@ -3672,8 +3672,9 @@ so this was a data-hygiene correction, not a functional fix.
 
 **Git Commit Hash**
 
-See commit recorded immediately after this entry in the next log update /
-`git log`.
+`cd73c5b` — implementation + both live runs + documentation (single
+commit covering Parts 1 and 2, since docs/commit were explicitly withheld
+until the full milestone, including the approved backfill, was done).
 
 **Approximate Time Spent**
 
