@@ -3237,4 +3237,8 @@ across any of the interruptions.
 
 **GitHub Remote and Push Results**
 
-_Recorded in a follow-up docs commit, per established repo convention._
+- `git push origin main` — succeeded: `4579248..bcfb0fa  main -> main`.
+- Post-push verification: `git ls-remote origin main` returns
+  `bcfb0fa3ca7925e290933ba39848989edef0e682`, matching the local commit
+  exactly.
+- Remote branch: https://github.com/kirantoday/nexus-credit-intelligence/tree/main
