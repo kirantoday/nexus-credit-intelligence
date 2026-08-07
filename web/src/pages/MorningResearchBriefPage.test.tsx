@@ -61,8 +61,10 @@ const BASE_SUMMARY: MorningBriefSummary = {
   },
   universes_monitored: 15,
   issuers_monitored: 24,
-  new_evidence_discovered: 1,
-  alerts_total: 1,
+  new_sec_filings: 1,
+  new_court_events: 0,
+  new_research_evidence: 1,
+  actionable_alerts_total: 1,
   alerts_by_severity: { high: 1, medium: 0, low: 0 },
   deterministic_alert_count: 1,
   ai_assisted_alert_count: 0,
@@ -118,7 +120,7 @@ describe("MorningResearchBriefPage", () => {
     renderWithProviders(<MorningResearchBriefPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Alerts")).toBeInTheDocument();
+      expect(screen.getByText("Actionable alerts")).toBeInTheDocument();
     });
     expect(
       screen.getByText("Potential bankruptcy or receivership filing detected in a new 8-K."),
@@ -129,7 +131,7 @@ describe("MorningResearchBriefPage", () => {
   it("shows a success message when there are no alerts matching the filters", async () => {
     vi.spyOn(filingMonitorApi, "fetchMorningBrief").mockResolvedValue({
       ...BASE_SUMMARY,
-      alerts_total: 0,
+      actionable_alerts_total: 0,
       no_new_alerts: true,
     });
     vi.spyOn(researchUniverseApi, "fetchResearchUniverses").mockResolvedValue(NO_UNIVERSES);

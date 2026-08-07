@@ -6,9 +6,10 @@ repository conventions (function-style, domain objects only, flush-not-commit).
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.domain.court_docket_entry import CourtDocketEntry, CourtDocketEntryCreate
@@ -66,6 +67,24 @@ def create_entry(db: Session, data: CourtDocketEntryCreate) -> tuple[CourtDocket
     return _to_domain(row), True
 
 
+def get_max_courtlistener_entry_id(db: Session, docket_id: UUID) -> int | None:
+    """The TD-012 incremental-sync cursor (PLAN.md Milestone 7.5): CourtListener's
+    own `id` field (our `courtlistener_entry_id`) is a globally
+    monotonically-increasing identifier assigned at entry creation (live-
+    verified via a real `OPTIONS` request confirming `id` supports
+    `gt`/`gte` filters and `order_by=id`) — a strictly cheaper and more
+    exact incremental cursor than a date-based watermark, since it needs no
+    overlap margin: `id__gt=<this value>` can never re-fetch or skip an
+    entry. `None` means this docket has never been synced (or has zero
+    entries), so the caller falls back to the original full-pagination
+    walk.
+    """
+    stmt = select(func.max(CourtDocketEntryModel.courtlistener_entry_id)).where(
+        CourtDocketEntryModel.docket_id == docket_id
+    )
+    return db.execute(stmt).scalar_one_or_none()
+
+
 def list_entries_by_docket(db: Session, docket_id: UUID) -> list[CourtDocketEntry]:
     stmt = (
         select(CourtDocketEntryModel)
@@ -74,3 +93,15 @@ def list_entries_by_docket(db: Session, docket_id: UUID) -> list[CourtDocketEntr
     )
     rows = db.execute(stmt).scalars().all()
     return [_to_domain(row) for row in rows]
+
+
+def count_entries_created_since(db: Session, since: datetime | None) -> int:
+    """Counts by `created_at` (when Nexus ingested the entry), not
+    `entry_date` (the real-world docket event date) — see
+    `sec_filing_repository.count_filings_created_since` for the same
+    discovery-time-vs-event-time distinction, applied here for the Morning
+    Research Brief's "New Court Events" metric."""
+    stmt = select(func.count()).select_from(CourtDocketEntryModel)
+    if since is not None:
+        stmt = stmt.where(CourtDocketEntryModel.created_at >= since)
+    return db.execute(stmt).scalar_one()

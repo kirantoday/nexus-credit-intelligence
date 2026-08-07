@@ -381,6 +381,43 @@ _PHRASE_RULES: tuple[_PhraseRule, ...] = (
 )
 
 
+# Layer 0 (PLAN.md Milestone 7.5) — a curated subset of the Layer 1 phrase
+# vocabulary above, chosen for SEC full-text-search precision, not every
+# regex mirrored 1:1. This is SEC's own server-side pre-filter across the
+# *entire* market (every filer, not just Nexus's known issuers) — cheap
+# because SEC's index does the narrowing, not a local download-and-regex
+# pass. Every query here corresponds to a high-signal `_PHRASE_RULES` rule
+# id (noted per entry) so a Layer-0 hit is very likely, though never
+# guaranteed, to also produce a real Layer 1 match once the actual filing
+# document is fetched and locally rule-matched — Layer 0 finds candidates,
+# it does not itself decide evidence. Bare single-concept phrases ("chapter
+# 11", "going concern") are intentionally included despite being lower
+# local-rule confidence, precisely because narrowing the *discovery* net
+# too aggressively would miss real distress filings that use less
+# formulaic language — Layer 1 and Layer 2 remain the actual precision
+# gates, not this list.
+MARKET_DISCOVERY_FULL_TEXT_QUERIES: tuple[str, ...] = (
+    "voluntary petition",  # phrase_chapter_11_petition
+    "chapter 11",  # phrase_chapter_11_bare_mention / phrase_chapter_11_petition
+    "chapter 7 bankruptcy",  # phrase_chapter_7_petition
+    "missed interest payment",  # phrase_missed_interest_payment
+    "event of default",  # phrase_event_of_default
+    "acceleration of indebtedness",  # phrase_debt_acceleration
+    "substantial doubt",  # phrase_substantial_doubt_going_concern
+    "going concern",  # phrase_going_concern_bare_mention
+    "liquidity shortfall",  # phrase_liquidity_shortfall
+    "restructuring advisor",  # phrase_restructuring_advisor
+    "restructuring support agreement",  # phrase_restructuring_support_agreement
+    "exchange offer",  # phrase_exchange_offer
+    "liability management transaction",  # phrase_liability_management
+    "debtor-in-possession financing",  # phrase_dip_financing
+    "strategic alternatives",  # phrase_strategic_alternatives
+    "delisting",  # phrase_delisting_notice
+    "material impairment",  # phrase_material_impairment
+    "auditor resignation",  # phrase_auditor_resignation
+)
+
+
 def _excerpt_window(text: str, match: re.Match[str]) -> tuple[str, int, int]:
     start = max(0, match.start() - _EXCERPT_CONTEXT_CHARS)
     end = min(len(text), match.end() + _EXCERPT_CONTEXT_CHARS)

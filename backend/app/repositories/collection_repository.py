@@ -6,6 +6,7 @@ repository conventions (function-style, domain objects only, flush-not-commit).
 
 from __future__ import annotations
 
+from datetime import date
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -104,6 +105,30 @@ def get_collection_by_slug(db: Session, slug: str) -> Collection | None:
     return _collection_to_domain(row) if row is not None else None
 
 
+def update_curation_method(
+    db: Session, collection_id: UUID, curation_method: CurationMethod
+) -> Collection:
+    """Narrow, single-purpose update (mirrors `filing_monitor_run_repository
+    .complete_run`'s pattern) — lets an idempotent seed script self-heal a
+    collection's `curation_method` in place on a re-run, rather than only
+    ever setting it once at creation time. Added for Milestone 7.5: the
+    15 Milestone 6.5 Research Universes were originally seeded with
+    `curation_method=system_seeded`, which meant "populated by a script"
+    at the time but is corrected here to `manual_curated` — each candidate
+    was in fact a human-selected, individually-rationale'd company, which
+    is what genuinely distinguishes it from Milestone 7.5's new evidence-
+    driven universes (which populate membership with no human candidate
+    list at all).
+    """
+    row = db.get(CollectionModel, collection_id)
+    if row is None:
+        raise ValueError(f"collection {collection_id} not found")
+    row.curation_method = curation_method.value
+    db.flush()
+    db.refresh(row)
+    return _collection_to_domain(row)
+
+
 def list_collections(
     db: Session, *, collection_type: CollectionType | None = None
 ) -> list[Collection]:
@@ -168,6 +193,44 @@ def add_membership(
     db.flush()
     db.refresh(row)
     return _membership_to_domain(row), True
+
+
+def upgrade_membership_verification(
+    db: Session,
+    collection_id: UUID,
+    issuer_id: UUID,
+    *,
+    verification_status: VerificationStatus,
+    rationale: str,
+    rationale_as_of_date: date | None,
+    supporting_provenance_ids: list[UUID] | None,
+) -> CollectionMembership | None:
+    """Upgrades an existing membership's `verification_status` (e.g.
+    `partial` -> `verified`) when stronger evidence arrives later — never
+    downgrades (PLAN.md Milestone 7.5: system-suggested classifications
+    become automatic ones as evidence strengthens, never the reverse).
+    Returns `None` if no membership exists yet (the caller should
+    `add_membership` first in that case)."""
+    stmt = select(CollectionMembershipModel).where(
+        CollectionMembershipModel.collection_id == collection_id,
+        CollectionMembershipModel.issuer_id == issuer_id,
+    )
+    row = db.execute(stmt).scalars().first()
+    if row is None:
+        return None
+
+    rank = {"unverified": 0, "partial": 1, "verified": 2}
+    if rank[verification_status.value] <= rank[row.verification_status]:
+        return _membership_to_domain(row)
+
+    row.verification_status = verification_status.value
+    row.rationale = rationale
+    row.rationale_as_of_date = rationale_as_of_date
+    if supporting_provenance_ids:
+        row.supporting_provenance_ids = [str(pid) for pid in supporting_provenance_ids]
+    db.flush()
+    db.refresh(row)
+    return _membership_to_domain(row)
 
 
 def list_memberships_by_collection(db: Session, collection_id: UUID) -> list[CollectionMembership]:

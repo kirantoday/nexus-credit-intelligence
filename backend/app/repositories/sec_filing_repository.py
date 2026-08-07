@@ -6,10 +6,10 @@ repository conventions (function-style, domain objects only, flush-not-commit).
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.domain.sec_filing import SecFiling, SecFilingCreate
@@ -92,3 +92,17 @@ def list_filings_since(
     stmt = stmt.order_by(SecFilingModel.filing_date.desc()).limit(limit)
     rows = db.execute(stmt).scalars().all()
     return [_to_domain(row) for row in rows]
+
+
+def count_filings_created_since(db: Session, since: datetime | None) -> int:
+    """Counts by `created_at` (when Nexus discovered/persisted the filing),
+    not `filing_date` (the real-world event date) — PLAN.md Milestone 7.5
+    section 17's provider-aware Morning Research Brief asks "what changed
+    since last successful run," which is a discovery-time question, not an
+    event-time one (a historical backfill filing from January discovered
+    today is genuinely new *to Nexus* today, even though it isn't a new
+    real-world event)."""
+    stmt = select(func.count()).select_from(SecFilingModel)
+    if since is not None:
+        stmt = stmt.where(SecFilingModel.created_at >= since)
+    return db.execute(stmt).scalar_one()

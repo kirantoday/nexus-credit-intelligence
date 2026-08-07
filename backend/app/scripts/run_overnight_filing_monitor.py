@@ -38,8 +38,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         choices=["baseline", "delta", "backfill"],
         required=True,
         help="baseline: establish a watermark, ingest nothing. delta: process filings since "
-        "the last successful run. backfill: process a fixed lookback window, labeled as a "
-        "Historical Backfill Demo, never presented as newly filed overnight.",
+        "the last successful run. backfill: process a fixed lookback window, labeled by real "
+        "event dates as Historical, never presented as newly filed overnight.",
     )
     parser.add_argument(
         "--backfill-days",

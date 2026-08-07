@@ -13,6 +13,7 @@ from app.core.types import (
     CollectionType,
     CollectionVisibility,
     CurationMethod,
+    DataClassification,
     InstrumentType,
     ProviderName,
     VerificationStatus,
@@ -88,6 +89,48 @@ def test_get_credit_universe_page_empty_search_returns_empty_page(db_session: Se
 
     assert page.total == 0
     assert page.rows == []
+
+
+def test_get_credit_universe_page_defaults_to_real_only(db_session: Session) -> None:
+    """PLAN.md Milestone 7.5 section 2/18: synthetic data must not appear
+    mixed with real data in the normal Credit Universe view — the default
+    call (no `is_synthetic` argument) must exclude a synthetic security,
+    while an explicit `is_synthetic=None` (unfiltered) or `is_synthetic=True`
+    still surface it for scenario/testing use."""
+    provenance = provenance_repository.create_provenance(
+        db_session, reported_public_provenance(classification=DataClassification.SYNTHETIC)
+    )
+    issuer = issuer_repository.create_issuer(
+        db_session,
+        IssuerCreate(
+            legal_name="Synthetic Default Filter Test Co",
+            provenance_id=provenance.id,
+            is_synthetic=True,
+            synthetic_reason="SYNTHETIC_DEMO_DATA",
+        ),
+    )
+    security_repository.create_security(
+        db_session,
+        SecurityCreate(
+            issuer_id=issuer.id,
+            instrument_type=InstrumentType.LOAN,
+            description="Synthetic Default Filter Test Co — Term Loan B",
+            amount_outstanding=Decimal("100000000"),
+            provenance_id=provenance.id,
+            is_synthetic=True,
+            synthetic_reason="SYNTHETIC_DEMO_DATA",
+        ),
+    )
+
+    default_page = credit_universe_service.get_credit_universe_page(
+        db_session, search="Synthetic Default Filter Test Co"
+    )
+    unfiltered_page = credit_universe_service.get_credit_universe_page(
+        db_session, search="Synthetic Default Filter Test Co", is_synthetic=None
+    )
+
+    assert default_page.total == 0
+    assert unfiltered_page.total == 1
 
 
 def test_get_credit_universe_page_filters_by_universe(db_session: Session) -> None:

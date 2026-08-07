@@ -161,9 +161,17 @@ class SeverityCounts(BaseModel):
 
 
 class MorningBriefSummary(BaseModel):
-    """Backs the Morning Research Brief page's summary bar (PLAN.md 24.9) —
-    deliberately worded to outlive SEC being the only evidence provider (no
-    field name here is SEC-specific)."""
+    """Backs the Morning Research Brief page's summary bar (PLAN.md 24.9,
+    Milestone 7.5 section 16 — provider-aware). Deliberately worded to
+    outlive SEC being the only evidence provider: no field name here is
+    SEC-specific. `new_sec_filings`/`new_court_events`/`new_research_evidence`
+    replace the old single "new filings discovered" metric (insufficient
+    once CourtListener exists as a second real provider) — each counts by
+    `created_at` (when Nexus discovered/persisted the record), never by the
+    record's own real-world event date, so a historical backfill discovered
+    today correctly shows as new *to Nexus* today without implying the
+    underlying event itself happened today (PLAN.md Milestone 7.5 section 17).
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -171,8 +179,10 @@ class MorningBriefSummary(BaseModel):
     latest_run: FilingMonitorRunRow | None
     universes_monitored: int
     issuers_monitored: int
-    new_evidence_discovered: int
-    alerts_total: int
+    new_sec_filings: int
+    new_court_events: int
+    new_research_evidence: int
+    actionable_alerts_total: int
     alerts_by_severity: SeverityCounts
     deterministic_alert_count: int
     ai_assisted_alert_count: int

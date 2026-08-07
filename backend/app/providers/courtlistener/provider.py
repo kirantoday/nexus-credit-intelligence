@@ -145,10 +145,24 @@ class DocketEntryIngestResult:
 def sync_docket_entries(
     db: Session, http_client: ThrottledHttpClient, *, docket: CourtDocket
 ) -> list[DocketEntryIngestResult]:
-    """Fetch and persist every entry (and its non-sealed, available
+    """Fetch and persist every *new* entry (and its non-sealed, available
     documents) for one already-linked docket. Idempotent: re-running is a
     safe no-op for entries already ingested (get-or-create by
     `courtlistener_entry_id`/`courtlistener_document_id`).
+
+    **TD-012 incremental sync** (PLAN.md Milestone 7.5): a docket that has
+    already been synced at least once uses
+    `client.docket_entries_incremental_url` (`id__gt=<max already-synced
+    courtlistener_entry_id>&order_by=id`) instead of re-walking the full
+    pagination from page 1 — verified live via a real `OPTIONS` request
+    against the docket-entries endpoint before this was implemented,
+    confirming `id` supports `gt`/`gte` filters and `order_by=id`. A
+    docket's first-ever sync (no entries on file yet) still uses the
+    original full-pagination walk (`client.docket_entries_url`,
+    `order_by=entry_number`) — historical backfill is unaffected. `id` is
+    CourtListener's own globally monotonic identifier, so this incremental
+    filter needs no overlap margin the way a timestamp-based cursor would:
+    `id__gt` can never re-fetch or skip an entry.
 
     Requires `COURTLISTENER_API_TOKEN` — the docket-entries endpoint
     returns 401 anonymously (confirmed live, unlike the Search API used by
@@ -160,8 +174,17 @@ def sync_docket_entries(
     client = CourtListenerClient(http_client)
     docket_source_url = f"https://www.courtlistener.com/docket/{docket.courtlistener_docket_id}/"
 
+    max_synced_entry_id = court_docket_entry_repository.get_max_courtlistener_entry_id(
+        db, docket.id
+    )
     results: list[DocketEntryIngestResult] = []
-    url: str | None = client.docket_entries_url(docket.courtlistener_docket_id)
+    url: str | None = (
+        client.docket_entries_incremental_url(
+            docket.courtlistener_docket_id, since_entry_id=max_synced_entry_id
+        )
+        if max_synced_entry_id is not None
+        else client.docket_entries_url(docket.courtlistener_docket_id)
+    )
     pages_fetched = 0
     while url is not None and pages_fetched < _MAX_ENTRY_PAGES:
         page = client.fetch_docket_entries_page(url)

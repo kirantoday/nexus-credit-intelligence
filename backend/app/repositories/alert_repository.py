@@ -129,6 +129,33 @@ def list_alerts(
     return [_to_domain(row) for row in rows], total
 
 
+def count_alerts_by_severity(
+    db: Session,
+    *,
+    status: AlertStatus | None = None,
+) -> dict[EvidenceSeverity, int]:
+    stmt = select(AlertEventModel.severity, func.count()).group_by(AlertEventModel.severity)
+    if status is not None:
+        stmt = stmt.where(AlertEventModel.status == status.value)
+    rows = db.execute(stmt).all()
+    return {EvidenceSeverity(severity): count for severity, count in rows}
+
+
+def count_ai_assisted_alerts(
+    db: Session,
+    *,
+    status: AlertStatus | None = None,
+) -> int:
+    stmt = (
+        select(func.count())
+        .select_from(AlertEventModel)
+        .where(AlertEventModel.ai_assisted.is_(True))
+    )
+    if status is not None:
+        stmt = stmt.where(AlertEventModel.status == status.value)
+    return db.execute(stmt).scalar_one()
+
+
 def acknowledge_alert(db: Session, alert_id: UUID, *, acknowledged_by: str | None) -> AlertEvent:
     row = db.get(AlertEventModel, alert_id)
     if row is None:

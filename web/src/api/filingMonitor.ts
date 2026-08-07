@@ -151,15 +151,19 @@ export interface SeverityCounts {
   low: number;
 }
 
-/** Backs the Morning Research Brief page's summary bar — deliberately
- * worded to outlive SEC being the only evidence provider. */
+/** Backs the Morning Research Brief page's summary bar — provider-aware
+ * (Milestone 7.5): "new filings discovered" alone was SEC-specific and
+ * insufficient once CourtListener (and market-wide SEC discovery) exist as
+ * independent evidence sources, so it's broken out per provider/category. */
 export interface MorningBriefSummary {
   last_successful_run: FilingMonitorRunRow | null;
   latest_run: FilingMonitorRunRow | null;
   universes_monitored: number;
   issuers_monitored: number;
-  new_evidence_discovered: number;
-  alerts_total: number;
+  new_sec_filings: number;
+  new_court_events: number;
+  new_research_evidence: number;
+  actionable_alerts_total: number;
   alerts_by_severity: SeverityCounts;
   deterministic_alert_count: number;
   ai_assisted_alert_count: number;

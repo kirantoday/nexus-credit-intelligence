@@ -42,8 +42,10 @@ export function BriefSummaryBar({ summary }: { summary: MorningBriefSummary }): 
       <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
         <Stat label="Universes monitored" value={summary.universes_monitored} />
         <Stat label="Issuers monitored" value={summary.issuers_monitored} />
-        <Stat label="New filings discovered" value={summary.new_evidence_discovered} />
-        <Stat label="Alerts" value={summary.alerts_total} />
+        <Stat label="New SEC filings" value={summary.new_sec_filings} />
+        <Stat label="New court events" value={summary.new_court_events} />
+        <Stat label="New research evidence" value={summary.new_research_evidence} />
+        <Stat label="Actionable alerts" value={summary.actionable_alerts_total} />
         <Stat label="High severity" value={summary.alerts_by_severity.high} />
         <Stat label="Medium severity" value={summary.alerts_by_severity.medium} />
         <Stat label="Low severity" value={summary.alerts_by_severity.low} />

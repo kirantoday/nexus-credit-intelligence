@@ -24,29 +24,26 @@ detected and skipped rather than duplicated.
 
 from __future__ import annotations
 
-import json
-import re
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from uuid import UUID
 
 from app.config import get_settings
+from app.core.issuer_resolver import fetch_sec_ticker_map, resolve_issuer_identity_by_ticker_or_name
 from app.core.types import (
     CollectionPriority,
     CollectionScope,
     CollectionType,
     CollectionVisibility,
     CurationMethod,
+    MarketDiscoveryResolutionOutcome,
     VerificationStatus,
 )
 from app.db.session import SessionLocal
 from app.domain.collection import CollectionCreate, CollectionMembershipCreate
 from app.providers.base.http_client import ThrottledHttpClient
-from app.providers.sec_edgar import provider as sec_provider
-from app.providers.sec_edgar.client import SecEdgarClient, format_cik10
 from app.repositories import collection_repository
-
-_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -448,68 +445,6 @@ _CANDIDATES: tuple[Candidate, ...] = (
 )
 
 
-def _fetch_ticker_map(http_client: ThrottledHttpClient) -> dict[str, dict[str, object]]:
-    response = http_client.get(_TICKERS_URL)
-    raw = json.loads(response.raw_bytes)
-    return {str(entry["ticker"]).upper(): entry for entry in raw.values()}
-
-
-def _resolve_cik(
-    ticker_map: dict[str, dict[str, object]], candidate: Candidate
-) -> tuple[str | None, str]:
-    entry = ticker_map.get(candidate.ticker.upper())
-    if entry is not None:
-        return str(entry["cik_str"]), f"resolved by ticker {candidate.ticker}"
-
-    # Word-boundary match, never a bare substring — a naive `"yellow" in
-    # "yellowstone group ltd."` containment check is a real false positive
-    # this script hit live (Yellow Corporation's ticker no longer exists in
-    # SEC's current company_tickers.json — it delisted after its 2023
-    # liquidation — and the substring check silently resolved to an
-    # unrelated company, "Yellowstone Group Ltd.", instead of correctly
-    # reporting "no match"). `\b` word boundaries prevent "yellow" from
-    # matching inside "yellowstone".
-    name_pattern = re.compile(rf"\b{re.escape(candidate.name_hint.lower())}\b")
-    matches = [e for e in ticker_map.values() if name_pattern.search(str(e["title"]).lower())]
-    if len(matches) == 1:
-        return (
-            str(matches[0]["cik_str"]),
-            f"resolved by unambiguous name match '{matches[0]['title']}'",
-        )
-    if len(matches) > 1:
-        return (
-            None,
-            f"ambiguous name match ({len(matches)} candidates in company_tickers.json) "
-            "— excluded, no automatic fuzzy merge",
-        )
-    return None, "no ticker or name match found in SEC company_tickers.json"
-
-
-def _verify_live(http_client: ThrottledHttpClient, cik: str) -> tuple[bool, str]:
-    """A real, live `fetch_submissions` call — confirms the CIK is a real,
-    active SEC filer with at least one filing on record, not just a
-    syntactically valid CIK number."""
-    client = SecEdgarClient(http_client)
-    cik10 = format_cik10(cik)
-    try:
-        result = client.fetch_submissions(cik10)
-    except (
-        Exception
-    ) as exc:  # noqa: BLE001 - any live-fetch failure means "exclude", not "crash the seed run"
-        return False, f"live verification fetch failed: {exc}"
-
-    dto = result.dto
-    if not dto.name:
-        return False, "live verification returned no entity name"
-    filing_count = len(dto.filings.recent.accessionNumber)
-    if filing_count == 0:
-        return False, "live verification found zero filings on record — excluded as inactive/shell"
-    return (
-        True,
-        f"verified live: '{dto.name}' (CIK {cik10}), {filing_count} recent filing(s) on file",
-    )
-
-
 def main() -> int:
     settings = get_settings()
     if SessionLocal is None:
@@ -524,32 +459,39 @@ def main() -> int:
 
     accepted: dict[str, str] = {}  # ticker -> issuer legal name
     rejected: dict[str, str] = {}  # ticker -> reason
-    issuer_ids_by_ticker: dict[str, object] = {}
+    issuer_ids_by_ticker: dict[str, str] = {}  # ticker -> issuer.id (str form of UUID)
 
     try:
         print(f"Fetching SEC company_tickers.json ({len(_CANDIDATES)} candidates to resolve)...")
-        ticker_map = _fetch_ticker_map(http_client)
+        ticker_map = fetch_sec_ticker_map(http_client)
 
         for candidate in _CANDIDATES:
-            cik, resolve_reason = _resolve_cik(ticker_map, candidate)
-            if cik is None:
-                rejected[candidate.ticker] = resolve_reason
-                print(f"  REJECTED {candidate.ticker} ({candidate.name_hint}): {resolve_reason}")
+            result = resolve_issuer_identity_by_ticker_or_name(
+                db, http_client, ticker_map, ticker=candidate.ticker, name_hint=candidate.name_hint
+            )
+            if (
+                result.outcome
+                not in (
+                    MarketDiscoveryResolutionOutcome.MATCHED_EXISTING,
+                    MarketDiscoveryResolutionOutcome.VERIFIED_NEW,
+                )
+                or result.issuer_id is None
+            ):
+                rejected[candidate.ticker] = result.reason
+                print(f"  REJECTED {candidate.ticker} ({candidate.name_hint}): {result.reason}")
                 continue
 
-            verified, verify_reason = _verify_live(http_client, cik)
-            if not verified:
-                rejected[candidate.ticker] = verify_reason
-                print(f"  REJECTED {candidate.ticker} ({candidate.name_hint}): {verify_reason}")
-                continue
-
-            issuer, created = sec_provider.ingest_issuer_identity_only(db, http_client, cik=cik)
             db.commit()
-            accepted[candidate.ticker] = issuer.legal_name
-            issuer_ids_by_ticker[candidate.ticker] = issuer.id
-            status = "ingested" if created else "already existed (idempotent skip)"
+            accepted[candidate.ticker] = result.legal_name or ""
+            issuer_ids_by_ticker[candidate.ticker] = result.issuer_id
+            status = (
+                "ingested"
+                if result.outcome == MarketDiscoveryResolutionOutcome.VERIFIED_NEW
+                else "already existed (idempotent skip)"
+            )
             print(
-                f"  ACCEPTED {candidate.ticker} -> {issuer.legal_name} (CIK {issuer.cik}, {status})"
+                f"  ACCEPTED {candidate.ticker} -> {result.legal_name} "
+                f"(CIK {result.cik}, {status})"
             )
 
         print(
@@ -564,6 +506,18 @@ def main() -> int:
             if existing is not None:
                 collection = existing
                 print(f"  EXISTS  {universe_def.name} (slug={universe_def.slug})")
+                # Milestone 7.5 self-heal: these 15 universes are each a
+                # hand-picked, individually-rationale'd candidate list — that
+                # is MANUAL_CURATED, not SYSTEM_SEEDED (the value the
+                # original Milestone 6.5 script used, before that
+                # distinction was meaningful). See
+                # `collection_repository.update_curation_method`.
+                if collection.curation_method != CurationMethod.MANUAL_CURATED:
+                    collection = collection_repository.update_curation_method(
+                        db, collection.id, CurationMethod.MANUAL_CURATED
+                    )
+                    db.commit()
+                    print("          corrected curation_method -> manual_curated")
             else:
                 collection = collection_repository.create_collection(
                     db,
@@ -574,7 +528,7 @@ def main() -> int:
                         collection_type=universe_def.collection_type,
                         scope=CollectionScope.ORGANIZATION,
                         visibility=CollectionVisibility.PUBLIC,
-                        curation_method=CurationMethod.SYSTEM_SEEDED,
+                        curation_method=CurationMethod.MANUAL_CURATED,
                         verification_status=VerificationStatus.VERIFIED,
                         last_verified_at=now,
                         priority=universe_def.priority,
@@ -595,7 +549,7 @@ def main() -> int:
                     db,
                     CollectionMembershipCreate(
                         collection_id=collection.id,
-                        issuer_id=issuer_ids_by_ticker[candidate.ticker],  # type: ignore[arg-type]
+                        issuer_id=UUID(issuer_ids_by_ticker[candidate.ticker]),
                         rationale=candidate.rationale,
                         rationale_as_of_date=(
                             datetime.fromisoformat(candidate.rationale_as_of_date).date()

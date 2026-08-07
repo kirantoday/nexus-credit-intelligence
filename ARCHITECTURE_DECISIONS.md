@@ -1146,3 +1146,118 @@ of real per-party alerting, revisit whether `link_court_dockets`'s curated
 step can be replaced or supplemented by that subscription's own discovery
 feed — `sync_one_docket` itself would not need to change, only what feeds
 it a linked `court_docket` row.
+
+---
+
+## ADR-020: Automatic CourtListener docket linking on a hierarchy of identity evidence — superseding ADR-019's blanket prohibition on automatic linking
+
+**Date:** 2026-08-07
+**Status:** Accepted
+
+**Context**
+ADR-019 (Milestone 7) established that CourtListener docket discovery must
+be a curated, live-verified linking step — never automatic — because a
+real live test searching "Diebold Nixdorf" returned an unrelated 2019
+employment case ahead of the actual 2023 Chapter 11 docket, demonstrating
+that free-text party-name search alone is not a safe automatic-linking
+signal. Milestone 7.5 requires a reusable automatic enrichment pipeline
+that runs every applicable provider (SEC, CourtListener, OpenFIGI) for
+every issuer it discovers or already knows about, without a human having
+to remember to trigger CourtListener manually. This creates a direct
+tension with ADR-019's blanket prohibition, which this ADR resolves by
+replacing "never automatic" with "automatic only on a hierarchy of
+independent strong identity signals, never a single fuzzy one" —
+`app.core.court_docket_matcher` implements the actual signal evaluation;
+`app.services.court_docket_service.attempt_auto_link` is the orchestration
+entry point.
+
+A draft of this design initially proposed requiring court/jurisdiction
+correspondence to the issuer as one of three mandatory signals. This was
+corrected during planning: a debtor legitimately files bankruptcy wherever
+is legally/strategically convenient — Delaware, S.D.N.Y., and S.D. Tex. are
+extremely common venues with no necessary relationship to a company's
+headquarters. A hard jurisdiction requirement would have systematically
+rejected real, correct matches by construction. The accepted design below
+reflects that correction: jurisdiction/court is a supporting or
+contradiction-detection signal only, never a required one.
+
+**Decision**
+`attempt_auto_link` is only ever invoked for an issuer with at least one
+`DOCKET_RELEVANT_EVIDENCE_TYPES` research-evidence row already on file
+(bankruptcy/restructuring-relevant SEC evidence) — CourtListener enrichment
+is scoped to distressed/restructuring-relevant issuers, not attempted
+uniformly for every issuer regardless of evidence. Given that evidence, a
+live `search_dockets` call returns candidates, each evaluated against a
+hierarchy of independent strong identity signals
+(`app.core.court_docket_matcher.evaluate_candidate`):
+
+1. Normalized legal-name match (word-boundary + corporate-suffix
+   normalization — the same discipline as the CIK resolver's
+   Yellow/Yellowstone fix).
+2. An exact case-number reference in the triggering SEC evidence text.
+3. A date correlation between the docket's filing date and the evidence's
+   `as_of_date` (within 14 days).
+4. Court/jurisdiction referenced *in the evidence text itself* — evidence-
+   derived, not HQ-derived, so it never encodes a false jurisdiction
+   assumption; used as a supporting/contradiction-detection signal only,
+   never counted toward the passing threshold and never required.
+
+Case-type consistency (the candidate docket must itself be a bankruptcy
+case — CourtListener reports a `chapter`) is a hard requirement. Above
+that: an exact case-number match is strong enough to pass alone; otherwise
+at least two of {name match, case-number match, date correlation} must
+agree with no contradiction. The result must additionally be a *unique*
+passing candidate — if more than one candidate independently clears the
+bar, the outcome is `ambiguous_manual_review`, never a coin flip. Every
+attempt (verified, no-match, or ambiguous) is persisted in
+`court_docket_link_attempt` with its full evaluated signal set
+(`match_signals`, jsonb) — a complete, honest audit trail, not a black box.
+Only `verified_docket_match` proceeds to `link_docket` + a real
+`sync_one_docket` call; the existing curated `app.scripts.link_court_dockets`
+flow is retained unchanged as a manual override path, consistent with this
+project's "curated universes are still allowed alongside system-discovered
+ones" principle (PLAN.md Milestone 7.5).
+
+**Alternatives Considered**
+- Automatic linking on a single fuzzy signal (e.g. name similarity alone)
+  — rejected: this is exactly the risk ADR-019 already demonstrated live
+  (the Diebold Nixdorf unrelated-case result). A single weak signal is not
+  an improvement over the status quo it would replace.
+- Requiring court/jurisdiction correspondence to the issuer's headquarters
+  as a mandatory signal — rejected during planning (see Context): would
+  systematically reject real matches, since bankruptcy filings routinely
+  occur far from a debtor's HQ for legitimate legal/strategic reasons.
+- Leaving CourtListener fully manual (extending ADR-019 unchanged) —
+  rejected: defeats Milestone 7.5's explicit requirement that newly
+  discovered and already-known issuers alike automatically enter a
+  reusable enrichment pipeline without a human remembering to trigger each
+  provider by hand.
+
+**Tradeoffs**
+The signal hierarchy is a heuristic, not a certainty — it is deliberately
+biased toward `ambiguous_manual_review` over a wrong `verified_docket_match`
+(a false positive is treated as strictly worse than a missed automatic
+link), which means some real matches will still require manual
+confirmation via the existing curated flow rather than linking
+automatically. This is an accepted, honest limitation, not a hidden one.
+
+**Consequences**
+- `court_docket_link_attempt` is a new table distinct from
+  `issuer_enrichment_status`'s single current-state row, so a rejected or
+  ambiguous attempt remains individually diagnosable rather than being
+  overwritten by the next retry.
+- `app.scripts.link_court_dockets`'s curated `_CANDIDATES` flow is
+  unchanged and remains the path for a human to confirm a match the
+  automatic signal hierarchy correctly declined to guess at.
+- `DOCKET_EXCLUDED_RULE_IDS` (ADR-019) continues to apply unchanged once a
+  docket is linked, by either path — the "a linked docket is already a
+  confirmed case" premise holds regardless of whether linking was manual
+  or automatic.
+
+**Future Revisit Recommendation**
+If live operation shows the signal hierarchy is systematically too
+conservative (too many real matches falling to `ambiguous_manual_review`)
+or, more dangerously, produces a real false positive, revisit the specific
+signal weights and the passing threshold — the underlying architecture
+(`court_docket_matcher` as a pure, independently testable module) is
+designed to make that a parameter change, not a redesign.

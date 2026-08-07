@@ -228,3 +228,73 @@ def test_create_document_never_recap_available_when_sealed(db_session: Session) 
     documents = docket_document_repository.list_documents_by_entry(db_session, entry.id)
     assert len(documents) == 1
     assert documents[0].is_sealed is True
+
+
+def test_get_max_courtlistener_entry_id_none_when_no_entries(db_session: Session) -> None:
+    issuer_id = _seed_issuer(db_session, legal_name="TD-012 Empty Docket Test Co")
+    docket_provenance = provenance_repository.create_provenance(
+        db_session, reported_public_provenance()
+    )
+    docket, _created = court_docket_repository.create_docket(
+        db_session,
+        CourtDocketCreate(
+            issuer_id=issuer_id,  # type: ignore[arg-type]
+            courtlistener_docket_id=999006,
+            court="Test Court",
+            docket_number="24-00006",
+            case_name="TD-012 Empty Docket Test Co",
+            nature_of_suit=None,
+            chapter="11",
+            date_filed=date(2024, 1, 1),
+            provenance_id=docket_provenance.id,
+        ),
+    )
+
+    assert (
+        court_docket_entry_repository.get_max_courtlistener_entry_id(db_session, docket.id) is None
+    )
+
+
+def test_get_max_courtlistener_entry_id_returns_highest_id(db_session: Session) -> None:
+    """PLAN.md Milestone 7.5 TD-012: the incremental-sync cursor is the
+    highest `courtlistener_entry_id` already synced for a docket — not
+    insertion order, not `entry_number` (unreliable — real dockets have
+    unnumbered entries), CourtListener's own globally monotonic `id`."""
+    issuer_id = _seed_issuer(db_session, legal_name="TD-012 Cursor Test Co")
+    docket_provenance = provenance_repository.create_provenance(
+        db_session, reported_public_provenance()
+    )
+    docket, _created = court_docket_repository.create_docket(
+        db_session,
+        CourtDocketCreate(
+            issuer_id=issuer_id,  # type: ignore[arg-type]
+            courtlistener_docket_id=999007,
+            court="Test Court",
+            docket_number="24-00007",
+            case_name="TD-012 Cursor Test Co",
+            nature_of_suit=None,
+            chapter="11",
+            date_filed=date(2024, 1, 1),
+            provenance_id=docket_provenance.id,
+        ),
+    )
+    for courtlistener_entry_id in (556001, 556003, 556002):  # deliberately out of order
+        entry_provenance = provenance_repository.create_provenance(
+            db_session, reported_public_provenance()
+        )
+        court_docket_entry_repository.create_entry(
+            db_session,
+            CourtDocketEntryCreate(
+                docket_id=docket.id,
+                courtlistener_entry_id=courtlistener_entry_id,
+                entry_number=None,
+                entry_date=date(2024, 1, 1),
+                description="Test entry.",
+                document_available=False,
+                provenance_id=entry_provenance.id,
+            ),
+        )
+
+    max_id = court_docket_entry_repository.get_max_courtlistener_entry_id(db_session, docket.id)
+
+    assert max_id == 556003

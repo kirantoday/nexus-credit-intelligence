@@ -8,9 +8,10 @@ just another filter value, not a special case.
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.types import DetectionMethod, EvidenceSeverity, EvidenceType, ReviewStatus
@@ -128,3 +129,13 @@ def list_evidence(
     )
     rows = db.execute(stmt).scalars().all()
     return [_to_domain(row) for row in rows]
+
+
+def count_evidence_created_since(db: Session, since: datetime | None) -> int:
+    """Provider-agnostic count by `created_at` — backs the Morning Research
+    Brief's "New Research Evidence" metric across every evidence provider
+    (SEC, CourtListener, and future ones), not just SEC filings."""
+    stmt = select(func.count()).select_from(ResearchEvidenceModel)
+    if since is not None:
+        stmt = stmt.where(ResearchEvidenceModel.created_at >= since)
+    return db.execute(stmt).scalar_one()

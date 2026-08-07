@@ -99,16 +99,16 @@ describe("AlertCard", () => {
     expect(link).toHaveAttribute("href", "/issuers/issuer-1");
   });
 
-  it("shows a Historical Backfill Demo chip only when is_backfill is true", () => {
+  it("shows a Historical chip only when is_backfill is true", () => {
     renderWithProviders(<AlertCard alert={{ ...BASE_ALERT, is_backfill: true }} />);
 
-    expect(screen.getByText("Historical Backfill Demo")).toBeInTheDocument();
+    expect(screen.getByText("Historical")).toBeInTheDocument();
   });
 
   it("does not show the backfill chip for a live alert", () => {
     renderWithProviders(<AlertCard alert={BASE_ALERT} />);
 
-    expect(screen.queryByText("Historical Backfill Demo")).not.toBeInTheDocument();
+    expect(screen.queryByText("Historical")).not.toBeInTheDocument();
   });
 
   it("labels AI-assisted alerts distinctly from deterministic ones", () => {

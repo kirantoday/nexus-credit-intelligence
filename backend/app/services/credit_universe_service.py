@@ -52,7 +52,12 @@ def get_credit_universe_page(
     db: Session,
     *,
     instrument_type: InstrumentType | None = None,
-    is_synthetic: bool | None = None,
+    # Defaults to real-only (PLAN.md Milestone 7.5 section 2: synthetic
+    # data must not appear mixed with real data in the normal product
+    # experience). `None` still means "unfiltered" for a caller that
+    # explicitly needs both (e.g. a future admin/scenario view) — only the
+    # *default* changed, not the parameter's meaning.
+    is_synthetic: bool | None = False,
     search: str | None = None,
     universe_id: UUID | None = None,
     sort_by: SortField = "legal_name",

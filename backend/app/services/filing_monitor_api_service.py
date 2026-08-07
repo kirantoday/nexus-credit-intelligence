@@ -32,8 +32,10 @@ from app.providers.base.http_client import ThrottledHttpClient
 from app.repositories import (
     alert_repository,
     collection_repository,
+    court_docket_entry_repository,
     filing_monitor_run_repository,
     issuer_repository,
+    market_discovery_repository,
     research_evidence_repository,
     sec_filing_repository,
 )
@@ -288,9 +290,28 @@ def dismiss_alert(
 
 
 def get_morning_brief(db: Session) -> MorningBriefSummary:
+    """Provider-aware "what changed since last successful run" (PLAN.md
+    Milestone 7.5 section 16) — the single "new filings discovered" metric
+    from Milestone 6.5 was SEC-specific and insufficient once CourtListener
+    (and, with Milestone 7.5, market-wide SEC discovery) exist as
+    independent evidence sources.
+
+    "Since last successful run" is resolved across *both* known-issuer
+    monitoring (`filing_monitor_run`) and market-wide discovery
+    (`market_discovery_run`) — whichever is more recent — since either
+    pipeline can be the most recent source of genuinely new evidence.
+    """
     latest_successful = filing_monitor_run_repository.get_latest_successful_run(db)
     all_runs = filing_monitor_run_repository.list_runs(db, page_size=1)
     latest_run = all_runs[0] if all_runs else None
+
+    latest_discovery_run = market_discovery_repository.get_latest_successful_run(db)
+    since_candidates = [
+        run.completed_at
+        for run in (latest_successful, latest_discovery_run)
+        if run is not None and run.completed_at is not None
+    ]
+    since = max(since_candidates) if since_candidates else None
 
     universes_monitored = len(
         collection_repository.list_collections(db, collection_type=CollectionType.RESEARCH_UNIVERSE)
@@ -301,24 +322,36 @@ def get_morning_brief(db: Session) -> MorningBriefSummary:
         )
     )
 
-    alerts, total = alert_repository.list_alerts(db, page=1, page_size=500)
-    high = sum(1 for a in alerts if a.severity is EvidenceSeverity.HIGH)
-    medium = sum(1 for a in alerts if a.severity is EvidenceSeverity.MEDIUM)
-    low = sum(1 for a in alerts if a.severity is EvidenceSeverity.LOW)
-    ai_assisted = sum(1 for a in alerts if a.ai_assisted)
+    new_sec_filings = sec_filing_repository.count_filings_created_since(db, since)
+    new_court_events = court_docket_entry_repository.count_entries_created_since(db, since)
+    new_research_evidence = research_evidence_repository.count_evidence_created_since(db, since)
+
+    # "Actionable" alerts (spec wording, Milestone 7.5 section 16): those
+    # not yet acted upon, `status=new` — distinct from the full historical
+    # alert count, which Alerts/history views already cover separately.
+    # Uses true aggregate queries (not a page-limited list summation) so the
+    # severity/AI-assisted breakdown stays correct regardless of alert volume.
+    severity_counts = alert_repository.count_alerts_by_severity(db, status=AlertStatus.NEW)
+    actionable_total = sum(severity_counts.values())
+    high = severity_counts.get(EvidenceSeverity.HIGH, 0)
+    medium = severity_counts.get(EvidenceSeverity.MEDIUM, 0)
+    low = severity_counts.get(EvidenceSeverity.LOW, 0)
+    ai_assisted = alert_repository.count_ai_assisted_alerts(db, status=AlertStatus.NEW)
 
     return MorningBriefSummary(
         last_successful_run=_run_to_row(latest_successful) if latest_successful else None,
         latest_run=_run_to_row(latest_run) if latest_run else None,
         universes_monitored=universes_monitored,
         issuers_monitored=issuers_monitored,
-        new_evidence_discovered=(latest_run.filings_discovered if latest_run else 0),
-        alerts_total=total,
+        new_sec_filings=new_sec_filings,
+        new_court_events=new_court_events,
+        new_research_evidence=new_research_evidence,
+        actionable_alerts_total=actionable_total,
         alerts_by_severity=SeverityCounts(high=high, medium=medium, low=low),
-        deterministic_alert_count=total - ai_assisted,
+        deterministic_alert_count=actionable_total - ai_assisted,
         ai_assisted_alert_count=ai_assisted,
         failures_count=(latest_run.errors_count if latest_run else 0),
-        no_new_alerts=(total == 0),
+        no_new_alerts=(actionable_total == 0),
     )
 
 

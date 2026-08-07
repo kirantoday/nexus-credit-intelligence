@@ -25,6 +25,7 @@ same-day filing, never duplicating one.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Protocol
 from uuid import UUID
@@ -81,7 +82,7 @@ class FetchFilingTextFn(Protocol):
     ) -> FilingTextResult: ...
 
 
-def _describe_sec_source(db: Session, evidence: ResearchEvidence) -> SourceDescription:
+def describe_sec_source(db: Session, evidence: ResearchEvidence) -> SourceDescription:
     """The one place SEC-specific source formatting happens — injected into
     the provider-agnostic `alert_synthesis_service`, never hardcoded there.
     """
@@ -188,6 +189,61 @@ def _process_one_filing(
     return created
 
 
+@dataclass(frozen=True, slots=True)
+class IssuerFilingProcessingResult:
+    """Return shape of `process_issuer_filings` — filings found/processed
+    for one issuer plus every `ResearchEvidence` row produced, so the
+    caller (either `run_monitor`'s known-issuer loop or
+    `app.services.market_discovery_service`'s newly-resolved-issuer path)
+    can synthesize alerts and accumulate its own run-level counters.
+    """
+
+    filings_discovered: int
+    filings_processed: int
+    evidence: list[ResearchEvidence]
+
+
+def process_issuer_filings(
+    db: Session,
+    http_client: ThrottledHttpClient,
+    *,
+    cik: str,
+    issuer_id: UUID,
+    since_date: date | None,
+    fetch_filings_fn: FetchFilingsFn = sec_ingest_recent_filings,
+    fetch_filing_text_fn: FetchFilingTextFn = sec_fetch_filing_text,
+) -> IssuerFilingProcessingResult:
+    """Fetch one issuer's recent SEC filings since `since_date` and run
+    Layer 1 rule matching on each (extracted from `run_monitor`'s per-issuer
+    loop body so `market_discovery_service` can reuse the exact same
+    ingestion/evidence pipeline for a newly-resolved issuer — PLAN.md
+    Milestone 7.5's "do not build separate business logic for historical
+    and nightly/discovery processing"). Alert synthesis and commit/rollback
+    boundaries stay with each caller, since watermark/run-counter semantics
+    differ between the known-issuer monitor and market discovery.
+    """
+    ingest_results = fetch_filings_fn(
+        db, http_client, cik=cik, forms=MONITORED_FORM_TYPES, since=since_date
+    )
+    evidence: list[ResearchEvidence] = []
+    for ingest_result in ingest_results:
+        evidence.extend(
+            _process_one_filing(
+                db,
+                http_client,
+                cik=cik,
+                issuer_id=issuer_id,
+                ingest_result=ingest_result,
+                fetch_filing_text_fn=fetch_filing_text_fn,
+            )
+        )
+    return IssuerFilingProcessingResult(
+        filings_discovered=len(ingest_results),
+        filings_processed=len(ingest_results),
+        evidence=evidence,
+    )
+
+
 def run_monitor(
     db: Session,
     http_client: ThrottledHttpClient,
@@ -269,35 +325,25 @@ def run_monitor(
             continue
 
         try:
-            ingest_results = fetch_filings_fn(
+            processing_result = process_issuer_filings(
                 db,
                 http_client,
                 cik=issuer.cik,
-                forms=MONITORED_FORM_TYPES,
-                since=since_date,
+                issuer_id=issuer_id,
+                since_date=since_date,
+                fetch_filings_fn=fetch_filings_fn,
+                fetch_filing_text_fn=fetch_filing_text_fn,
             )
-            filings_discovered += len(ingest_results)
-
-            issuer_evidence: list[ResearchEvidence] = []
-            for ingest_result in ingest_results:
-                issuer_evidence.extend(
-                    _process_one_filing(
-                        db,
-                        http_client,
-                        cik=issuer.cik,
-                        issuer_id=issuer_id,
-                        ingest_result=ingest_result,
-                        fetch_filing_text_fn=fetch_filing_text_fn,
-                    )
-                )
-                filings_processed += 1
+            filings_discovered += processing_result.filings_discovered
+            filings_processed += processing_result.filings_processed
+            issuer_evidence = processing_result.evidence
 
             if issuer_evidence:
                 new_alerts: list[AlertEvent] = (
                     alert_synthesis_service.synthesize_alerts_from_evidence(
                         db,
                         evidence=issuer_evidence,
-                        describe_source=lambda e: _describe_sec_source(db, e),
+                        describe_source=lambda e: describe_sec_source(db, e),
                         llm=llm,
                         environment=environment,
                         is_backfill=(mode is FilingMonitorRunMode.BACKFILL),

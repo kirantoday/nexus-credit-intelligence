@@ -16,6 +16,7 @@ from app.core.types import (
     DataClassification,
     DetectionMethod,
     EvidenceSeverity,
+    EvidenceType,
     ProviderName,
     TransformationType,
     VerificationStatus,
@@ -24,11 +25,13 @@ from app.domain.alert import AlertEvent, AlertEventCreate
 from app.domain.collection import Collection, CollectionCreate, CollectionMembershipCreate
 from app.domain.issuer import Issuer, IssuerCreate
 from app.domain.provenance import ProvenanceCreate
+from app.domain.research_evidence import ResearchEvidenceCreate
 from app.repositories import (
     alert_repository,
     collection_repository,
     issuer_repository,
     provenance_repository,
+    research_evidence_repository,
 )
 from app.services import filing_monitor_api_service
 from tests.integration.conftest import reported_public_provenance
@@ -175,6 +178,61 @@ def test_get_morning_brief_counts_alerts_by_severity(db_session: Session) -> Non
 
     brief = filing_monitor_api_service.get_morning_brief(db_session)
 
-    assert brief.alerts_total >= 2
+    assert brief.actionable_alerts_total >= 2
     assert brief.alerts_by_severity.high >= 2
     assert brief.ai_assisted_alert_count >= 1
+
+
+def test_get_morning_brief_severity_breakdown_sums_to_total(db_session: Session) -> None:
+    """Regression test for a real bug found during the Milestone 7.5 browser
+    walkthrough: `get_morning_brief` previously summed severity/AI-assisted
+    counts over a `page_size=500`-capped alert list while
+    `actionable_alerts_total` was a true unbounded count, silently
+    undercounting the breakdown once more than 500 actionable alerts existed
+    (observed live: 107+164+229=500 vs. actionable_alerts_total=1856). The
+    breakdown must always sum to the true total, regardless of alert volume."""
+    issuer = _seed_issuer(db_session, legal_name=f"Brief Breakdown Test Co {uuid4()}")
+    _seed_alert(db_session, issuer_id=issuer.id, severity=EvidenceSeverity.HIGH)
+    _seed_alert(db_session, issuer_id=issuer.id, severity=EvidenceSeverity.MEDIUM)
+    _seed_alert(db_session, issuer_id=issuer.id, severity=EvidenceSeverity.LOW)
+
+    brief = filing_monitor_api_service.get_morning_brief(db_session)
+
+    breakdown_total = (
+        brief.alerts_by_severity.high
+        + brief.alerts_by_severity.medium
+        + brief.alerts_by_severity.low
+    )
+    assert breakdown_total == brief.actionable_alerts_total
+
+
+def test_get_morning_brief_is_provider_aware_not_sec_only(db_session: Session) -> None:
+    """PLAN.md Milestone 7.5 section 16: the brief must break out research
+    evidence generically (`new_research_evidence`), not just SEC filings —
+    proven here with a CourtListener-provider evidence row and zero SEC
+    filings, confirming the metric isn't secretly SEC-scoped."""
+    issuer = _seed_issuer(db_session, legal_name=f"Provider Aware Brief Test Co {uuid4()}")
+    evidence_provenance = provenance_repository.create_provenance(
+        db_session, reported_public_provenance()
+    )
+    research_evidence_repository.create_evidence(
+        db_session,
+        ResearchEvidenceCreate(
+            issuer_id=issuer.id,
+            evidence_provider=ProviderName.COURTLISTENER.value,
+            source_type="docket_entry",
+            evidence_type=EvidenceType.CHAPTER_11,
+            severity=EvidenceSeverity.HIGH,
+            matched_rule="test_rule",
+            evidence_excerpt="Test docket entry excerpt.",
+            confidence=0.9,
+            detection_method=DetectionMethod.DETERMINISTIC,
+            provenance_id=evidence_provenance.id,
+        ),
+    )
+
+    brief = filing_monitor_api_service.get_morning_brief(db_session)
+
+    assert brief.new_research_evidence >= 1
+    assert hasattr(brief, "new_sec_filings")
+    assert hasattr(brief, "new_court_events")

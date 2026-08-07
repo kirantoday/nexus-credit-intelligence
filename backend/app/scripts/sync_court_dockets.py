@@ -45,7 +45,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--backfill",
         action="store_true",
-        help="Label resulting alerts as a Historical Backfill Demo (a docket's first sync).",
+        help="Label resulting alerts as Historical (a docket's first sync).",
     )
     return parser.parse_args(argv)
 

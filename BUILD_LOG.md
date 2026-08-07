@@ -3242,3 +3242,457 @@ across any of the interruptions.
   `bcfb0fa3ca7925e290933ba39848989edef0e682`, matching the local commit
   exactly.
 - Remote branch: https://github.com/kirantoday/nexus-credit-intelligence/tree/main
+
+---
+
+## 2026-08-07 — Milestone 7.5 (Part 1): SEC Market Discovery & Automatic Issuer Enrichment — Implementation + July 2026 Pilot
+
+**Summary**
+
+Nexus moves from monitoring only its 23 hand-curated issuers to *discovering*
+distress-relevant issuers directly from live, market-wide SEC filing
+activity. This part covers the full implementation (schema, discovery
+pipeline, CIK-first identity resolution, automatic multi-provider
+enrichment orchestrator, evidence-driven Research Universe classification,
+ADR-020's revised CourtListener auto-linking policy) plus the **first live
+run, deliberately scoped to 2026-07-01 → 2026-08-06 only**, per an explicit
+hard human-approval gate agreed before implementation began: the
+2026-01-01 → 2026-08-06 historical backfill was not to start until the
+user reviewed this pilot's real results and explicitly approved
+continuing. See Part 2 below for the backfill, approved and run
+separately.
+
+**Features Completed**
+
+- SEC EDGAR full-text-search client (`efts.sec.gov/LATEST/search-index`,
+  shape live-verified via real `curl` before implementation) — Layer 0,
+  market-wide pre-filtering ahead of the existing Layer 1
+  (`match_rules`)/Layer 2 (AI review) pipeline, using an 18-query curated
+  phrase list (`MARKET_DISCOVERY_FULL_TEXT_QUERIES`).
+- CIK-first shared issuer identity resolver (`app/core/issuer_resolver.py`)
+  extracted from `seed_research_universes.py` with no behavior change
+  (existing tests stayed green) — full-text-search hits carry an
+  authoritative CIK from SEC itself, a strictly lower false-positive-risk
+  design than the original ticker/name resolver.
+- `market_discovery_service.run_discovery` — per-candidate commit/rollback
+  isolation, watermark-only-advances-on-zero-errors, idempotent on
+  `(cik, accession_no)` with a separate `rule_version` field so a future
+  rule change can deliberately reprocess a filing without duplicating any
+  downstream `issuer`/`sec_filing`/`research_evidence`/`alert_event` row.
+- `enrichment_orchestrator.enrich_issuer` — staleness/never-checked/
+  retry-due-driven, applied uniformly to **both** newly-discovered and
+  already-known issuers (not gated on "new"), dispatching to SEC,
+  CourtListener, and OpenFIGI independently with per-provider failure
+  isolation, tracked in the new `issuer_enrichment_status` table.
+- ADR-020: CourtListener auto-linking on a hierarchy of independent
+  identity signals (legal name, case number/court *referenced in the
+  triggering SEC evidence*, filing-date correlation, named-debtor match),
+  case-type consistency required, jurisdiction/HQ correspondence
+  explicitly excluded as a required signal — supersedes ADR-019's blanket
+  manual-only prohibition. Every attempt (matched or not) is recorded in
+  `court_docket_link_attempt` with the full evaluated signal set.
+- `universe_classification_service` — definitive evidence (verified
+  Chapter 11) auto-classifies into `verified` membership in the matching
+  new `SYSTEM_SEEDED` (`system-`-prefixed) Research Universe; suggestive
+  evidence auto-classifies into `partial` (system-suggested) membership.
+  Upgrade-only, never downgrades an existing membership.
+- Morning Research Brief made provider-agnostic (`new_sec_filings`/
+  `new_court_events`/`new_research_evidence`/`actionable_alerts_total` by
+  severity), replacing the old SEC-only "new filings discovered" metric.
+- Credit Universe and Research Universe endpoints default `is_synthetic`
+  filtering to real-only; synthetic issuers/securities require an explicit
+  opt-in query param — filter-only isolation, no new UI mode.
+- "Historical Backfill Demo" UI wording replaced with neutral temporal
+  labels (`Historical`) — no longer implies every backfilled event is
+  synthetic/demo data.
+
+**Files Created**
+
+`backend/alembic/versions/0010_market_discovery_and_enrichment_status.py`;
+`backend/app/models/{market_discovery_run,market_discovery_candidate,issuer_enrichment_status,court_docket_link_attempt}.py`;
+`backend/app/domain/{market_discovery,enrichment_status,court_docket_link_attempt}.py`;
+`backend/app/repositories/{market_discovery_repository,issuer_enrichment_status_repository,court_docket_link_attempt_repository}.py`;
+`backend/app/core/{issuer_resolver,court_docket_matcher}.py`;
+`backend/app/services/{market_discovery_service,enrichment_orchestrator,universe_classification_service}.py`;
+`backend/app/scripts/run_market_discovery.py`;
+`backend/tests/unit/{test_issuer_resolver,test_sec_full_text_search_dto,test_sec_edgar_dto,test_court_docket_matcher,test_courtlistener_incremental_url,test_enrichment_orchestrator_staleness}.py`;
+`backend/tests/integration/{test_market_discovery_service,test_enrichment_orchestrator,test_court_docket_service_auto_link,test_universe_classification_service,test_sec_full_text_search_live}.py`.
+
+**Files Modified**
+
+`backend/app/core/{types,distress_rules}.py`;
+`backend/app/providers/sec_edgar/{client,dto}.py`;
+`backend/app/providers/courtlistener/{client,provider}.py`;
+`backend/app/repositories/{collection_repository,court_docket_entry_repository,sec_filing_repository,research_evidence_repository}.py`;
+`backend/app/services/{filing_monitor_service,filing_monitor_api_service,court_docket_service,credit_universe_service}.py`;
+`backend/app/schemas/filing_monitor.py`;
+`backend/app/api/routes/credit_universe.py`;
+`backend/app/scripts/{seed_research_universes,run_overnight_filing_monitor,sync_court_dockets}.py`;
+`web/src/api/filingMonitor.ts`;
+`web/src/components/{AlertCard,BriefSummaryBar}.tsx`
+(+ their `.test.tsx` files);
+`web/src/pages/MorningResearchBriefPage.test.tsx`.
+`backend/tests/unit/test_seed_research_universes.py` deleted (superseded by
+`test_issuer_resolver.py` after the resolver extraction).
+
+**Database Changes**
+
+Migration `0010`: 4 new tables in the `nexus` schema —
+`market_discovery_run`, `market_discovery_candidate`
+(unique on `(cik, accession_no)`), `issuer_enrichment_status` (unique on
+`(issuer_id, provider)`), `court_docket_link_attempt`. Applied and
+round-tripped live (upgrade → downgrade → upgrade) against the shared
+Supabase project with zero drift and zero impact on the other
+application's schema.
+
+**API Endpoints Added**
+
+None new; `GET /api/morning-brief` response shape extended (additive
+field rename, not a new route) per the schema changes above.
+
+**Frontend Pages Added**
+
+None new; `MorningResearchBriefPage` and `AlertCard` updated for the new
+brief fields and temporal-label wording.
+
+**Environment Variables Added**
+
+None. `OPENFIGI_API_KEY` remains optional, as already documented —
+enrichment does not block on its absence, it degrades to the unauthenticated
+rate tier.
+
+**Tests Added**
+
+11 new test files (6 unit, 5 integration) covering: SEC full-text-search
+DTO parsing (incl. the null-`exchanges` regression), issuer resolver
+outcomes, CourtListener incremental-sync URL construction, the docket
+signal-hierarchy matcher (verified/no-match/ambiguous, jurisdiction as
+supporting-only), enrichment-orchestrator staleness policy and per-provider
+failure isolation, market discovery service (query iteration, identity
+resolution incl. ambiguous rejection, idempotency), auto-link outcomes, and
+evidence-driven universe classification (upgrade-only, verified vs.
+partial).
+
+**Test Results**
+
+Full backend suite green at each phase checkpoint; final count at the end
+of implementation (before this run): 300 → 300+ (see Part 2 for the final
+combined count, since both parts share one commit).
+
+**Commands Executed**
+
+`alembic upgrade head` / round-trip against live Supabase;
+`python -m app.scripts.run_market_discovery --mode backfill --start 2026-07-01 --end 2026-08-06`
+against live SEC EDGAR, CourtListener, OpenFIGI, and Anthropic.
+
+**Deployment Validation**
+
+Backend and frontend both boot; migration verified live; pilot run
+completed against real external providers (not mocked).
+
+**Pilot Run Results (2026-07-01 → 2026-08-06, live, real providers)**
+
+| Metric | Value |
+|---|---|
+| Layer-0 queries executed | 18 |
+| Filings examined | 213 |
+| Layer-1-matched candidates | 89 |
+| Issuers resolved — existing | 10 |
+| Issuers resolved — new | 79 |
+| Issuers ambiguous | 0 |
+| Issuers rejected | 0 |
+| Research evidence created | 283 |
+| Alerts created | 96 |
+| Errors | 1 (Baird Medical Investment Holdings — transient Supabase connection drop mid-issuer; per-issuer rollback boundary held, zero orphaned rows, confirmed live) |
+| Elapsed time | ~31m46s (13:25:39–13:57:25 UTC) |
+| Run status | `completed_with_errors` (correctly did not advance the watermark — the "watermark only advances on zero errors" rule from Milestone 6.5 held under a real failure, not just a simulated one) |
+
+CourtListener auto-linking (ADR-020) produced **zero verified auto-links**
+in the pilot window — every attempted match resolved to
+`checked_no_relevant_docket`. This is an accepted, expected outcome per
+explicit direction going into this run: "zero auto-links in the pilot is
+acceptable... never lower the matching threshold merely to produce
+CourtListener matches." OpenFIGI enrichment ran without blocking on the
+absent `OPENFIGI_API_KEY`, degrading correctly to `no_data`/
+`failed_retryable` outcomes at the unauthenticated rate tier rather than
+erroring.
+
+Manual quality review of a representative sample (high/medium/low alerts,
+Chapter 11/going-concern/covenant-stress/refinancing categories, AI-
+downgraded near-misses) found the pipeline behaving as designed: real
+distress evidence (e.g. a live Chapter 11 filing) correctly reached `high`
+severity with an evidence-grounded explanation, while routine boilerplate
+(standard going-concern accounting language, generic default definitions)
+was correctly downgraded to `low` with an honest "no distress indicated"
+rationale — the same AI-review discipline proven in Milestone 6.5/7 held
+up against real, previously-unseen market-wide filings, not just the
+23-issuer curated set.
+
+**Problems Encountered**
+
+1. New evidence-driven Research Universe slugs collided with 4 pre-existing
+   curated slugs (`distressed-core`, `post-emergence`,
+   `liability-management`, `refinancing-risk`).
+2. New `issuer_enrichment_status` rows briefly hit a `TypeError` on
+   `row.attempt_count + 1` before the column's server-default applied.
+3. A real production bug: `enrichment_orchestrator._enrich_sec`'s
+   historical-lookback re-check created real `research_evidence` but never
+   called alert synthesis or universe classification, so enrichment-
+   triggered evidence silently never became an alert.
+4. A real production bug: SEC's live submissions API returns
+   `exchanges: [null]` for issuers with no formally listed exchange (OTC-
+   only, some foreign private issuers) — `SecSubmissionsDTO` rejected this
+   outright, correctly failing closed but excluding real, otherwise-
+   resolvable candidates (including Cumulus Media Inc, a real Chapter 11
+   filer) for a fixable data-shape reason, not genuine identity ambiguity.
+5. The Baird Medical Investment Holdings transient connection drop (see
+   Pilot Run Results above).
+
+**Solutions**
+
+1. Renamed all 8 evidence-driven universes to `system-`-prefixed
+   slugs/names; added a collision-detection guard (raises if an existing
+   non-`SYSTEM_SEEDED` collection already owns a target slug); cleaned up
+   the 4 empty mis-slugged rows after verifying zero memberships existed on
+   them.
+2. Explicitly set `attempt_count=0, records_found=0` in the row-
+   construction branch of `record_attempt_outcome`.
+3. Added the missing `alert_synthesis_service`/`universe_classification_service`
+   calls to `_enrich_sec`; added a `ProcessIssuerFilingsFn` Protocol +
+   injectable seam to `enrich_issuer`/`_enrich_sec` for testability; added
+   regression test `test_sec_enrichment_evidence_synthesizes_alerts`;
+   reconciled Baird Medical's pre-fix evidence by directly invoking the
+   synthesis functions.
+4. Loosened `SecSubmissionsDTO.exchanges` to `list[str | None]` after
+   confirming the field is unused downstream; added regression tests
+   (`test_sec_edgar_dto.py`); recovered all 8 previously-rejected
+   candidates via a targeted script, verified zero duplicates.
+5. Diagnosed as a genuine transient infrastructure event (not a repeatable
+   logic bug) via the per-issuer commit/rollback isolation boundary
+   already in place — no architecture change made, per explicit direction
+   not to redesign the DB/session architecture over one non-repeatable
+   drop. Targeted retry of only the Baird Medical candidate performed and
+   confirmed successful, with no duplicate issuer/filing/evidence/alert/
+   enrichment records and no orphaned rows. Tracked as TD-013.
+
+**Remaining Work**
+
+Backfill (2026-01-01 → 2026-08-06) — approved by the user after reviewing
+this pilot report, executed and recorded separately in Part 2 below.
+
+**Approximate Time Spent**
+
+Full implementation (schema through frontend) + live pilot run + manual
+quality review + user-approval round trip: this was the majority of the
+milestone's total effort; see Part 2 for the remainder.
+
+**Developer Notes**
+
+The hard human-approval gate between pilot and backfill worked exactly as
+designed: implementation stopped completely after the pilot report, with
+no further live external calls, no backfill, and no commit/push, until the
+user reviewed the real numbers above and explicitly approved continuing.
+The one real error the pilot surfaced (a transient connection drop) is
+exactly the kind of signal this staged rollout exists to catch cheaply
+(89 candidates, ~32 minutes) before committing to a ~7x larger run.
+
+---
+
+## 2026-08-07 — Milestone 7.5 (Part 2): January–August 2026 Historical Backfill + Final Verification, Docs, Commit
+
+**Summary**
+
+After the user reviewed Part 1's pilot report and explicitly approved
+continuing, this part covers: a targeted recovery of the single pilot
+failure (Baird Medical Investment Holdings), the 2026-01-01 → 2026-08-06
+historical backfill using the **exact same production pipeline** validated
+by the pilot (no separate historical implementation), a manual quality
+review of the backfill's results, the full verification suite, a live
+Windows browser walkthrough (which found and fixed one real bug — see
+below), and final documentation/commit/push.
+
+**Backfill Run Results (2026-01-01 → 2026-08-06, live, real providers, identical pipeline to the pilot)**
+
+| Metric | Value |
+|---|---|
+| Layer-0 queries executed | 29 |
+| Filings examined | 1,513 |
+| Layer-1-matched candidates | 603 |
+| Issuers resolved — existing | 86 |
+| Issuers resolved — new | 420 |
+| Issuers ambiguous | 0 |
+| Issuers rejected | 8 |
+| Research evidence created | 4,887 |
+| Alerts created | 1,671 |
+| Errors | 11 of 603 candidates (~1.8%) — each isolated to the one issuer being processed, zero orphaned rows for every affected issuer, verified live |
+| Elapsed time | ~5h50m37s (14:19:39–20:10:16 UTC) |
+| Run status | `completed_with_errors` (watermark correctly did not advance) |
+
+Because 2026-07-01 → 2026-08-06 had already been processed by the pilot,
+the backfill's own idempotency (`(cik, accession_no)` dedup on
+`market_discovery_candidate`, existing get-or-create keys on
+`issuer`/`sec_filing`/`research_evidence`/`alert_event`) correctly
+absorbed that overlap without creating duplicate records — the pipeline
+was not told to skip the overlap; it simply recognized already-seen
+candidates.
+
+**Cumulative production state after both runs (live-queried)**
+
+- 541 issuers on file (23 originally curated + 96 resolved-existing across
+  both runs + 420 newly discovered in the backfill, net of overlap).
+- 6,036 `sec_filing` rows; 5,417 `research_evidence` rows (5,389
+  `sec_edgar`, 28 `courtlistener`).
+- 1,856 total alerts: 514 high (508 AI-assisted / 6 deterministic), 561
+  medium (556 AI-assisted / 5 deterministic), 781 low (780 AI-assisted / 1
+  deterministic) — 1,844 AI-assisted / 12 deterministic overall.
+- `issuer_enrichment_status`: SEC EDGAR 476 `complete` / 20 `no_data`;
+  OpenFIGI 101 `complete` / 388 `no_data` / 7 `failed_retryable`;
+  CourtListener 385 `unsupported` / 106 `no_data` / 5 `failed_retryable`,
+  **0 auto-linked** — consistent with the pilot's zero-auto-link result,
+  confirming ADR-020's conservative policy held at 7x scale rather than
+  drifting toward false positives as volume grew.
+- Evidence-driven Research Universe memberships: System-Detected Chapter 11
+  — 54 `verified`; Distressed Core — 54 `verified` + 344 `partial`; Going
+  Concern — 210 `partial`; Default/Covenant Stress — 281 `partial`;
+  Refinancing Risk — 130 `partial`; Liability Management — 68 `partial`;
+  Restructuring/Strategic Alternatives — 49 `partial`; Post-Emergence — 0
+  (no post-emergence evidence detected in this window — left empty rather
+  than force-populated, per explicit direction not to target an issuer
+  count).
+
+**Baird Medical Investment Holdings Recovery**
+
+Retried in isolation before the backfill started. Confirmed live: the
+retry completed successfully; no duplicate issuer, filing, evidence,
+alert, or enrichment-status record was created; the pilot's earlier
+rollback had left no orphaned rows; the watermark/checkpoint behavior
+remained correct (the pilot run's own `completed_with_errors` status and
+non-advanced watermark were left as the accurate historical record of what
+happened during that run — the recovery is additive, not a rewrite of
+history). No database/session architecture change was made — the single
+transient drop did not recur or show a repeatable pattern.
+
+**Manual Quality Review (Jan–Aug backfill)**
+
+Representative samples pulled and read for: Chapter 11 (Cumulus Media Inc,
+Hyperscale Data Inc, XTI Aerospace Inc — real petition language, correctly
+`high` severity), going concern (SDR Drone, Quantum Genesis AI Corp, Graf
+Global Corp — real substantial-doubt disclosures), default/covenant stress
+(real event-of-default and debt-acceleration language), refinancing risk
+(real maturity-extension disclosures), liability management (Cumulus
+Media's real restructuring support agreement, a real exchange-offer press
+release), restructuring/strategic alternatives (Clear Channel Outdoor
+Holdings' real strategic-alternatives disclosure), and AI-downgraded near
+misses (multiple real filings using the phrase "going concern" in routine
+valuation-assumption or accounting-boilerplate contexts, correctly
+downgraded to `low` with an honest "no distress indicated" explanation
+rather than a false alarm — Telkom Indonesia's routine 6-K disclosures
+among them). Quality was judged on the substance of these samples, not on
+the raw counts.
+
+**Full Verification Suite**
+
+- Backend: `ruff check`, `black --check`, `mypy` all clean; `pytest` — 355
+  passed, 0 failed.
+- Frontend: `eslint`, `prettier --check`, `tsc --noEmit`, `npm run build`,
+  `npm test` all clean.
+- `alembic upgrade head` / round-trip: zero drift, confirmed live against
+  the shared Supabase project.
+- Backend and frontend both boot cleanly (`uvicorn`, `vite`).
+- `pre-commit run --all-files`: clean.
+
+**Live Windows Browser Walkthrough**
+
+Morning Research Brief, Research Universes, Credit Universe, and an
+issuer-detail drill-down (Terra Property Trust, Inc.) all verified live in
+Chrome. Confirmed: Credit Universe defaults to real-only data (307 real
+securities, `REAL ONLY` filter selected by default, no synthetic leakage);
+Research Universes correctly separate curated from `System-Detected`
+universes; Morning Research Brief renders real cross-provider metrics;
+issuer detail correctly shows real `sec_edgar` provenance and
+`System-Detected` universe memberships. No new application console errors
+(only pre-existing browser-extension messaging noise, unrelated to the
+app).
+
+**Problems Encountered**
+
+A real bug found during the browser walkthrough: `get_morning_brief`
+computed its severity/AI-assisted alert breakdown by summing over a
+`page_size=500`-capped `list_alerts` call, while `actionable_alerts_total`
+was a true unbounded count — once actionable alerts exceeded 500 (they had:
+1,856), the displayed breakdown silently undercounted
+(107 high + 164 medium + 229 low = 500 ≠ 1,856 actionable alerts shown).
+
+Separately, an orphaned `market_discovery_run` row was found in the
+`running` state (created by an ad-hoc script during the manual quality
+review above that reused discovery internals to re-verify 6 specific
+issuers, then exited without going through the normal finalize path). It
+touched 8 pre-existing `market_discovery_candidate` rows — confirmed live,
+zero duplicate issuer/evidence/alert records were created, since the
+dedup key found and reused the existing rows exactly as designed — but
+left a stale `running` status in the audit table.
+
+**Solutions**
+
+Added true aggregate-query repository functions
+(`alert_repository.count_alerts_by_severity`,
+`count_ai_assisted_alerts`, real `GROUP BY`/`COUNT` queries, not a
+page-limited scan) and rewired `get_morning_brief` to use them. Added
+regression test `test_get_morning_brief_severity_breakdown_sums_to_total`,
+which seeds real alerts and asserts the severity breakdown always sums to
+the true total regardless of alert volume. Verified live post-fix: 514 +
+561 + 781 = 1,856, exactly matching `actionable_alerts_total`, confirmed
+both via direct API call and in the browser.
+
+The orphaned run row was corrected in place (`status` → `failed`, with an
+honest `error_summary` explaining what created it) rather than left
+silently `running` forever — `get_latest_successful_run` was already
+unaffected (it only considers `success`/`baseline_established` statuses),
+so this was a data-hygiene correction, not a functional fix.
+
+**Remaining Work**
+
+- TD-001 through TD-011 unchanged, carried forward.
+- TD-012 resolved this milestone (see PLAN.md Technical Debt table).
+- TD-013 (new): the pilot's and backfill's transient connection/timeout
+  errors, tracked as an accepted operational characteristic, not
+  redesigned into automatic retry-with-backoff this milestone per explicit
+  direction — see PLAN.md for the full entry and revisit criteria.
+- TD-011 (pre-existing, unrelated to this milestone): Issuer Detail's
+  "What filings support this?" section is driven by `financial_fact` rows
+  (a separate, largely unpopulated XBRL pipeline — only Apple Inc. has any
+  row in the entire database), not the `sec_filing`/`research_evidence`
+  rows this milestone's issuers actually have. Confirmed live during this
+  milestone's browser walkthrough (Terra Property Trust has 12 real
+  `sec_filing` rows and 22 real `research_evidence` rows but shows "No
+  filings on file yet" in that section) — not a regression, a pre-existing
+  gap this milestone's scope did not include closing.
+- Milestone 8 (Watchlists) — unstarted, requires separate explicit
+  approval to begin.
+
+**Git Commit Hash**
+
+See commit recorded immediately after this entry in the next log update /
+`git log`.
+
+**Approximate Time Spent**
+
+Baird recovery + backfill live run: ~6 hours of live external-API wall-clock
+time (~32 min pilot + ~5h51m backfill, run sequentially), plus manual
+quality review, verification suite, browser walkthrough, and
+documentation.
+
+**Developer Notes**
+
+The instruction to run the backfill through "the exact same production
+pipeline... not a separate historical implementation" proved its worth
+directly: because idempotency was already correct by construction (dedup
+key + existing get-or-create paths), the backfill needed zero special-
+cased "skip the pilot's overlap window" logic — it simply re-examined the
+same July filings and recognized them as already-seen, exactly as it would
+on any future delta run. The zero-auto-link CourtListener result holding
+steady from 89 candidates (pilot) to 603 candidates (backfill) is itself a
+meaningful quality signal: the conservative ADR-020 policy is not merely
+"currently untested," it is consistently declining to guess under real
+adversarial-scale volume, which is the intended behavior, not a limitation
+to route around.

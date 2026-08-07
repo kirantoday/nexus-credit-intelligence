@@ -339,3 +339,70 @@ MONITORED_FORM_TYPES: frozenset[str] = frozenset(
         "20-F/A",
     }
 )
+
+
+# --- Milestone 7.5: SEC Market Discovery & Automatic Issuer Enrichment ---
+
+
+class MarketDiscoveryResolutionOutcome(StrEnum):
+    """`market_discovery_candidate.resolution_outcome` (PLAN.md 7.5).
+
+    A discovered SEC full-text-search hit's identity resolution result.
+    `MATCHED_EXISTING`/`VERIFIED_NEW` are the only outcomes that produce or
+    reuse a canonical `issuer` row; `AMBIGUOUS`/`REJECTED`/`UNRESOLVED` never
+    create or link one, mirroring `seed_research_universes._resolve_cik`'s
+    "never silently guess" discipline (the Yellow/Yellowstone fix).
+    """
+
+    MATCHED_EXISTING = "matched_existing"
+    VERIFIED_NEW = "verified_new"
+    AMBIGUOUS = "ambiguous"
+    REJECTED = "rejected"
+    UNRESOLVED = "unresolved"
+
+
+class EnrichmentStatus(StrEnum):
+    """`issuer_enrichment_status.status` (PLAN.md 7.5 section 8).
+
+    Distinguishes "no data exists" (`NO_DATA`) from "never checked"
+    (no row at all, or `PENDING`) — the core requirement of the automatic
+    enrichment orchestrator. `FAILED_RETRYABLE` drives `next_retry_at`;
+    `FAILED_PERMANENT` does not retry without an explicit force.
+    """
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETE = "complete"
+    NO_DATA = "no_data"
+    AMBIGUOUS = "ambiguous"
+    MANUAL_REVIEW_REQUIRED = "manual_review_required"
+    FAILED_RETRYABLE = "failed_retryable"
+    FAILED_PERMANENT = "failed_permanent"
+    BLOCKED_ENTITLEMENT = "blocked_entitlement"
+    UNAVAILABLE = "unavailable"
+    UNSUPPORTED = "unsupported"
+
+
+class CourtDocketLinkMatchOutcome(StrEnum):
+    """`court_docket_link_attempt.match_outcome` (PLAN.md 7.5 section 10, ADR-020).
+
+    `VERIFIED_DOCKET_MATCH` requires case-type consistency plus enough
+    independent strong identity signals agreeing with no contradiction, on a
+    unique best candidate (ADR-020) — jurisdiction/HQ correspondence is
+    never a required signal. Anything short of that bar is
+    `AMBIGUOUS_MANUAL_REVIEW`, never a guess.
+    """
+
+    VERIFIED_DOCKET_MATCH = "verified_docket_match"
+    CHECKED_NO_RELEVANT_DOCKET = "checked_no_relevant_docket"
+    AMBIGUOUS_MANUAL_REVIEW = "ambiguous_manual_review"
+    UNAVAILABLE = "unavailable"
+    RETRYABLE_FAILURE = "retryable_failure"
+
+
+# Issuer-level enrichment providers the orchestrator dispatches per-issuer
+# (PLAN.md 7.5 section 13) — distinct from market-level providers (FRED)
+# which are never redundantly executed per issuer.
+ISSUER_LEVEL_ENRICHMENT_PROVIDERS: frozenset[ProviderName] = frozenset(
+    {ProviderName.SEC_EDGAR, ProviderName.COURTLISTENER, ProviderName.OPENFIGI}
+)

@@ -72,7 +72,18 @@ class SecSubmissionsDTO(BaseModel):
     sic: str | None = None
     sicDescription: str | None = None
     tickers: list[str] = Field(default_factory=list)
-    exchanges: list[str] = Field(default_factory=list)
+    # Real, live-observed (Milestone 7.5 Jan-Aug backfill): SEC's real
+    # submissions API returns `exchanges: [null]` for some issuers — those
+    # with no formal listed exchange (e.g. OTC-only, or certain foreign
+    # private issuers). `list[str]` rejected the entire response with a
+    # pydantic validation error for 8 real, otherwise-legitimate candidates
+    # this run, correctly failing closed (excluded, never guessed at) but
+    # for a data-shape reason that's fixable rather than a real identity
+    # ambiguity. `exchanges` itself is never consumed downstream (verified:
+    # no reference in `normalizer.py` or `provider.py`), so tolerating
+    # `None` entries here is a pure robustness fix with no behavior change
+    # for issuers that do have exchanges populated.
+    exchanges: list[str | None] = Field(default_factory=list)
     lei: str | None = None
     filings: SecFilings = Field(default_factory=SecFilings)
 
@@ -149,3 +160,60 @@ class SecCompanyFactsDTO(BaseModel):
     cik: int
     entityName: str
     facts: SecCompanyFactsFacts
+
+
+class SecFullTextSearchHitSourceDTO(BaseModel):
+    """`hits.hits[]._source` from `efts.sec.gov/LATEST/search-index`
+    (PLAN.md Milestone 7.5). Shape confirmed by a real, live request before
+    implementation (not guessed): `curl
+    'https://efts.sec.gov/LATEST/search-index?q=%22chapter+11%22&forms=8-K
+    &dateRange=custom&startdt=2026-07-01&enddt=2026-07-02'` — real fields
+    observed: `ciks`, `display_names`, `form`, `root_forms`, `adsh`
+    (dashed accession number), `file_date`, `items` (8-K item codes,
+    present without fetching the document body), `file_type`.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    ciks: list[str] = Field(default_factory=list)
+    display_names: list[str] = Field(default_factory=list)
+    form: str
+    root_forms: list[str] = Field(default_factory=list)
+    adsh: str
+    file_date: str
+    file_type: str | None = None
+    file_description: str | None = None
+    items: list[str] = Field(default_factory=list)
+
+
+class SecFullTextSearchHitDTO(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    id: str = Field(alias="_id")
+    source: SecFullTextSearchHitSourceDTO = Field(alias="_source")
+
+
+class SecFullTextSearchHitsTotalDTO(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    value: int
+    relation: str = "eq"
+
+
+class SecFullTextSearchHitsDTO(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    total: SecFullTextSearchHitsTotalDTO
+    hits: list[SecFullTextSearchHitDTO] = Field(default_factory=list)
+
+
+class SecFullTextSearchResponseDTO(BaseModel):
+    """`GET https://efts.sec.gov/LATEST/search-index` (PLAN.md Milestone
+    7.5) — Layer 0 of the market discovery pipeline: SEC's own server-side
+    full-text index pre-filters candidate filings by distress-phrase query,
+    market-wide, before any document is fetched or locally rule-matched.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    hits: SecFullTextSearchHitsDTO

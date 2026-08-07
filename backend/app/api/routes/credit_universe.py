@@ -26,7 +26,10 @@ router = APIRouter(prefix="/api/credit-universe", tags=["credit-universe"])
 def get_credit_universe(
     db: Annotated[Session, Depends(get_db)],
     instrument_type: InstrumentType | None = None,
-    is_synthetic: bool | None = None,
+    # Defaults to real-only (PLAN.md Milestone 7.5 section 2) — pass
+    # `is_synthetic=true` explicitly to see synthetic/demo rows, or
+    # `is_synthetic=` (empty, parses to `None`) for unfiltered.
+    is_synthetic: bool | None = False,
     search: Annotated[str | None, Query(max_length=200)] = None,
     universe_id: UUID | None = None,
     sort_by: SortField = "legal_name",

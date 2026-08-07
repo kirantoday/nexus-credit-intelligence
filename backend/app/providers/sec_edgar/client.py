@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Generic, TypeVar
+from urllib.parse import urlencode
 
 from app.providers.base.http_client import ThrottledHttpClient
-from app.providers.sec_edgar.dto import SecCompanyFactsDTO, SecSubmissionsDTO
+from app.providers.sec_edgar.dto import (
+    SecCompanyFactsDTO,
+    SecFullTextSearchResponseDTO,
+    SecSubmissionsDTO,
+)
 
 _SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
 _COMPANY_FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik10}.json"
@@ -19,6 +24,13 @@ _COMPANY_FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik10}.json
 _ARCHIVES_DOCUMENT_URL = (
     "https://www.sec.gov/Archives/edgar/data/{cik}/{accession_nodash}/{primary_document}"
 )
+# efts.sec.gov is a distinct SEC-owned host from data.sec.gov/www.sec.gov —
+# same fair-access User-Agent policy applies (enforced by whatever
+# `ThrottledHttpClient` the caller constructs, not by this URL itself).
+# `size` is capped at 100 by SEC's own API (verified live before this was
+# implemented, not assumed from documentation alone).
+_FULL_TEXT_SEARCH_URL = "https://efts.sec.gov/LATEST/search-index"
+FULL_TEXT_SEARCH_MAX_PAGE_SIZE = 100
 
 _DtoT = TypeVar("_DtoT")
 
@@ -74,6 +86,45 @@ class SecEdgarClient:
         # values (e.g. EPS) before pydantic ever sees them — plain
         # json.loads()/float would round-trip some values inexactly.
         dto = SecCompanyFactsDTO.model_validate(json.loads(response.raw_bytes, parse_float=Decimal))
+        return FetchResult(
+            dto=dto,
+            raw_bytes=response.raw_bytes,
+            content_type=response.content_type,
+            url=url,
+            retrieved_at=retrieved_at,
+        )
+
+    def search_full_text(
+        self,
+        query: str,
+        *,
+        forms: tuple[str, ...],
+        start_date: date,
+        end_date: date,
+        from_offset: int = 0,
+        size: int = FULL_TEXT_SEARCH_MAX_PAGE_SIZE,
+    ) -> FetchResult[SecFullTextSearchResponseDTO]:
+        """`GET https://efts.sec.gov/LATEST/search-index` — Layer 0 of the
+        market discovery pipeline (PLAN.md Milestone 7.5): SEC's own
+        server-side full-text index, queried with a curated distress-phrase
+        query and a form-type/date-range filter, market-wide — not a scan
+        of every filing. `size` is clamped to SEC's own real max (100,
+        live-verified); pagination uses `from_offset` exactly like the
+        `from`/`size` params SEC's own API documents.
+        """
+        params = {
+            "q": query,
+            "forms": ",".join(forms),
+            "dateRange": "custom",
+            "startdt": start_date.isoformat(),
+            "enddt": end_date.isoformat(),
+            "from": from_offset,
+            "size": min(size, FULL_TEXT_SEARCH_MAX_PAGE_SIZE),
+        }
+        url = f"{_FULL_TEXT_SEARCH_URL}?{urlencode(params)}"
+        response = self._http.get(url)
+        retrieved_at = datetime.now(UTC)
+        dto = SecFullTextSearchResponseDTO.model_validate(json.loads(response.raw_bytes))
         return FetchResult(
             dto=dto,
             raw_bytes=response.raw_bytes,

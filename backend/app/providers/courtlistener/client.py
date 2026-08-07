@@ -127,6 +127,20 @@ class CourtListenerClient:
     def docket_entries_url(self, courtlistener_docket_id: int) -> str:
         return f"{_DOCKET_ENTRIES_URL}?docket={courtlistener_docket_id}&order_by=entry_number"
 
+    def docket_entries_incremental_url(
+        self, courtlistener_docket_id: int, *, since_entry_id: int
+    ) -> str:
+        """TD-012 incremental sync (PLAN.md Milestone 7.5): only entries
+        with `id` strictly greater than the highest `courtlistener_entry_id`
+        already synced for this docket — `id` is CourtListener's own
+        globally monotonic identifier (live-verified via `OPTIONS`), so this
+        never re-fetches an already-synced entry and never needs an overlap
+        margin the way a timestamp-based cursor would."""
+        return (
+            f"{_DOCKET_ENTRIES_URL}?docket={courtlistener_docket_id}"
+            f"&id__gt={since_entry_id}&order_by=id"
+        )
+
 
 def absolute_courtlistener_url(path_or_url: str | None) -> str | None:
     """CourtListener's `*_absolute_url` fields are site-relative paths

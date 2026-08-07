@@ -48,9 +48,7 @@ export function AlertCard({ alert, onAcknowledge, onDismiss }: AlertCardProps): 
                 variant="outlined"
                 color={alert.ai_assisted ? "secondary" : "default"}
               />
-              {alert.is_backfill && (
-                <Chip label="Historical Backfill Demo" size="small" color="warning" />
-              )}
+              {alert.is_backfill && <Chip label="Historical" size="small" color="default" />}
               <Chip label={alert.status} size="small" variant="outlined" />
             </Stack>
             <Typography variant="subtitle1" fontWeight={600} sx={{ mt: 1 }}>
