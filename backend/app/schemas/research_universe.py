@@ -75,7 +75,13 @@ class ResearchUniverseIssuersResponse(BaseModel):
 
 class IssuerUniverseMembership(BaseModel):
     """A universe an issuer belongs to — shown on Issuer Detail, clearly
-    separated from factual-status sections (PLAN.md 24.9)."""
+    separated from factual-status sections (PLAN.md 24.9).
+
+    `verification_status` distinguishes an analyst-verified/definitive-
+    evidence membership (`verified`) from a system-suggested one
+    (`partial`, pending analyst confirmation) — surfaced explicitly per
+    Milestone 7.5.1 section 4: a `partial` membership must never read as a
+    settled fact in the UI."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -85,3 +91,4 @@ class IssuerUniverseMembership(BaseModel):
     collection_type: CollectionType
     rationale: str
     rationale_as_of_date: date | None
+    verification_status: VerificationStatus

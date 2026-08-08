@@ -223,6 +223,46 @@ describe("IssuerPage", () => {
     });
   });
 
+  it("visually distinguishes a system-suggested membership from a verified one", async () => {
+    vi.spyOn(issuerApi, "fetchIssuerDetail").mockResolvedValue({
+      ...BASE_ISSUER,
+      universe_memberships: [
+        {
+          collection_id: "col-verified",
+          slug: "system-chapter-11",
+          name: "System-Detected: Chapter 11",
+          collection_type: "research_universe",
+          rationale: "Verified test rationale.",
+          rationale_as_of_date: "2026-08-01",
+          verification_status: "verified",
+        },
+        {
+          collection_id: "col-partial",
+          slug: "system-going-concern",
+          name: "System-Detected: Going Concern",
+          collection_type: "research_universe",
+          rationale: "Suggested test rationale.",
+          rationale_as_of_date: "2026-08-01",
+          verification_status: "partial",
+        },
+      ],
+    });
+    vi.spyOn(capitalStructureApi, "fetchCapitalStructure").mockResolvedValue(
+      EMPTY_CAPITAL_STRUCTURE,
+    );
+
+    renderIssuerPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("System-Detected: Chapter 11")).toBeInTheDocument();
+    });
+    // Verified membership: shown by its plain name, no "(suggested)" suffix.
+    expect(screen.queryByText("System-Detected: Chapter 11 (suggested)")).not.toBeInTheDocument();
+    // Partial (system-suggested) membership: visibly marked, not rendered
+    // identically to a verified one (PLAN.md Milestone 7.5.1 section 4).
+    expect(screen.getByText("System-Detected: Going Concern (suggested)")).toBeInTheDocument();
+  });
+
   it("shows a not-found message for a 404 response", async () => {
     vi.spyOn(issuerApi, "fetchIssuerDetail").mockRejectedValue(
       new ApiError("Request failed with status 404", 404),

@@ -52,7 +52,13 @@ export interface ResearchUniverseIssuersResponse {
   issuers: ResearchUniverseMembershipRow[];
 }
 
-/** A universe an issuer belongs to — shown on Issuer Detail. */
+/**
+ * A universe an issuer belongs to — shown on Issuer Detail.
+ * `verification_status` distinguishes an analyst-verified/definitive-evidence
+ * membership (`verified`) from a system-suggested one (`partial`, pending
+ * analyst confirmation) — must be surfaced in the UI, never collapsed to a
+ * single visual treatment (PLAN.md Milestone 7.5.1 section 4).
+ */
 export interface IssuerUniverseMembership {
   collection_id: string;
   slug: string;
@@ -60,6 +66,7 @@ export interface IssuerUniverseMembership {
   collection_type: CollectionType;
   rationale: string;
   rationale_as_of_date: string | null;
+  verification_status: VerificationStatus;
 }
 
 export async function fetchResearchUniverses(

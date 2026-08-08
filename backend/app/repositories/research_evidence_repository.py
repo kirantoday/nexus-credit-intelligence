@@ -131,6 +131,40 @@ def list_evidence(
     return [_to_domain(row) for row in rows]
 
 
+def list_evidence_by_issuer_and_types(
+    db: Session, issuer_id: UUID, evidence_types: list[EvidenceType]
+) -> list[ResearchEvidence]:
+    """All of one issuer's evidence across a set of types, in a single
+    query — used by `app.scripts.reclassify_system_universes`, which
+    previously issued one `list_evidence` round-trip per evidence type per
+    issuer (an N+1 pattern real enough to matter: ~500 issuers x up to 15
+    types = thousands of avoidable round-trips to a remote pooled
+    connection). Unpaginated: bounded by one issuer's evidence, not the
+    whole table."""
+    stmt = select(ResearchEvidenceModel).where(
+        ResearchEvidenceModel.issuer_id == issuer_id,
+        ResearchEvidenceModel.evidence_type.in_([t.value for t in evidence_types]),
+    )
+    rows = db.execute(stmt).scalars().all()
+    return [_to_domain(row) for row in rows]
+
+
+def list_issuer_ids_with_evidence_types(
+    db: Session, evidence_types: list[EvidenceType]
+) -> list[UUID]:
+    """Distinct issuer ids with at least one `research_evidence` row of any
+    of the given types — used by
+    `app.scripts.reclassify_system_universes` to find every issuer whose
+    evidence-driven Research Universe memberships might need recomputing,
+    without loading all evidence into memory just to find who has any."""
+    stmt = (
+        select(ResearchEvidenceModel.issuer_id)
+        .where(ResearchEvidenceModel.evidence_type.in_([t.value for t in evidence_types]))
+        .distinct()
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
 def count_evidence_created_since(db: Session, since: datetime | None) -> int:
     """Provider-agnostic count by `created_at` — backs the Morning Research
     Brief's "New Research Evidence" metric across every evidence provider

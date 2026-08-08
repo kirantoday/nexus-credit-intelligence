@@ -233,6 +233,44 @@ def upgrade_membership_verification(
     return _membership_to_domain(row)
 
 
+def set_membership_verification(
+    db: Session,
+    collection_id: UUID,
+    issuer_id: UUID,
+    *,
+    verification_status: VerificationStatus,
+    rationale: str,
+    rationale_as_of_date: date | None,
+    supporting_provenance_ids: list[UUID] | None,
+) -> CollectionMembership | None:
+    """Sets an existing membership's `verification_status` unconditionally —
+    including a *downgrade* (`verified` -> `partial`), which
+    `upgrade_membership_verification` deliberately never does. Reserved for
+    `app.scripts.reclassify_system_universes`'s controlled, auditable
+    correction pass (PLAN.md Milestone 7.5.1 section 9): the live,
+    incremental classification path (`universe_classification_service
+    .classify_issuer`) must stay upgrade-only, but a bug that caused a
+    membership to be wrongly `verified` in the first place cannot be
+    corrected by a mechanism that can only ever move status upward.
+    Returns `None` if no membership exists yet."""
+    stmt = select(CollectionMembershipModel).where(
+        CollectionMembershipModel.collection_id == collection_id,
+        CollectionMembershipModel.issuer_id == issuer_id,
+    )
+    row = db.execute(stmt).scalars().first()
+    if row is None:
+        return None
+
+    row.verification_status = verification_status.value
+    row.rationale = rationale
+    row.rationale_as_of_date = rationale_as_of_date
+    if supporting_provenance_ids:
+        row.supporting_provenance_ids = [str(pid) for pid in supporting_provenance_ids]
+    db.flush()
+    db.refresh(row)
+    return _membership_to_domain(row)
+
+
 def list_memberships_by_collection(db: Session, collection_id: UUID) -> list[CollectionMembership]:
     stmt = select(CollectionMembershipModel).where(
         CollectionMembershipModel.collection_id == collection_id

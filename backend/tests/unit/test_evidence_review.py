@@ -73,6 +73,35 @@ def test_well_formed_response_parses_successfully() -> None:
     assert result.headline == "Potential bankruptcy filing detected in a new 8-K"
     assert result.severity is EvidenceSeverity.HIGH
     assert result.confidence == 0.9
+    # Milestone 7.5.1: a response that omits `issuer_is_subject` (an older
+    # or degraded model response) must default to True — a missing field
+    # must never silently suppress a real, correctly-flagged signal.
+    assert result.issuer_is_subject is True
+
+
+def test_issuer_is_subject_false_parses_correctly() -> None:
+    """Milestone 7.5.1 regression test: the model correctly flagging that
+    an excerpt concerns a third party (not the issuer) must be captured,
+    not discarded — `universe_classification_service` relies on exactly
+    this field to avoid overclaiming a subsidiary/third-party event as the
+    issuer's own."""
+    llm = _FakeLLMProvider(
+        response_text=(
+            '{"headline": "Bankruptcy reference relates to a prior employer, not the issuer", '
+            '"explanation": "The excerpt describes a director\'s former company, not this '
+            'issuer.", "severity": "low", "confidence": 0.85, "issuer_is_subject": false}'
+        )
+    )
+
+    result = review_evidence_candidates(
+        llm,
+        issuer_name="Example Corp",
+        source_description="SEC Form 8-K filed 2026-08-01",
+        candidates=[_candidate()],
+    )
+
+    assert result is not None
+    assert result.issuer_is_subject is False
 
 
 def test_non_json_response_fails_closed() -> None:

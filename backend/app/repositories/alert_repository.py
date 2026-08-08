@@ -42,6 +42,7 @@ def _to_domain(row: AlertEventModel) -> AlertEvent:
         dismissed_by=row.dismissed_by,
         dismissal_reason=row.dismissal_reason,
         is_backfill=row.is_backfill,
+        issuer_is_subject=row.issuer_is_subject,
         triggered_at=row.triggered_at,
         created_at=row.created_at,
     )
@@ -66,6 +67,7 @@ def create_alert(db: Session, data: AlertEventCreate) -> AlertEvent:
         provenance_id=data.provenance_id,
         status=data.status.value,
         is_backfill=data.is_backfill,
+        issuer_is_subject=data.issuer_is_subject,
     )
     db.add(row)
     db.flush()
@@ -154,6 +156,26 @@ def count_ai_assisted_alerts(
     if status is not None:
         stmt = stmt.where(AlertEventModel.status == status.value)
     return db.execute(stmt).scalar_one()
+
+
+def backfill_issuer_is_subject(
+    db: Session, alert_id: UUID, *, issuer_is_subject: bool
+) -> AlertEvent:
+    """Sets `issuer_is_subject` on an existing alert whose value is
+    currently `NULL` (a pre-Milestone-7.5.1 row, or one synthesized without
+    an AI review) — used only by `app.scripts.reclassify_system_universes`
+    to backfill the field for existing definitive-evidence alerts via a
+    fresh, targeted AI re-review, so classification can be corrected
+    without rewriting the alert's already-correct, already user-visible
+    `headline`/`explanation`/`severity` (PLAN.md Milestone 7.5.1 section 9:
+    correct the classification, don't rewrite what was already right)."""
+    row = db.get(AlertEventModel, alert_id)
+    if row is None:
+        raise ValueError(f"alert_event {alert_id} not found")
+    row.issuer_is_subject = issuer_is_subject
+    db.flush()
+    db.refresh(row)
+    return _to_domain(row)
 
 
 def acknowledge_alert(db: Session, alert_id: UUID, *, acknowledged_by: str | None) -> AlertEvent:

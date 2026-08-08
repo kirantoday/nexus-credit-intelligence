@@ -44,6 +44,13 @@ class AlertEventCreate(BaseModel):
     dismissed_by: str | None = None
     dismissal_reason: str | None = None
     is_backfill: bool = False
+    # True: the excerpts describe an event the issuer itself (or it and its
+    # consolidated subsidiaries together) experienced. False: a legally
+    # separate third party (customer, vendor, peer, an officer's former
+    # employer, an investee). None: no AI review was performed (deterministic
+    # fallback, or a pre-Milestone-7.5.1 historical row) — treated as
+    # "unknown," never as False (PLAN.md Milestone 7.5.1).
+    issuer_is_subject: bool | None = None
 
     @model_validator(mode="after")
     def _evidence_ids_not_empty(self) -> AlertEventCreate:

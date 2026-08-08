@@ -85,6 +85,35 @@ def _fake_search_returning(
     return _fn
 
 
+def _fake_search_recording_forms(
+    forms_seen: list[tuple[str, ...]],
+) -> market_discovery_service.SearchFullTextFn:
+    """Records each call's `forms` argument instead of the response content
+    — used to prove `run_discovery` splits `forms` before ever calling
+    `search_full_text_fn`, per Milestone 7.5.1's forms-parameter fix."""
+
+    def _fn(
+        http_client: ThrottledHttpClient,
+        *,
+        query: str,
+        forms: tuple[str, ...],
+        start_date: date,
+        end_date: date,
+        from_offset: int,
+        size: int,
+    ) -> FetchResult[SecFullTextSearchResponseDTO]:
+        forms_seen.append(forms)
+        return FetchResult(
+            dto=_fts_response(),
+            raw_bytes=b"{}",
+            content_type="application/json",
+            url="https://efts.sec.gov/LATEST/search-index?q=test",
+            retrieved_at=datetime.now(UTC),
+        )
+
+    return _fn
+
+
 def _seed_issuer(db: Session, *, cik: str = "9990000001") -> UUID:
     provenance = provenance_repository.create_provenance(db, reported_public_provenance())
     issuer = issuer_repository.create_issuer(
@@ -143,6 +172,37 @@ def test_backfill_requires_explicit_window(db_session: Session) -> None:
             mode=FilingMonitorRunMode.BACKFILL,
             environment="test",
         )
+
+
+def test_forms_are_split_into_base_and_amendment_groups(db_session: Session) -> None:
+    """Regression test for Milestone 7.5.1's root-caused Layer-0 coverage
+    bug: SEC's full-text-search `forms` filter silently breaks when
+    amendment-suffix forms (e.g. "8-K/A") are mixed into the same
+    comma-separated list as base forms — live-verified to drop a "chapter
+    11" query's hit count from ~1460 to 50 over a fixed window. Confirms
+    `run_discovery` never calls `search_full_text_fn` with a mixed list —
+    each call's `forms` is either all-base or all-amendment."""
+    forms_seen: list[tuple[str, ...]] = []
+
+    market_discovery_service.run_discovery(
+        db_session,
+        _NullHttpClient(),  # type: ignore[arg-type]
+        None,
+        mode=FilingMonitorRunMode.BACKFILL,
+        window_start=date(2026, 7, 1),
+        window_end=date(2026, 7, 6),
+        environment="test",
+        queries=("test phrase",),
+        forms=("8-K", "8-K/A", "10-K", "10-K/A"),
+        search_full_text_fn=_fake_search_recording_forms(forms_seen),
+        process_issuer_filings_fn=_no_op_process_issuer_filings,
+    )
+
+    assert forms_seen == [("10-K", "8-K"), ("10-K/A", "8-K/A")]
+    for forms in forms_seen:
+        has_base = any("/" not in f for f in forms)
+        has_amendment = any("/" in f for f in forms)
+        assert not (has_base and has_amendment), f"mixed forms list: {forms}"
 
 
 def test_matched_existing_issuer_is_counted_and_processed(db_session: Session) -> None:

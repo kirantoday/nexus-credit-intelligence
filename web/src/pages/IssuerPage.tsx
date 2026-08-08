@@ -285,22 +285,29 @@ export function IssuerPage(): ReactElement {
           </Typography>
         ) : (
           <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-            {issuer.universe_memberships.map((membership) => (
-              <Tooltip
-                key={membership.collection_id}
-                title={`${membership.rationale}${membership.rationale_as_of_date ? ` (as of ${formatDate(membership.rationale_as_of_date)})` : ""}`}
-              >
-                <Chip
-                  component={RouterLink}
-                  to={`/?universe=${membership.collection_id}`}
-                  clickable
-                  label={membership.name}
-                  size="small"
-                  variant="outlined"
-                  color={membership.collection_type === "benchmark" ? "info" : "default"}
-                />
-              </Tooltip>
-            ))}
+            {issuer.universe_memberships.map((membership) => {
+              const isSuggested = membership.verification_status === "partial";
+              const tooltipPrefix = isSuggested
+                ? "System-suggested, pending analyst confirmation — "
+                : "";
+              return (
+                <Tooltip
+                  key={membership.collection_id}
+                  title={`${tooltipPrefix}${membership.rationale}${membership.rationale_as_of_date ? ` (as of ${formatDate(membership.rationale_as_of_date)})` : ""}`}
+                >
+                  <Chip
+                    component={RouterLink}
+                    to={`/?universe=${membership.collection_id}`}
+                    clickable
+                    label={isSuggested ? `${membership.name} (suggested)` : membership.name}
+                    size="small"
+                    variant={isSuggested ? "outlined" : "filled"}
+                    color={membership.collection_type === "benchmark" ? "info" : "default"}
+                    sx={isSuggested ? { borderStyle: "dashed" } : undefined}
+                  />
+                </Tooltip>
+              );
+            })}
           </Stack>
         )}
       </Paper>

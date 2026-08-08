@@ -119,6 +119,32 @@ def test_get_issuer_universe_memberships_lists_every_universe(db_session: Sessio
     memberships = research_universe_service.get_issuer_universe_memberships(db_session, issuer.id)
 
     assert {m.slug for m in memberships} == {universe_a.slug, universe_b.slug}
+    # Milestone 7.5.1 section 4: verification_status must be surfaced, not
+    # dropped — the frontend relies on it to distinguish a verified
+    # membership from a system-suggested (partial) one.
+    assert all(m.verification_status is VerificationStatus.VERIFIED for m in memberships)
+
+
+def test_get_issuer_universe_memberships_surfaces_partial_status(db_session: Session) -> None:
+    """A system-suggested (`partial`) membership must be returned as such,
+    never silently reported as `verified` — the whole point of the
+    distinction (Milestone 7.5.1 section 4)."""
+    issuer = _seed_issuer(db_session, legal_name=f"Partial Membership Test Co {uuid4()}")
+    universe = _seed_universe(db_session, slug=f"universe-partial-{uuid4()}")
+    collection_repository.add_membership(
+        db_session,
+        CollectionMembershipCreate(
+            collection_id=universe.id,
+            issuer_id=issuer.id,
+            rationale="System-suggested test membership.",
+            verification_status=VerificationStatus.PARTIAL,
+        ),
+    )
+
+    memberships = research_universe_service.get_issuer_universe_memberships(db_session, issuer.id)
+
+    assert len(memberships) == 1
+    assert memberships[0].verification_status is VerificationStatus.PARTIAL
 
 
 def test_get_issuer_universe_memberships_empty_for_unaffiliated_issuer(

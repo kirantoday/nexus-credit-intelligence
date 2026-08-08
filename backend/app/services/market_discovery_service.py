@@ -91,6 +91,27 @@ RULE_VERSION = "2026-08.1"
 DEFAULT_MAX_HITS_PER_QUERY = 500
 
 
+def _split_forms_for_full_text_search(forms: tuple[str, ...]) -> list[tuple[str, ...]]:
+    """Milestone 7.5.1 root-cause fix: SEC's full-text-search `forms`
+    parameter silently breaks when amendment-suffix form types (e.g.
+    `"8-K/A"`) are mixed into the same comma-separated list as base form
+    types — live-verified directly against `efts.sec.gov`: `forms=8-K`
+    alone returned 577 real hits for a "chapter 11" query over a fixed
+    window, `forms=8-K,10-K` returned 1002, but `forms=8-K,10-K/A` (mixing
+    one amendment suffix into the list) returned 0, and the actual
+    10-form list this milestone's `MONITORED_FORM_TYPES` used returned
+    just 50 instead of the ~1460 confirmed to genuinely exist in that
+    window — a >96% real coverage loss, not a hypothetical one. Splitting
+    into a same-list-quirk-free base-forms request and a separate
+    amendment-forms request (both individually confirmed correct) recovers
+    full intended coverage without changing which form types are in scope
+    — not a query/scope expansion, a fix to how the existing approved list
+    is actually transmitted to SEC's API."""
+    base = tuple(sorted(f for f in forms if "/" not in f))
+    amendments = tuple(sorted(f for f in forms if "/" in f))
+    return [group for group in (base, amendments) if group]
+
+
 class SearchFullTextFn(Protocol):
     def __call__(
         self,
@@ -254,185 +275,190 @@ def run_discovery(
     errors_count = 0
 
     for query in queries:
-        from_offset = 0
-        while True:
-            result = search_full_text_fn(
-                http_client,
-                query=query,
-                forms=forms,
-                start_date=resolved_start,
-                end_date=resolved_end,
-                from_offset=from_offset,
-                size=FULL_TEXT_SEARCH_MAX_PAGE_SIZE,
-            )
-            queries_executed += 1
-            hits = result.dto.hits.hits
-            filings_examined += len(hits)
+        for forms_group in _split_forms_for_full_text_search(forms):
+            from_offset = 0
+            while True:
+                result = search_full_text_fn(
+                    http_client,
+                    query=query,
+                    forms=forms_group,
+                    start_date=resolved_start,
+                    end_date=resolved_end,
+                    from_offset=from_offset,
+                    size=FULL_TEXT_SEARCH_MAX_PAGE_SIZE,
+                )
+                queries_executed += 1
+                hits = result.dto.hits.hits
+                filings_examined += len(hits)
 
-            for hit in hits:
-                accession_no = hit.source.adsh
-                file_date_value = date.fromisoformat(hit.source.file_date)
-                for cik in hit.source.ciks or ():
-                    if not cik:
-                        continue
-                    key = (cik, accession_no)
-                    if key in seen_filing_keys:
-                        continue
-                    seen_filing_keys.add(key)
-                    candidate_filings += 1
+                for hit in hits:
+                    accession_no = hit.source.adsh
+                    file_date_value = date.fromisoformat(hit.source.file_date)
+                    for cik in hit.source.ciks or ():
+                        if not cik:
+                            continue
+                        key = (cik, accession_no)
+                        if key in seen_filing_keys:
+                            continue
+                        seen_filing_keys.add(key)
+                        candidate_filings += 1
 
-                    existing = market_discovery_repository.get_candidate_by_filing(
-                        db, cik=cik, accession_no=accession_no
-                    )
-                    if (
-                        existing is not None
-                        and not force_reprocess
-                        and existing.rule_version == RULE_VERSION
-                    ):
-                        continue
+                        existing = market_discovery_repository.get_candidate_by_filing(
+                            db, cik=cik, accession_no=accession_no
+                        )
+                        if (
+                            existing is not None
+                            and not force_reprocess
+                            and existing.rule_version == RULE_VERSION
+                        ):
+                            continue
 
-                    try:
-                        resolution = resolve_issuer_fn(db, http_client, cik=cik)
-                    except Exception as exc:  # noqa: BLE001 - per-candidate isolation
-                        db.rollback()
-                        errors_count += 1
-                        error_messages.append(f"resolve cik {cik} accession {accession_no}: {exc}")
-                        continue
+                        try:
+                            resolution = resolve_issuer_fn(db, http_client, cik=cik)
+                        except Exception as exc:  # noqa: BLE001 - per-candidate isolation
+                            db.rollback()
+                            errors_count += 1
+                            error_messages.append(
+                                f"resolve cik {cik} accession {accession_no}: {exc}"
+                            )
+                            continue
 
-                    market_discovery_repository.upsert_candidate(
-                        db,
-                        MarketDiscoveryCandidateCreate(
-                            discovery_run_id=run.id,
-                            cik=cik,
-                            accession_no=accession_no,
-                            form_type=hit.source.form,
-                            file_date=file_date_value,
-                            matched_query=query,
-                            sec_items=hit.source.items or None,
-                            resolution_outcome=resolution.outcome,
-                            resolution_reason=resolution.reason,
-                            issuer_id=(
-                                UUID(resolution.issuer_id) if resolution.issuer_id else None
-                            ),
-                            layer1_matched=False,
-                            evidence_created=False,
-                            provenance_id=None,
-                            rule_version=RULE_VERSION,
-                        ),
-                    )
-                    db.commit()
-
-                    if resolution.outcome == MarketDiscoveryResolutionOutcome.MATCHED_EXISTING:
-                        issuers_resolved_existing += 1
-                    elif resolution.outcome == MarketDiscoveryResolutionOutcome.VERIFIED_NEW:
-                        issuers_resolved_new += 1
-                    elif resolution.outcome == MarketDiscoveryResolutionOutcome.AMBIGUOUS:
-                        issuers_ambiguous += 1
-                    else:
-                        issuers_rejected += 1
-
-                    if resolution.outcome not in (
-                        MarketDiscoveryResolutionOutcome.MATCHED_EXISTING,
-                        MarketDiscoveryResolutionOutcome.VERIFIED_NEW,
-                    ):
-                        continue
-
-                    assert resolution.issuer_id is not None
-                    issuer_id = UUID(resolution.issuer_id)
-                    if issuer_id in processed_issuer_ids:
-                        continue
-                    processed_issuer_ids.add(issuer_id)
-
-                    try:
-                        processing_result = process_issuer_filings_fn(
+                        market_discovery_repository.upsert_candidate(
                             db,
-                            http_client,
-                            cik=cik,
-                            issuer_id=issuer_id,
-                            since_date=resolved_start,
+                            MarketDiscoveryCandidateCreate(
+                                discovery_run_id=run.id,
+                                cik=cik,
+                                accession_no=accession_no,
+                                form_type=hit.source.form,
+                                file_date=file_date_value,
+                                matched_query=query,
+                                sec_items=hit.source.items or None,
+                                resolution_outcome=resolution.outcome,
+                                resolution_reason=resolution.reason,
+                                issuer_id=(
+                                    UUID(resolution.issuer_id) if resolution.issuer_id else None
+                                ),
+                                layer1_matched=False,
+                                evidence_created=False,
+                                provenance_id=None,
+                                rule_version=RULE_VERSION,
+                            ),
                         )
-                        if processing_result.evidence:
-                            new_alerts = alert_synthesis_service.synthesize_alerts_from_evidence(
-                                db,
-                                evidence=processing_result.evidence,
-                                describe_source=lambda e: describe_sec_source(db, e),
-                                llm=llm,
-                                environment=environment,
-                                is_backfill=(mode is FilingMonitorRunMode.BACKFILL),
-                            )
-                            alerts_created += len(new_alerts)
-                            universe_classification_service.classify_issuer(
-                                db,
-                                issuer_id,
-                                processing_result.evidence,
-                                as_of_date=file_date_value,
-                            )
-                        evidence_created += len(processing_result.evidence)
-
-                        triggering_filing = sec_filing_repository.get_filing_by_accession(
-                            db, accession_no
-                        )
-                        if triggering_filing is not None:
-                            filing_evidence = [
-                                e
-                                for e in processing_result.evidence
-                                if e.filing_id == triggering_filing.id
-                            ]
-                            if filing_evidence:
-                                market_discovery_repository.upsert_candidate(
-                                    db,
-                                    MarketDiscoveryCandidateCreate(
-                                        discovery_run_id=run.id,
-                                        cik=cik,
-                                        accession_no=accession_no,
-                                        form_type=hit.source.form,
-                                        file_date=file_date_value,
-                                        matched_query=query,
-                                        sec_items=hit.source.items or None,
-                                        resolution_outcome=resolution.outcome,
-                                        resolution_reason=resolution.reason,
-                                        issuer_id=issuer_id,
-                                        layer1_matched=True,
-                                        evidence_created=True,
-                                        provenance_id=filing_evidence[0].provenance_id,
-                                        rule_version=RULE_VERSION,
-                                    ),
-                                )
                         db.commit()
 
-                        if enrichment_clients is not None:
-                            # Every resolved issuer, `matched_existing` and
-                            # `verified_new` alike — the orchestrator's own
-                            # staleness policy is what keeps this cheap for
-                            # issuers already enriched recently, not a gate
-                            # here on "is this newly discovered."
-                            enrich_issuer_fn(
-                                db,
-                                issuer_id,
-                                enrichment_clients,
-                                llm,
-                                environment=environment,
-                                force=False,
-                            )
-                    except Exception as exc:  # noqa: BLE001 - per-issuer isolation
-                        db.rollback()
-                        errors_count += 1
-                        error_messages.append(
-                            f"process issuer {issuer_id} (CIK {cik}) filings: {exc}"
-                        )
-                        continue
+                        if resolution.outcome == MarketDiscoveryResolutionOutcome.MATCHED_EXISTING:
+                            issuers_resolved_existing += 1
+                        elif resolution.outcome == MarketDiscoveryResolutionOutcome.VERIFIED_NEW:
+                            issuers_resolved_new += 1
+                        elif resolution.outcome == MarketDiscoveryResolutionOutcome.AMBIGUOUS:
+                            issuers_ambiguous += 1
+                        else:
+                            issuers_rejected += 1
 
-            total_hits = result.dto.hits.total.value
-            next_offset = from_offset + len(hits)
-            if len(hits) == 0 or next_offset >= total_hits:
-                break
-            if next_offset >= max_hits_per_query:
-                error_messages.append(
-                    f"query {query!r}: capped at {max_hits_per_query} hits "
-                    f"(SEC reported {total_hits} total) — see PLAN.md Milestone 7.5 section 29"
-                )
-                break
-            from_offset = next_offset
+                        if resolution.outcome not in (
+                            MarketDiscoveryResolutionOutcome.MATCHED_EXISTING,
+                            MarketDiscoveryResolutionOutcome.VERIFIED_NEW,
+                        ):
+                            continue
+
+                        assert resolution.issuer_id is not None
+                        issuer_id = UUID(resolution.issuer_id)
+                        if issuer_id in processed_issuer_ids:
+                            continue
+                        processed_issuer_ids.add(issuer_id)
+
+                        try:
+                            processing_result = process_issuer_filings_fn(
+                                db,
+                                http_client,
+                                cik=cik,
+                                issuer_id=issuer_id,
+                                since_date=resolved_start,
+                            )
+                            if processing_result.evidence:
+                                new_alerts = (
+                                    alert_synthesis_service.synthesize_alerts_from_evidence(
+                                        db,
+                                        evidence=processing_result.evidence,
+                                        describe_source=lambda e: describe_sec_source(db, e),
+                                        llm=llm,
+                                        environment=environment,
+                                        is_backfill=(mode is FilingMonitorRunMode.BACKFILL),
+                                    )
+                                )
+                                alerts_created += len(new_alerts)
+                                universe_classification_service.classify_issuer(
+                                    db,
+                                    issuer_id,
+                                    processing_result.evidence,
+                                    as_of_date=file_date_value,
+                                )
+                            evidence_created += len(processing_result.evidence)
+
+                            triggering_filing = sec_filing_repository.get_filing_by_accession(
+                                db, accession_no
+                            )
+                            if triggering_filing is not None:
+                                filing_evidence = [
+                                    e
+                                    for e in processing_result.evidence
+                                    if e.filing_id == triggering_filing.id
+                                ]
+                                if filing_evidence:
+                                    market_discovery_repository.upsert_candidate(
+                                        db,
+                                        MarketDiscoveryCandidateCreate(
+                                            discovery_run_id=run.id,
+                                            cik=cik,
+                                            accession_no=accession_no,
+                                            form_type=hit.source.form,
+                                            file_date=file_date_value,
+                                            matched_query=query,
+                                            sec_items=hit.source.items or None,
+                                            resolution_outcome=resolution.outcome,
+                                            resolution_reason=resolution.reason,
+                                            issuer_id=issuer_id,
+                                            layer1_matched=True,
+                                            evidence_created=True,
+                                            provenance_id=filing_evidence[0].provenance_id,
+                                            rule_version=RULE_VERSION,
+                                        ),
+                                    )
+                            db.commit()
+
+                            if enrichment_clients is not None:
+                                # Every resolved issuer, `matched_existing` and
+                                # `verified_new` alike — the orchestrator's own
+                                # staleness policy is what keeps this cheap for
+                                # issuers already enriched recently, not a gate
+                                # here on "is this newly discovered."
+                                enrich_issuer_fn(
+                                    db,
+                                    issuer_id,
+                                    enrichment_clients,
+                                    llm,
+                                    environment=environment,
+                                    force=False,
+                                )
+                        except Exception as exc:  # noqa: BLE001 - per-issuer isolation
+                            db.rollback()
+                            errors_count += 1
+                            error_messages.append(
+                                f"process issuer {issuer_id} (CIK {cik}) filings: {exc}"
+                            )
+                            continue
+
+                total_hits = result.dto.hits.total.value
+                next_offset = from_offset + len(hits)
+                if len(hits) == 0 or next_offset >= total_hits:
+                    break
+                if next_offset >= max_hits_per_query:
+                    error_messages.append(
+                        f"query {query!r}: capped at {max_hits_per_query} hits "
+                        f"(SEC reported {total_hits} total) — see PLAN.md Milestone 7.5 section 29"
+                    )
+                    break
+                from_offset = next_offset
 
     status = (
         FilingMonitorRunStatus.SUCCESS

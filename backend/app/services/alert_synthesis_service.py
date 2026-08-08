@@ -94,7 +94,7 @@ class SourceDescription:
 DescribeSourceFn = Callable[[ResearchEvidence], SourceDescription]
 
 
-def _evidence_to_candidate(evidence: ResearchEvidence) -> RuleMatch:
+def evidence_to_candidate(evidence: ResearchEvidence) -> RuleMatch:
     """Adapt a persisted `ResearchEvidence` row back into the lightweight
     `RuleMatch` shape `app.ai.evidence_review` expects — keeps that module
     (and its already-tested/live-verified behavior) untouched."""
@@ -200,7 +200,7 @@ def _synthesize_one_alert(
             classification=DataClassification.PUBLIC, entitlement=None, environment=environment
         )
         if gate_decision.allowed:
-            candidates = [_evidence_to_candidate(e) for e in bundle.evidence]
+            candidates = [evidence_to_candidate(e) for e in bundle.evidence]
             review_result = review_evidence_candidates(
                 llm,
                 issuer_name=issuer.legal_name,
@@ -215,6 +215,7 @@ def _synthesize_one_alert(
         severity = review_result.severity
         confidence: float | None = review_result.confidence
         detection_method = DetectionMethod.AI_ASSISTED
+        issuer_is_subject: bool | None = review_result.issuer_is_subject
     else:
         headline, explanation = _deterministic_summary(bundle, source_phrase=source.phrase)
         severity = bundle.primary_evidence.severity
@@ -222,6 +223,7 @@ def _synthesize_one_alert(
             (e.confidence for e in bundle.evidence if e.confidence is not None), default=None
         )
         detection_method = DetectionMethod.DETERMINISTIC
+        issuer_is_subject = None
 
     provenance_id = _synthesis_provenance(db, bundle=bundle, ai_assisted=ai_assisted, source=source)
 
@@ -245,6 +247,7 @@ def _synthesize_one_alert(
             provenance_id=provenance_id,
             status=AlertStatus.NEW,
             is_backfill=is_backfill,
+            issuer_is_subject=issuer_is_subject,
         ),
     )
     return alert

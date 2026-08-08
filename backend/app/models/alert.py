@@ -87,6 +87,7 @@ class AlertEvent(Base):
     dismissed_by: Mapped[str | None] = mapped_column(Text, nullable=True)
     dismissal_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_backfill: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    issuer_is_subject: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
