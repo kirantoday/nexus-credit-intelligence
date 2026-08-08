@@ -75,9 +75,15 @@ class Settings(BaseSettings):
     # Auth (disabled for first demo; architecture supports Supabase Auth JWT later)
     auth_enabled: bool = False
 
-    # Web / CORS
+    # Web / CORS. `cors_allowed_origins` is a comma-separated list of exact
+    # origins (scheme + host + optional port, no path, no trailing slash) —
+    # never a wildcard, so credentialed cross-origin requests from the
+    # deployed frontend work correctly. The local-dev default covers both
+    # localhost and 127.0.0.1 since browsers treat them as distinct origins;
+    # production sets this via the Railway service's own environment
+    # variable to the deployed Vercel origin(s), never committed here.
     frontend_url: str | None = None
-    cors_allowed_origins: str = "http://localhost:5173"
+    cors_allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     @property
     def cors_origins_list(self) -> list[str]:

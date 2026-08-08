@@ -252,12 +252,16 @@ application). See `ARCHITECTURE_DECISIONS.md` ADR-013 for the full rationale.
 1. Create a Railway service pointed at this repository with `backend/` as the root
    directory.
 2. Set the environment variables from `.env.example` as Railway service variables
-   (never commit real values).
+   (never commit real values). **`CORS_ALLOWED_ORIGINS` must include the deployed
+   Vercel frontend's exact origin** (e.g.
+   `CORS_ALLOWED_ORIGINS=https://nexus-credit-intelligence.vercel.app`) — the FastAPI
+   `CORSMiddleware` (`backend/app/main.py`) only allows origins in this list, never a
+   wildcard, so preflight (`OPTIONS`) and actual requests from any other origin,
+   including an unset/default-only value, are correctly rejected by the browser.
 3. Railway builds `backend/Dockerfile` and runs the container; `/health` gates
    deploy health.
 
-**Not yet deployed** — this is the configuration in place, not a claim of a live
-deployment. Deployment validation is Milestone 15 in `PLAN.md` § Milestone Status.
+Deployed: https://nexus-credit-intelligence-production.up.railway.app.
 
 ---
 
@@ -270,9 +274,11 @@ SPA rewrites. Deployment steps:
    directory.
 2. Set `VITE_API_BASE_URL` to the deployed Railway backend's URL.
 3. Vercel builds and serves the static output; the backend must have
-   `CORS_ALLOWED_ORIGINS`/`FRONTEND_URL` set to the Vercel deployment's origin.
+   `CORS_ALLOWED_ORIGINS` (see above) set to this project's deployed origin, or
+   requests from the browser will be blocked by CORS regardless of how correctly
+   the frontend itself is configured.
 
-**Not yet deployed** — same caveat as above.
+Deployed: https://nexus-credit-intelligence.vercel.app.
 
 ---
 
