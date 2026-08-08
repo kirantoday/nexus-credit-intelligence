@@ -3707,3 +3707,431 @@ meaningful quality signal: the conservative ADR-020 policy is not merely
 "currently untested," it is consistently declining to guess under real
 adversarial-scale volume, which is the intended behavior, not a limitation
 to route around.
+
+
+---
+
+## 2026-08-08 — Milestone 7.5.1: Signal Quality & Research Universe Calibration
+
+**Summary**
+
+Inserted before Milestone 8 after production inspection of Milestone 7.5's
+live results found individual alerts well-calibrated and cautious, but
+some evidence-driven Research Universe memberships broader than their
+underlying evidence justified — Terra Property Trust's completed
+senior-notes exchange offer alone put it in Default/Covenant Stress and
+Going Concern, not just Liability Management/Refinancing Risk. Per
+explicit instruction, this milestone audited before changing any logic
+(never assuming the alert engine was wrong), root-caused the real bug,
+fixed it, built a controlled idempotent reconciliation path, ran it
+against the live shared Supabase project, and is reported here in full.
+
+**Audit Findings (before any code change)**
+
+Traced representative samples across all 8 evidence-driven universes —
+`collection_membership` → rationale → `research_evidence` → matched
+Layer-1 rule → AI review (when present) → provenance — plus all 54
+System-Detected: Chapter 11 members individually, per explicit
+requirement that this objective category have the highest precision bar.
+
+*Root cause*: `universe_classification_service.classify_issuer` gated
+automatic membership on `research_evidence.severity` — the raw Layer-1
+deterministic rule match — which has no concept of *whose* event a
+matched phrase describes. `phrase_chapter_11_petition`'s regex
+(`voluntary petition|filed...under chapter 11|chapter 11...bankruptcy|
+commenced...chapter 11`) scores identically whether the excerpt reports
+the issuer's own bankruptcy or a director's former employer's, a
+customer's, a peer company's, or generic legal boilerplate.
+
+*Chapter 11 audit result (all 54 "verified" members inspected)*: roughly
+35 of 54 were confirmed false positives, falling into clear, repeated
+patterns —
+- **Officer/director history**: BlackSky Technology (a director's prior
+  CEO role at Hooper Holmes, which filed in 2018), Skyworks Solutions
+  (OneWeb), Catalyst Pharmaceuticals (Impel Pharmaceuticals), HIVE Digital
+  Technologies (Compute North LLC), Medicus Pharma (Baudax Bio), NeuroOne
+  Medical Technologies (Teewinot Life Insurance Sciences), NexMetals
+  Mining (Lilis), Origin Materials (Hexion), Stellar Bancorp (Parker
+  Drilling), TXO Partners (Southland), XTI Aerospace (a vague career
+  reference).
+- **Customer/vendor/peer/investee**: Ameresco (a battery-storage
+  supplier's bankruptcy), SolarEdge Technologies (a customer, Posigen),
+  B&G Foods (an asset seller in a 363 sale, Del Monte), Devon Energy (a
+  different field operator), Whitestone REIT (a third-party investee,
+  Pillarstone), Sun Country Airlines (a peer-group comparison company,
+  Spirit Airlines).
+- **Wrong entity / unrelated citation**: Canadian Pacific Kansas City
+  (CalAmp), Stark Novus Financial (Lordstown Motors), Transcode
+  Therapeutics (Sorrento Therapeutics), Quantum Computing Inc. (a stock
+  purchase agreement counterparty), Jushi Holdings (J.C. Penney), CEA
+  Industries (FTX), Collegium Pharmaceutical (Purdue), Core Natural
+  Resources (Murray Energy).
+- **Generic legal/definitional boilerplate**: Apimeds Pharmaceuticals,
+  Jaguar Health, Newmark Group, TCW Direct Lending VIII.
+- **Hypothetical/conditional language**: Twin Vee PowerCats, Workhorse
+  Group ("could result in... filing for bankruptcy").
+
+*Genuine true positives* confirmed among the 54: Charles & Colvard,
+Cumulus Media, Nine Energy Service, Old QVC Group, Sangamo Therapeutics,
+Spirit Aviation Holdings, Trinseo PLC, Core Scientific, SunPower, plus
+subsidiary cases needing (and now getting, per section 2's requirement)
+distinct labeling rather than parent-level "verified" status — EchoStar
+Corp's real Item 1.03 8-K about its subsidiary Hughes Satellite Systems
+Corporation's Chapter 11 was already worded correctly in its AI-reviewed
+alerts ("an EchoStar subsidiary") but the classification layer never
+consulted that wording.
+
+*Decisive validation*: for every false positive sampled, the AI-reviewed
+**alert** covering the exact same evidence had already reached the
+correct, cautious conclusion in its own text (e.g. BlackSky's alert
+headline: "Bankruptcy references relate to a director's prior company,
+not BlackSky" at `severity=low`) — proving the Layer 2 AI review mechanism
+itself was sound; classification simply never read it, using raw Layer-1
+severity instead.
+
+*Suggestive-universe findings* (Default/Covenant Stress, Refinancing
+Risk, Liability Management): the same root cause, different rules —
+`phrase_event_of_default` (653 occurrences, by far the largest single
+contributor, HIGH severity) fires on the bare 3-word phrase "event of
+default" with zero context requirement, live-sampled hitting boilerplate
+indenture/credit-agreement defined-term language across dozens of
+non-distressed issuers (MasterBrand, Collegium Pharmaceutical, PagSeguro
+Digital, Golub Capital, Cambium Networks' own boilerplate excerpt
+specifically, Infinity Natural Resources) — every one of which the AI
+review had *already* correctly downgraded to `low`/`no default reported`
+in its existing alert, again never consulted by classification.
+`phrase_maturity_extension` (276 occurrences) fired on entirely routine,
+healthy treasury activity (Newmark Group increasing a facility with
+*better* pricing, Commercial Metals Co. expanding to $1.0B, Viskase
+Holdings) with no distress-specific language required.
+`phrase_exchange_offer` (143 occurrences) collided with unrelated
+concepts — employee stock-option exchange programs (Aware Inc.), generic
+anti-takeover/rights-plan boilerplate about third-party tender offers
+(FreeCast, SMX), and forward-looking-statement laundry lists (Lumen
+Technologies) — roughly half the sample, alongside genuine debt exchange
+offers (Terra Property Trust, Beasley Broadcast Group, North Haven
+Private Income Fund, Strawberry Fields REIT). Going Concern was already
+high-precision by construction (its only qualifying rule,
+`phrase_substantial_doubt_going_concern`, requires the full formal
+accounting phrase at HIGH severity — a LOW-severity bare "going concern"
+mention structurally can never qualify) — confirmed, not changed.
+
+**Classification Logic Fix**
+
+- `app.ai.evidence_review.EvidenceReviewResult` gains `issuer_is_subject:
+  bool` (default `True` when a response omits the field — never silently
+  suppresses a signal). The system prompt now explicitly instructs the
+  model to distinguish the issuer itself (including "the Company and
+  certain of its subsidiaries" acting together) from a legally separate
+  third party — customer, vendor, peer, an officer's biography, or a
+  subsidiary/affiliate acting alone.
+- `alert_event` gains a nullable `issuer_is_subject` column (migration
+  `0011`) — `NULL` means no AI review was ever performed for that alert
+  (deterministic-only synthesis, or a pre-migration historical row),
+  treated as *unknown*, never as confirmed.
+- `universe_classification_service.effective_reviews` resolves each
+  evidence item's *effective* severity and `issuer_is_subject` from the
+  AI-reviewed alert already covering its bundle (via `bundle_key`),
+  falling back to the item's own raw Layer-1 severity with an unknown
+  entity signal only when no alert exists yet.
+- `compute_expected_memberships` (a new pure function, extracted from
+  `classify_issuer` so both the live incremental path and the
+  reconciliation script share identical rules) requires an *explicit*
+  `issuer_is_subject is True` — not merely "not `False`" — for automatic
+  `verified` status on definitive evidence (Chapter 11 /
+  bankruptcy-or-receivership / plan-confirmed). An unresolved/unknown
+  attribution now correctly demotes to `partial` rather than defaulting to
+  `verified` — a deliberate tightening: an objective, highest-precision
+  category must never auto-verify without positive confirmation. A
+  subsidiary/third party's real event still surfaces (`partial`, never
+  discarded) — it just never overclaims the parent itself filed.
+  Suggestive-universe gating is unchanged in shape (still HIGH/MEDIUM
+  effective severity → `partial`), it simply now reads the AI-reviewed
+  effective severity instead of the raw one.
+- `classify_issuer` (the live, per-call path used by
+  `market_discovery_service`/`enrichment_orchestrator`) stays
+  upgrade-only by design — it still cannot downgrade or remove an
+  existing membership, exactly as before.
+
+**SEC Full-Text-Search `forms` Parameter Bug (found via the required 2026 benchmark check)**
+
+Checking Nexus's Jan–Aug 2026 discovery results against known real 2026
+Chapter 11 filers found 4 confirmable, real misses: FAT Brands, Bitcoin
+Depot, Inotiv, GoHealth — all with genuine, structured 8-K Item 1.03
+filings squarely inside the discovery window, live-confirmed via direct
+SEC full-text-search queries. (Sangamo Therapeutics, Cumulus Media, QVC
+Group, and Trinseo — the other 4 benchmark names — were correctly found
+and classified; Broad Street Realty and IO Biotech returned zero hits for
+"chapter 11"/"going concern" even via a correctly-parameterized, direct
+SEC query, so no bug is claimed for those two — an honest "not found, not
+provably a Nexus gap" rather than a fabricated result.)
+
+Root cause, live-verified directly against `efts.sec.gov` (not guessed):
+mixing an amendment-suffix form (e.g. `"8-K/A"`) into the same
+comma-separated `forms` value as base forms silently corrupts SEC's
+server-side filter. `forms=8-K` alone returned 577 real "chapter 11" hits
+over a fixed window; `forms=8-K,10-K` returned 1002; `forms=8-K,10-K/A`
+(one amendment suffix mixed in) returned **0**. The actual 10-form
+`MONITORED_FORM_TYPES` list (5 base + 5 amendment types) Milestone 7.5's
+Layer-0 discovery sends on every one of its 18 queries returned just 50
+hits instead of the ~1460 confirmed to genuinely exist — a >96% real
+coverage loss on every query, the entire milestone, silently.
+
+Fixed in `market_discovery_service._split_forms_for_full_text_search`:
+splits any `forms` tuple into a base-forms group and an amendment-forms
+group (both independently confirmed correct), calling
+`search_full_text_fn` once per group per query/page instead of once with
+the corrupted combined list. This preserves the exact 10 form types
+`MONITORED_FORM_TYPES` already specifies — not a query/scope expansion,
+a fix to how the already-approved list is transmitted to SEC's API, per
+explicit instruction not to broaden discovery scope absent a proven
+high-value bug (this one is proven, live, reproducibly). **Not yet
+re-run against historical data this milestone** — re-running the full
+Jan–Aug backfill was out of scope for a signal-quality calibration pass;
+tracked as TD-014's resolution note for a future discovery run to pick
+up naturally.
+
+**Reconciliation**
+
+`app.scripts.reclassify_system_universes` (new, idempotent, auditable):
+Phase 1 backfills `issuer_is_subject` for existing definitive-category
+alerts that predate migration `0011`, re-reviewing each alert's *complete*
+original `evidence_ids` (not a reconstructed subset) so the AI sees the
+same context the original review did. Phase 2 recomputes every affected
+issuer's memberships from their full evidence history via
+`compute_expected_memberships`, applying the result via a new
+`apply_correction` (upgrade, downgrade, add, *and* remove — the one and
+only path permitted to downgrade/remove, `classify_issuer` itself stays
+upgrade-only). Only ever touches the 8 `system_seeded` evidence-driven
+collections; a defensive check skips any non-`system_seeded` membership
+found at one of those slugs (should be architecturally impossible per the
+existing collision guard). Supports `--dry-run` for a read-only preview.
+
+Run against the live shared Supabase project, 5 passes total (retries are
+safe/idempotent by design — each pass only re-attempts alerts still at
+`issuer_is_subject IS NULL`, converging with diminishing returns:
+32 → 31 → 20 → 18 → 19 review failures across passes, the residual
+tracked as TD-015). **Zero canonical rows deleted**: `issuer` (541),
+`sec_filing` (6,036), `research_evidence` (5,417), and `alert_event`
+(1,856) counts are byte-for-byte unchanged before and after every pass —
+only `collection_membership` rows in the 8 evidence-driven collections
+were added, upgraded, downgraded, or removed.
+
+**Before / After (system-generated Research Universe memberships)**
+
+| Universe | Before (verified / partial) | After (verified / partial) |
+|---|---|---|
+| Chapter 11 | 54 / 0 | 16 / 4 |
+| Post-Emergence | 0 / 0 | 13 / 1 |
+| Distressed Core | 54 / 344 | 22 / 277 |
+| Default / Covenant Stress | — / 281 | — / 173 |
+| Going Concern | — / 210 | — / 244 |
+| Liability Management | — / 68 | — / 33 |
+| Refinancing Risk | — / 130 | — / 115 |
+| Restructuring / Strategic Alternatives | — / 49 | — / 45 |
+
+Chapter 11 fell 54 → 20 total (63% reduction), matching the audit's
+~65% false-positive estimate. Distressed Core (the broadest,
+union-of-everything universe) fell 398 → 299 (25% reduction) — smaller
+and more trustworthy, per the milestone's own guiding principle.
+Default/Covenant Stress fell 281 → 173 (38%); Liability Management 68 →
+33 (51%); Refinancing Risk 130 → 115 (12%). **Post-Emergence rose 0 → 14**
+— this category was *structurally dead* before this fix: its only
+qualifying evidence type (`plan_confirmed`) scores `medium` at the Layer-1
+level, which could never satisfy the old raw-severity `HIGH` gate no
+matter what evidence existed; the new AI-reviewed effective-severity gate
+correctly recognizes genuine post-emergence disclosures (Cumulus Media,
+Trinseo, Nine Energy Service, Old QVC Group, Spirit Aviation Holdings,
+ProPhase Labs, and others) that were always present in the evidence but
+structurally unreachable. **Going Concern rose 210 → 244** — its rule was
+already high-precision, and the AI-reviewed bundle-level severity
+correctly surfaces genuine signal the old per-item-only view sometimes
+missed; not a red flag.
+
+**Alert Engine Audit**
+
+Sampled across severity/detection-method combinations; confirmed sound,
+not touched. No true duplicate `bundle_key`s exist (DB-enforced, verified
+`0` rows). One real but low-frequency, low-severity pattern found: a
+same-day batch of delinquent amended filings (Apex 11 Inc., 6 separate
+real accession numbers, 10-Q/A and 10-K/A catch-up filings all dated
+2026-01-26) each correctly produces its own alert since each is a
+genuinely distinct real SEC filing, but the practical effect reads as
+repetitive on that one day. Documented as a known, minor limitation
+(cross-filing same-day bundling would be a materially larger bundling-
+architecture change, out of this calibration pass's scope) rather than
+fixed. EchoStar/Hughes Satellite Systems Corporation's alerts were
+independently confirmed already correctly worded ("an EchoStar
+subsidiary") — direct evidence the alert engine itself needed no repair.
+
+**Morning Brief Delta / CourtListener Metric**
+
+Confirmed correct, not a bug: `since` correctly resolves to
+`max(latest successful filing_monitor_run, latest successful
+market_discovery_run)`; all 665 existing `court_docket_entry` rows were
+created before the current watermark, and Milestone 7.5's backfill found
+zero new verified CourtListener links (consistent with ADR-020 holding
+steady at scale) — "New court events = 0" is an honest reflection of both
+facts, not a query defect.
+
+**2026 Benchmark Check**
+
+| Company | Found? | Classification | Notes |
+|---|---|---|---|
+| Sangamo Therapeutics | Yes | Correct (`verified` Chapter 11, HIGH, `issuer_is_subject=True`) | |
+| Cumulus Media | Yes | Correct (`verified` Chapter 11 + Post-Emergence) | |
+| QVC Group (Old QVC Group, Inc.) | Yes | Correct (`verified` Chapter 11 + Post-Emergence) | |
+| Trinseo | Yes | Correct (`verified` Chapter 11 + Post-Emergence) | |
+| FAT Brands | No | — | Real miss — SEC `forms` bug (TD-014), confirmed live 8-K Item 1.03/2.04/3.01 filings exist in-window |
+| Bitcoin Depot | No | — | Real miss — same cause |
+| Inotiv | No | — | Real miss — same cause |
+| GoHealth | No | — | Real miss — same cause, confirmed live Item 1.03/2.04/5.02/7.01/9.01 8-K |
+| Broad Street Realty | No | — | No SEC full-text hits for "going concern"/"chapter 11" even via a correct, unrestricted direct query — not claimed as a Nexus bug |
+| IO Biotech | No | — | Same as above |
+
+**Tests Added**
+
+- `test_universe_classification_service.py`: 3 gating regression tests
+  (definitive evidence demoted to `partial` when `issuer_is_subject=False`;
+  suggestive evidence excluded when the AI-reviewed alert downgrades
+  severity; definitive evidence without any alert now falls back to
+  `partial`, not `verified` — a deliberate behavior change, documented in
+  the test itself) + 4 `apply_correction` tests (downgrade, removal,
+  idempotency, never touching a non-`system_seeded` membership).
+- `test_evidence_review.py`: `issuer_is_subject` parses correctly when
+  `false`; defaults to `true` when a response omits the field.
+- `test_research_universe_service.py`: `verification_status` surfaces
+  correctly for both `verified` and `partial` issuer-universe memberships
+  (previously dropped from the API response entirely).
+- `test_market_discovery_service.py` +
+  `test_market_discovery_forms_split.py`: the `forms`-splitting fix never
+  produces a mixed base/amendment list, exact-order regression coverage,
+  and the real `MONITORED_FORM_TYPES` list splits into the live-verified
+  5/5 shape.
+- `test_research_evidence_repository.py`: the new
+  `list_evidence_by_issuer_and_types`/`list_issuer_ids_with_evidence_types`
+  repository functions (added to eliminate an N+1 query pattern the
+  reconciliation script's first draft had — ~500 issuers × up to 15 types
+  of separate round-trips to a remote pooled connection, a real
+  contributor to an early wall-clock blowup, see Problems Encountered).
+- `IssuerPage.test.tsx`: a `partial` universe membership renders visibly
+  distinct from a `verified` one (a `(suggested)` label, dashed outline,
+  and clarified tooltip) — never presented identically to a settled fact.
+
+**Test Results**
+
+Backend: `ruff`, `black`, `mypy` clean; `pytest` — 380 passed, 0 failed.
+Frontend: `eslint`, `prettier`, `tsc` clean; `vitest` — 68 passed, 0
+failed; production build succeeds. `alembic check`: zero drift.
+`pre-commit run --all-files`: all 15 hooks pass (see Problems Encountered
+for two false starts along the way, neither a real code issue).
+
+**Problems Encountered**
+
+1. A live dry-run surfaced that Phase 1's first draft re-reviewed an
+   *incomplete* reconstructed bundle (only the definitive-type evidence
+   subset it had queried for) instead of the alert's real, complete
+   original evidence set — Zhibao Technology Inc.'s `plan_confirmed`
+   evidence was a boilerplate SEC cover-page checkbox bundled alongside
+   genuinely severe `substantial_doubt`/`covenant_breach` evidence in the
+   same real filing; reviewing the checkbox in isolation, stripped of that
+   context, both under- and over-represented the bundle's real content
+   depending on which items happened to be included.
+2. The default `issuer_is_subject is not False` gate (treating `None` —
+   unknown/unreviewed — the same as confirmed `True`) let an unconfirmed
+   attribution silently qualify for `verified` status whenever a re-review
+   attempt failed, defeating the fix's purpose for exactly the cases where
+   AI confirmation was least available.
+3. A destructive live `alembic downgrade -1` / `upgrade head` round-trip
+   test, run *after* the reconciliation script had already backfilled
+   real `issuer_is_subject` values in production, dropped and recreated
+   the column — wiping all ~190 backfilled values back to `NULL`. The
+   already-computed `collection_membership` corrections were unaffected
+   (they were persisted independently and don't depend on
+   `issuer_is_subject` remaining readable after the fact), but the audit
+   trail column itself had to be fully re-backfilled.
+4. Two initial background reconciliation runs, started concurrently with
+   an unrelated full `pytest` run, took over 5 hours each and one hit a
+   transient `psycopg.OperationalError: server closed the connection
+   unexpectedly` — traced to Supabase connection-pool contention from
+   running two heavy, long-lived DB-bound processes simultaneously, not a
+   logic defect (confirmed: the identical `pytest` suite completed in
+   ~3 minutes when run alone immediately after).
+5. The reconciliation script's own per-issuer error-isolation `try` block
+   didn't actually wrap the issuer's initial `get_issuer` read — a
+   transient connection drop on that specific line crashed the entire run
+   instead of being caught and isolated to one issuer, exactly the
+   per-issuer boundary this codebase's other long-running scripts already
+   rely on.
+6. `pre-commit run --all-files` intermittently failed `detect-private-key`
+   and `check-yaml` with `[WinError 4551] An Application Control policy
+   has blocked this file` — reproducing the hook's own file-read logic
+   directly (plain `open(filename, 'rb')`) worked fine for every affected
+   file, isolating the failure to the cached hook virtualenv's own
+   subprocess launch, not file content or this milestone's code.
+
+**Solutions**
+
+1. Phase 1 now finds bundles containing definitive-type evidence, then
+   re-reviews using the alert's own already-stored, complete
+   `evidence_ids` (`research_evidence_repository.list_evidence_by_ids`) —
+   matching exactly what the original review saw.
+2. `compute_expected_memberships`'s definitive gate now requires
+   `issuer_is_subject is True` explicitly; `None` and `False` are treated
+   identically (both demote to `partial`, never silently promote).
+   Existing tests asserting the old `not False` behavior were updated to
+   reflect this deliberate tightening, with a new test
+   (`test_definitive_evidence_falls_back_to_partial_without_an_alert`)
+   documenting exactly why.
+3. Re-ran the reconciliation script (4 more passes) to restore the
+   backfilled data; going forward, destructive migration round-trip tests
+   are only run *before* a migration's column is populated with real data
+   this session created, never after.
+4/5. Fixed the error-isolation scope (the full per-issuer body, including
+   the initial reads, now sits inside the `try`), added a new
+   `list_evidence_by_issuer_and_types` repository function to eliminate
+   the N+1 query pattern, and added `-u`/`flush=True` real-time progress
+   output so a stalled or slow run is visible immediately rather than
+   discovered hours later. Re-ran alone (no concurrent heavy process) —
+   completed cleanly with real-time visible progress each time after.
+6. `pre_commit clean` followed by a fresh hook-environment rebuild
+   resolved it immediately — confirms a corrupted/quarantined cached
+   virtualenv, not a code or content issue.
+
+**Remaining Work**
+
+- TD-014 (new, resolved code, not yet re-run against historical data):
+  the SEC `forms`-parameter fix is live in code; a future discovery
+  delta/backfill run will benefit from it naturally, no separate backfill
+  scheduled this milestone.
+- TD-015 (new): 19 alerts still have `issuer_is_subject IS NULL` after 5
+  reconciliation passes — safe (never wrongly promotes), tracked for a
+  future investigation into why these specific re-reviews persistently
+  fail.
+- TD-001 through TD-013 unchanged, carried forward.
+- Milestone 8 (Watchlists) — unstarted, requires separate explicit
+  approval to begin.
+
+**Git Commit Hash**
+
+`f11ef00` — implementation, reconciliation, tests, documentation.
+
+**Developer Notes**
+
+The single most validating moment of this milestone was discovering that
+the AI-reviewed *alert* for BlackSky Technology's Chapter 11 evidence
+already read "relates to a director's prior company, not BlackSky" at
+`severity=low` — while the *classification* layer, looking at the same
+underlying evidence, had confidently marked BlackSky `verified` System-
+Detected: Chapter 11. The fix wasn't building new intelligence; it was
+teaching one already-correct part of the system to talk to another. That
+pattern held for essentially every false positive sampled across every
+category — proof that the AI review mechanism was sound from the moment
+it shipped, and that the real defect was an architectural gap in what
+data flowed downstream from it, not a model-quality problem for a bigger
+model or a fancier prompt to fix. The reconciliation script's design —
+computing "what should be true" as a pure function shared with the live
+path, then applying it via a separate, explicitly correction-capable
+writer — is the same shape this codebase already uses for provenance and
+evidence: never trust a process that can only move state one direction to
+also be the process responsible for admitting the state was wrong.
