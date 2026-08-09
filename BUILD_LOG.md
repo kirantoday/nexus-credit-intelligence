@@ -4871,8 +4871,8 @@ green-in-isolation ones) for the ordering assumptions.
 
 **Git Commit Hash**
 
-Pending — recorded in a follow-up entry per this project's established
-two-commit documentation pattern.
+`427b535` — implementation, real performance fix, comprehensive
+scenario tests, documentation.
 
 **Approximate Time Spent**
 
