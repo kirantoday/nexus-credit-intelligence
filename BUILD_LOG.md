@@ -4485,9 +4485,48 @@ npx vitest run
 
 **Deployment Validation**
 
-Pending — recorded in a follow-up entry once pushed and production is
-re-verified with this milestone's changes deployed (Railway/Vercel
-auto-deploy on push to `main`).
+Pushed to `main` (`ca41b13`, `859072e`); Railway/Vercel auto-deployed.
+Re-verified live in production (Chrome, `nexus-credit-intelligence.vercel.app`
++ `nexus-credit-intelligence-production.up.railway.app`) after the deploy
+landed — polled `GET /api/morning-brief` until its response included the new
+`since` field (confirming the new backend was live) before verifying:
+
+- Morning Research Brief loads; subtitle reads "New Research Alerts — Since
+  Last Successful Daily Run."
+- "Latest successful daily run: Aug 8, 2026, 8:19 PM" / "Current run: success"
+  — correctly the real `market_discovery` `delta` run, not a backfill.
+- "Data through: Aug 8, 2026, 7:19 PM · Run window: Aug 7, 2026 – Aug 8, 2026"
+  — `since` (`started_at`) and `completed_at` correctly shown as two distinct
+  timestamps, both in America/New_York.
+- Summary metrics match the live API and the real run exactly: 1207 new SEC
+  filings, 0 new court events, 822 new research evidence, 356 actionable
+  alerts (49/65/242 high/medium/low), 351 AI-assisted.
+- Severity filter (`High`) and Research Universe filter
+  (`System-Detected: Chapter 11`) both correctly re-scope the alert list via
+  URL query params.
+- "Show historical alerts" toggle correctly switches the subtitle to "All
+  Research Alerts — All-Time" and removes `triggered_since` from the
+  underlying request.
+- Evidence drill-down ("Why was this flagged?") expands real excerpts with
+  matched rule names, exactly as stored.
+- Issuer Detail drill-down (Dropbox, Inc.) loads real OpenFIGI-sourced
+  securities with `live` provenance badges.
+- A compound alert (Olenox Industries — subsidiary SG Echo LLC's Chapter 11
+  alongside the issuer's own going-concern doubt) rendered with cautious,
+  explicit wording distinguishing the subsidiary event from the issuer's own
+  — the 7.5.1 fix's alert-wording discipline is intact.
+- Research Universes page shows `verified` (curated) vs. `Not yet verified`
+  (system-suggested) labels correctly, unchanged from 7.5.1.
+- Credit Universe loads with real, live-badged data.
+- `read_network_requests` confirmed every `/api/*` call returned `200`,
+  including `GET /api/alerts?triggered_since=2026-08-08T23:19:05.994383Z...`
+  — the exact `since` boundary threaded through to the alert list, proving
+  the summary and the displayed rows share one boundary end to end.
+- A live `OPTIONS` CORS preflight from the Vercel origin to the Railway API
+  returned `access-control-allow-origin:
+  https://nexus-credit-intelligence.vercel.app` — no CORS errors.
+- `read_console_messages` found only a known Chrome-extension messaging
+  artifact ("message channel closed"), no application-level errors.
 
 **Problems Encountered**
 
