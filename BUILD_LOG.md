@@ -4531,8 +4531,8 @@ every prior milestone.
 
 **Git Commit Hash**
 
-Pending — recorded in a follow-up entry per this project's established
-two-commit documentation pattern.
+`ca41b13` — implementation, real daily-delta run, idempotency proof,
+documentation.
 
 **Approximate Time Spent**
 
