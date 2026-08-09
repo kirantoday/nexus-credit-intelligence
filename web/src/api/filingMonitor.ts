@@ -259,9 +259,23 @@ export async function fetchMorningBrief(): Promise<MorningBriefSummary> {
 
 /** Records that the brief was viewed, advancing the boundary for next
  * time. Call only after `fetchMorningBrief` has already resolved, so this
- * visit never reads its own not-yet-recorded view as its own boundary. */
+ * visit never reads its own not-yet-recorded view as its own boundary.
+ * Retries directly (not via TanStack Query's mutation `retry` option,
+ * which was live-verified in production to not actually re-attempt this
+ * call — see PLAN.md TD-019): `record_brief_view` is idempotent by
+ * construction, so a retry is always safe, and a real intermittent `503`
+ * was observed in production for this specific endpoint. */
 export async function recordMorningBriefView(): Promise<void> {
-  await apiFetch<void>("/api/morning-brief/view", { method: "POST" });
+  const attempts = 3;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      await apiFetch<void>("/api/morning-brief/view", { method: "POST" });
+      return;
+    } catch (err) {
+      if (attempt === attempts) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
 }
 
 export async function fetchAlerts(query: AlertsQuery): Promise<AlertsPage> {

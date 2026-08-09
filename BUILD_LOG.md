@@ -5097,3 +5097,72 @@ assumed.
 
 ~30 minutes (re-verification, retry mitigation, honest documentation
 correction).
+
+---
+
+## 2026-08-09 — Milestone 7.5.2 (fourth correction): TanStack Query mutation retry didn't fire; replaced with a direct retry
+
+**Summary**
+
+Live-verified the retry mitigation from the previous entry
+(`useMutation({retry: 2})`) against production and found it did not
+actually retry: the Resource Timing API showed exactly one network
+request for `POST /api/morning-brief/view` regardless of the `503`,
+even though the deployed bundle was confirmed (via direct `grep` of the
+live Vercel asset) to contain the correct `retry:2,retryDelay:1e3`
+configuration. A second real, live-caught surprise in the same
+investigation. Replaced with a direct, manual retry loop that doesn't
+depend on TanStack Query's mutation retry mechanism at all.
+
+**Fix**
+
+`recordMorningBriefView` (`web/src/api/filingMonitor.ts`) now retries
+up to 3 attempts with a 1-second delay, implemented as a plain
+try/catch loop around `apiFetch`. `useRecordMorningBriefView`'s own
+`retry` option was removed (dead/misleading now that the real retry
+lives in the API function). Verified the retry loop's mechanics
+directly in the browser console against the live production endpoint
+before shipping.
+
+**Files Modified**
+
+- `web/src/api/filingMonitor.ts` — `recordMorningBriefView` direct retry.
+- `web/src/queries/useMorningBrief.ts` — removed the ineffective
+  `useMutation` retry option.
+- `PLAN.md` — TD-019 updated with the TanStack Query retry finding.
+
+**Test Results**
+
+`tsc -b` / `eslint` / `prettier --check` / `vitest run` (71 passed) —
+clean. No backend change this pass.
+
+**Problems Encountered**
+
+TanStack Query v5's `useMutation({retry: N})` did not cause a retry in
+this real production scenario, despite being documented, standard
+behavior and despite the config being verifiably present in the
+deployed bundle. Root cause of *that* not investigated further (out of
+proportion to this milestone's scope) — recorded as an open sub-item of
+TD-019 rather than either silently dropped or exhaustively chased.
+
+**Solutions**
+
+Verified the mitigation's actual effect (via Resource Timing API showing
+request count, not just "no visible error") rather than trusting that a
+correctly-configured option must be working. Replaced it with a
+mechanism simple enough to verify directly.
+
+**Remaining Work**
+
+- TD-019 (updated): `POST /api/morning-brief/view`'s `503` remains not
+  root-caused; mitigated via a direct, verified retry. Why TanStack
+  Query's own mutation retry didn't fire is a separate, also-unresolved
+  question noted for anyone picking this up later.
+
+**Git Commit Hash**
+
+Pending — recorded in a follow-up entry.
+
+**Approximate Time Spent**
+
+~20 minutes.

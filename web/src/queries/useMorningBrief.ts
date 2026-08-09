@@ -10,17 +10,14 @@ export function useMorningBrief() {
 
 /** Records that the brief was viewed. Call only once the brief query has
  * already resolved (see `MorningResearchBriefPage`'s effect), so this
- * visit's own view is never read as its own boundary. Retries on failure
- * (the backend endpoint is idempotent — see `record_brief_view`'s own
- * gap-check — so a retry is always safe): a real, live-caught intermittent
- * failure mode was observed in production (an occasional `503`, cause
- * still under investigation — see PLAN.md TD-019) where the request
- * otherwise silently fails once with no user-visible effect beyond the
- * boundary not advancing that visit. */
+ * visit's own view is never read as its own boundary. `recordMorningBriefView`
+ * itself retries directly (not via this hook's `retry` option, which was
+ * live-verified in production to not actually re-attempt the call — see
+ * PLAN.md TD-019) — a real, live-caught intermittent `503` was observed in
+ * production for this specific endpoint, root cause still under
+ * investigation. */
 export function useRecordMorningBriefView() {
   return useMutation({
     mutationFn: recordMorningBriefView,
-    retry: 2,
-    retryDelay: 1000,
   });
 }
