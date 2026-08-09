@@ -57,7 +57,14 @@ class DailyRunSummary(BaseModel):
     debugging transparency only, never surfaced as a concept the UI asks
     the analyst to understand. Excludes `mode=backfill` runs entirely — a
     historical backfill is never "the daily run," regardless of how recent
-    or how narrow its window (PLAN.md Milestone 7.5.2 section 3/4)."""
+    or how narrow its window (PLAN.md Milestone 7.5.2 section 3/4).
+
+    `research_day` (Milestone 7.5.2's business-day-cycle correction) is the
+    real-world business day this run's data *represents* — `window_start_date`
+    for `market_discovery_run`, or an analogous derivation from
+    `previous_watermark`/`started_at` for `filing_monitor_run` (which has no
+    window fields) — never the wall-clock date the job happened to execute
+    on, which can differ for an overnight run."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -69,6 +76,7 @@ class DailyRunSummary(BaseModel):
     completed_at: datetime | None
     window_start_date: date | None
     window_end_date: date | None
+    research_day: date
     errors_count: int
 
 

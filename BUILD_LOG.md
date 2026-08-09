@@ -5166,3 +5166,218 @@ mechanism simple enough to verify directly.
 **Approximate Time Spent**
 
 ~20 minutes.
+
+---
+
+## 2026-08-09 — Milestone 7.5.2 (fifth correction): business-day research-cycle semantics, not page views
+
+**Summary**
+
+Same-day, final explicit follow-up direction for this milestone: even
+the user-relative `morning_brief_view` boundary (the first correction,
+above) was still the wrong business concept. Direct instruction: "opening,
+refreshing, closing, or revisiting Morning Research Brief must NEVER
+alter the comparison window" — a page view is not a research boundary,
+a completed business-day research cycle is. Corrected the brief's
+definition to "what materially changed during the latest completed
+business-day research cycle, compared with the preceding completed
+business-day research cycle?" — e.g., for the currently completed Aug 7
+cycle: "Latest research day: Aug 7, 2026 · Compared with: Aug 6, 2026,"
+unchanged by any number of page opens, and unchanged on a weekend
+(Aug 8/Aug 9) until a new business-day cycle actually completes.
+`morning_brief_view` served no remaining purpose once period calculation
+stopped depending on it, so it — and its only writer, `POST
+/api/morning-brief/view` — were removed entirely, closing both TD-018
+and TD-019 by removal rather than by further patching.
+
+**Implementation**
+
+- `DailyRunSummary` (`app/schemas/filing_monitor.py`) gains a
+  `research_day: date` field — the real-world business day a daily run's
+  data represents, distinct from `started_at`'s wall-clock execution
+  time. For `market_discovery_run` this is `window_start_date` directly;
+  `filing_monitor_run` has no window fields, so
+  `_filing_monitor_research_day` derives it from `previous_watermark`'s
+  date in America/New_York, falling back to `started_at`'s date only if
+  no watermark exists.
+- `app/services/morning_brief_service.py` rewritten around two new pure,
+  DB-independent functions: `_previous_business_day` (strictly before a
+  given date, Mon-Fri only, skips weekends — Friday's preceding day is
+  Thursday, Monday's is the prior Friday) and `_most_recent_business_day`
+  (a date itself if a weekday, else walks back to the most recent
+  Friday). `_resolve_research_cycle` determines `latest_research_day`
+  from the latest successful daily run's `research_day` (`is_fallback =
+  False`), or, only when no successful daily run has ever completed,
+  falls back to `_most_recent_business_day(today)` (`is_fallback =
+  True`) — reachable only once, on a genuinely empty deployment.
+  `preceding_research_day` is always `_previous_business_day
+  (latest_research_day)` — computed by calendar arithmetic, never by
+  requiring a second real run to exist, so even the very first
+  completed daily run already has a well-defined comparison. `since`
+  (the alert `triggered_since` boundary) is midnight America/New_York on
+  `latest_research_day`; `as_of` is `datetime.now(UTC)` at read time,
+  clearly separated in the schema from the (now non-side-effecting)
+  window fields so a reader can't mistake "when I looked" for "what
+  period this covers." `get_morning_brief` is now a fully pure function
+  with zero side effects — no view recording, no write path at all.
+  All of `MIN_VIEW_GAP`, `_previous_business_day_morning_boundary` (the
+  first correction's version), `_resolve_period_start`,
+  `_should_record_new_view`, and `record_brief_view` were deleted, not
+  deprecated in place.
+- `app/schemas/morning_brief.py`: `MorningBriefSummary.period_start`/
+  `period_start_is_fallback`/`period_end` replaced with
+  `latest_research_day`/`preceding_research_day`/
+  `research_cycle_is_fallback`/`as_of`. Docstrings rewritten to state
+  explicitly that these values can only change when a new successful
+  daily run completes, never on read.
+- `morning_brief_view` removed outright: deleted
+  `app/models/brief_view.py`, `app/domain/brief_view.py`,
+  `app/repositories/brief_view_repository.py`; removed the import from
+  `app/models/__init__.py`; removed `POST /api/morning-brief/view`
+  from `app/api/routes/morning_brief.py` (only `GET` remains).
+  Migration `0013` drops the `morning_brief_view` table (with a full
+  `create_table` in `downgrade()` for reversibility). Confirmed, before
+  writing the migration, that nothing else in the codebase ever read
+  `morning_brief_view` (no "unread" badge, no other UX consumer) — its
+  only purpose was the period-boundary calculation this correction
+  removes. Applied live against the shared Supabase project;
+  `alembic check` confirms zero new upgrade operations.
+  `collection_membership.updated_at` (also from migration `0012`) is
+  untouched — still needed for membership-upgrade detection.
+- Frontend: `web/src/api/filingMonitor.ts` updated field names, removed
+  `recordMorningBriefView`; `web/src/queries/useMorningBrief.ts`
+  simplified to a bare `useQuery`, `useRecordMorningBriefView` deleted;
+  `web/src/pages/MorningResearchBriefPage.tsx` lost its view-recording
+  `useEffect`/`useRef`; `web/src/components/BriefSummaryBar.tsx`
+  rewritten to render "Latest research day: {date} · Compared with:
+  {date}" (or the fallback message when `research_cycle_is_fallback`)
+  plus a separate "Data as of {as_of}" line, so the *window* and the
+  *read time* are visually distinct. The already-built product-focused
+  UI (issuer-grouped developments, severity ranking, new-vs-historical
+  partitioning, `RunDetailsPanel` behind "Show run/data details") is
+  otherwise unchanged.
+
+**Files Created**
+
+- `backend/alembic/versions/0013_drop_morning_brief_view.py`
+- `backend/tests/unit/test_research_cycle_boundary.py`
+
+**Files Deleted**
+
+- `backend/app/models/brief_view.py`, `backend/app/domain/brief_view.py`,
+  `backend/app/repositories/brief_view_repository.py`
+- `backend/tests/unit/test_morning_brief_boundary.py` (superseded by
+  `test_research_cycle_boundary.py` — the old boundary logic it tested
+  no longer exists)
+
+**Files Modified**
+
+- `backend/app/schemas/filing_monitor.py` — `DailyRunSummary.research_day`.
+- `backend/app/schemas/morning_brief.py` — `MorningBriefSummary` field
+  replacement, docstring rewrite.
+- `backend/app/services/morning_brief_service.py` — business-day-cycle
+  resolution logic, `record_brief_view`/view-gap logic removed.
+- `backend/app/api/routes/morning_brief.py` — `POST /view` removed.
+- `backend/app/models/__init__.py` — `brief_view` import removed.
+- `backend/tests/integration/test_morning_brief_service.py` — rewritten
+  around real seeded daily runs and the new field names.
+- `web/src/api/filingMonitor.ts`, `web/src/queries/useMorningBrief.ts`,
+  `web/src/pages/MorningResearchBriefPage.tsx`,
+  `web/src/components/BriefSummaryBar.tsx`,
+  `web/src/pages/MorningResearchBriefPage.test.tsx`.
+- `PLAN.md` — TD-018/TD-019 marked resolved by architecture change (not
+  by adding auth or by root-causing the `503`); Milestone 7.5.2's Next
+  Immediate Goal narrative extended with this correction.
+
+**Database Changes**
+
+Migration `0013`: drops `morning_brief_view` (reversible —
+`downgrade()` recreates it). No other schema change; `research_day` is
+a computed/derived field, not a new column.
+
+**API Endpoints Removed**
+
+`POST /api/morning-brief/view` — removed entirely, not deprecated.
+`GET /api/morning-brief`'s response shape changed (not backward
+compatible with the pre-correction shape); the same milestone's own
+frontend is the only consumer, updated in the same change.
+
+**Tests Added**
+
+- `tests/unit/test_research_cycle_boundary.py` (6 tests):
+  `_previous_business_day` (Friday→Thursday, Monday→Friday skipping the
+  weekend, midweek) and `_most_recent_business_day` (weekday-is-itself,
+  Saturday→Friday, Sunday→Friday) — using real 2026 calendar dates
+  (2026-08-07 confirmed to be a genuine Friday).
+- `tests/integration/test_morning_brief_service.py` rewritten (9 tests):
+  Friday/Monday research-day comparisons, a first-ever-cycle fallback
+  (via monkeypatching `_latest_successful_daily_run`, since the shared
+  production database already has real daily runs and can never be
+  assumed empty), old-filing-vs-new-event partitioning, a universe
+  membership change, no material changes, and two idempotency proofs —
+  three repeated calls to `get_morning_brief` return byte-identical
+  windows, and only a genuinely new, later-completing daily run (never
+  a repeated read) ever advances the window.
+- `web/src/pages/MorningResearchBriefPage.test.tsx`: a new test
+  asserting the page never calls any view-recording endpoint at all
+  (`"recordMorningBriefView" in filingMonitorApi === false`), and a new
+  idempotent-refresh test that mounts, unmounts, and remounts the page,
+  asserting an identical comparison-window string both times.
+
+**Test Results**
+
+- Backend: full suite 396 passed (213.41s); targeted morning-brief
+  suite (6 unit + 9 integration) 15 passed in 9.21s in isolation.
+- Frontend: 72 passed across 12 files.
+- `ruff check` / `black --check` / `mypy app` (154 source files) —
+  clean. `eslint` / `tsc -b` / `prettier --check` — clean. Production
+  build succeeds (`vite build`, pre-existing >500kB chunk-size warning
+  only, unrelated to this change). Backend imports and boots (24 routes).
+- `alembic check` against the live shared Supabase project — zero new
+  upgrade operations; `alembic current` confirms `0013 (head)`.
+
+**Problems Encountered**
+
+None new this pass — this correction was primarily a semantic/design
+change (page-view boundary → business-day-cycle boundary) plus a
+deletion (unused `morning_brief_view` architecture), not a bug fix. The
+main risk — accidentally leaving `preceding_research_day` dependent on
+a second real run existing, which would break on the very first daily
+run ever completed — was avoided by deriving it from calendar
+arithmetic instead, verified directly by
+`test_first_ever_research_cycle_uses_most_recent_business_day_fallback`.
+
+**Solutions**
+
+N/A (no bug this pass).
+
+**Remaining Work**
+
+- TD-018 (Morning Brief boundary is not per-user): **resolved by
+  architecture change**, not by adding authentication. A research cycle
+  is inherently a shared, system-wide concept, not a per-user
+  preference, so the per-user-scoping concern this debt item described
+  no longer applies to period calculation. Per-user *read/unread* state
+  remains a legitimate, currently-unimplemented future feature — if
+  ever built, it must not be allowed to influence period semantics
+  again.
+- TD-019 (`POST /morning-brief/view`'s intermittent `503`): **resolved
+  by removing the endpoint**, not by root-causing the `503`. The
+  underlying cause — including why TanStack Query's own mutation retry
+  never fired in production — was never conclusively identified. This
+  is recorded here as a permanent, honest historical note per explicit
+  instruction not to silently drop it from the record, not because it
+  was solved.
+- Milestone 7.5.3 (Historical Discovery Coverage Repair) — still
+  planned, not started, still deliberately out of scope. Not to begin
+  until the user explicitly approves it.
+
+**Git Commit Hash**
+
+(recorded in a follow-up commit)
+
+**Approximate Time Spent**
+
+~1.5 hours (design correction, service/schema/route rewrite,
+`morning_brief_view` removal and migration, full test suite rewrite,
+documentation, full verification pass).

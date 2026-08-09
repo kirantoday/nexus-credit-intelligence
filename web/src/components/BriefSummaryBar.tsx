@@ -1,7 +1,7 @@
 import type { ReactElement } from "react";
 import { Box, Paper, Stack, Typography } from "@mui/material";
 import type { MorningBriefSummary } from "../api/filingMonitor";
-import { formatDateTime } from "../lib/format";
+import { formatDate, formatDateTime } from "../lib/format";
 
 function Stat({ label, value }: { label: string; value: string | number }): ReactElement {
   return (
@@ -16,22 +16,23 @@ function Stat({ label, value }: { label: string; value: string | number }): Reac
 
 /**
  * The Morning Research Brief's primary summary bar (PLAN.md Milestone
- * 7.5.2 correction) — analyst-relevant research counts only. Pipeline/run
- * operational counters live in `RunDetailsPanel`, a secondary block, not
- * here.
+ * 7.5.2's business-day-cycle correction) — analyst-relevant research
+ * counts only. Pipeline/run operational counters live in
+ * `RunDetailsPanel`, a secondary block, not here. `latest_research_day`/
+ * `preceding_research_day` come straight from the API and never change on
+ * refresh — this component has no view/visit logic of its own.
  */
 export function BriefSummaryBar({ summary }: { summary: MorningBriefSummary }): ReactElement {
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
       <Stack spacing={0.5} sx={{ mb: 2 }}>
         <Typography variant="body2" color="text.secondary">
-          {summary.period_start_is_fallback
-            ? `First time viewing — showing developments since ${formatDateTime(summary.period_start)} (previous business day)`
-            : `Since your last review: ${formatDateTime(summary.period_start)}`}
+          {summary.research_cycle_is_fallback
+            ? `No completed research cycle yet — showing ${formatDate(summary.latest_research_day)} (most recent business day) compared with ${formatDate(summary.preceding_research_day)}`
+            : `Latest research day: ${formatDate(summary.latest_research_day)} · Compared with: ${formatDate(summary.preceding_research_day)}`}
         </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Period covered: {formatDateTime(summary.period_start)} –{" "}
-          {formatDateTime(summary.period_end)}
+        <Typography variant="caption" color="text.secondary">
+          Data as of {formatDateTime(summary.as_of)}
         </Typography>
       </Stack>
       <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
@@ -48,7 +49,7 @@ export function BriefSummaryBar({ summary }: { summary: MorningBriefSummary }): 
       </Stack>
       {summary.no_material_changes && (
         <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-          No material research developments since your last review.
+          No material research developments in the latest research cycle.
         </Typography>
       )}
     </Paper>

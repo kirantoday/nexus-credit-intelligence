@@ -1,6 +1,8 @@
 """Response schemas for the Morning Research Brief (PLAN.md Milestone 7.5.2
-correction: "What materially changed since this user last reviewed the
-Morning Research Brief?" — not a pipeline-run status page).
+correction, business-day-cycle revision: "What materially changed during
+the latest completed business-day research cycle compared with the
+preceding one?" — not a pipeline-run status page, and not a per-user
+"since you last looked" page view either).
 
 `MorningBriefSummary` is deliberately structured so the primary fields an
 analyst reads (`new_developments`, `historical_intelligence`,
@@ -10,7 +12,7 @@ counters — those live in `run_details`, a secondary/diagnostics block.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
@@ -61,9 +63,10 @@ class RunDetails(BaseModel):
     fix computed (`last_successful_run`/`latest_run` mode-scoped selection,
     watermark safety, provider-agnostic run counters) is preserved here
     unchanged, just moved out of the analyst's primary view. `since` is the
-    pipeline run's own boundary (PLAN.md Milestone 7.5.2 section 4) — a
-    genuinely different question ("how did the last discovery run perform")
-    than the brief's user-relative `period_start` ("what's new to me")."""
+    pipeline run's own `started_at` boundary — the same underlying run data
+    `latest_research_day` is itself derived from, just exposed here in its
+    original operational-diagnostics form (raw run counters) rather than
+    the brief's primary business-day framing."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -79,31 +82,44 @@ class RunDetails(BaseModel):
 
 
 class MorningBriefSummary(BaseModel):
-    """The Morning Research Brief. `period_start` is user-relative — the
-    boundary of the analyst's own last brief view (`morning_brief_view`),
-    never a pipeline-run watermark — with `period_start_is_fallback=True`
-    only for a genuinely first-ever view (no prior `morning_brief_view` row
-    exists), in which case `period_start` is the previous business-day
-    morning boundary, not an arbitrary run timestamp.
+    """The Morning Research Brief. `latest_research_day`/`preceding_research_day`
+    define the comparison window — "what materially changed during the
+    latest completed business-day research cycle compared with the
+    preceding one" (PLAN.md Milestone 7.5.2's business-day-cycle
+    correction). Both are derived purely from canonical successful
+    daily-run data and calendar business-day arithmetic — never from a
+    page view, a request timestamp, or `datetime.now()` at read time.
+    Opening, refreshing, or revisiting the brief can never change these
+    values; only a *new* successful daily/delta run completing can.
+
+    `latest_research_day` is the `research_day` (see `DailyRunSummary`) of
+    the most recent successful `delta`/`baseline` run of either pipeline.
+    `preceding_research_day` is the business day immediately before it
+    (Mon-Fri only, weekends skipped) — computed by calendar arithmetic, not
+    by requiring a second real run to exist, so the very first daily run
+    ever completed already has a well-defined comparison boundary.
+    `research_cycle_is_fallback=True` only when no successful daily run has
+    ever completed at all, in which case both days fall back to the most
+    recent business day on/before today and the one before it.
 
     `new_developments`/`historical_intelligence` are both issuer-grouped and
-    severity-ranked, and are a strict partition of this period's actionable
-    alerts by `alert_event.is_backfill`: `new_developments` are alerts the
-    discovery run's own narrow window created (`is_backfill=False` —
-    genuinely new events), `historical_intelligence` are alerts the
-    enrichment orchestrator's wider lookback surfaced (`is_backfill=True` —
-    an old event Nexus just happened to discover this period). The same
-    issuer can appear in both, since the split is per-alert, not per-issuer.
-    `severity_counts` covers `new_developments` only — historical
-    intelligence is deliberately not counted into the primary summary
-    numbers, matching its de-emphasized presentation.
+    severity-ranked, and are a strict partition of alerts triggered on or
+    after the start of `latest_research_day` (America/New_York) by
+    `alert_event.is_backfill`: `new_developments` are alerts the discovery
+    run's own narrow window created (`is_backfill=False` — genuinely new
+    events), `historical_intelligence` are alerts the enrichment
+    orchestrator's wider lookback surfaced (`is_backfill=True` — an old
+    event Nexus just happened to discover this cycle). The same issuer can
+    appear in both, since the split is per-alert, not per-issuer.
+    `severity_counts` covers `new_developments` only.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    period_start: datetime
-    period_start_is_fallback: bool
-    period_end: datetime
+    latest_research_day: date
+    preceding_research_day: date
+    research_cycle_is_fallback: bool
+    as_of: datetime
     issuers_with_developments: int
     severity_counts: SeverityCounts
     new_developments: list[IssuerDevelopment]

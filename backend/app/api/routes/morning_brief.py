@@ -5,10 +5,14 @@ Not nested under `/filing-monitor` — the brief itself is meant to outlive
 SEC being the only evidence contributor (PLAN.md 24.9). Thin per PLAN.md
 section 3: delegates to `morning_brief_service`.
 
-`GET` is a pure read (no side effects — safe to call repeatedly). `POST
-/view` records that the brief was viewed, advancing the boundary for next
-time; the frontend calls it only *after* `GET` has already resolved, so a
-visit never reads its own not-yet-recorded view as its own boundary.
+A pure read, no side effects — safe to call any number of times without
+changing the comparison window it returns (PLAN.md Milestone 7.5.2's
+business-day-cycle correction: the window is derived from canonical run
+data and calendar arithmetic, never from page-view state, so there is
+nothing here for repeated requests to advance). The prior `POST /view`
+endpoint (recording a page view to drive the boundary) was removed along
+with the `morning_brief_view` table it wrote to — see PLAN.md TD-018/
+TD-019 and `alembic/versions/0013_drop_morning_brief_view.py`.
 """
 
 from __future__ import annotations
@@ -28,8 +32,3 @@ router = APIRouter(prefix="/api/morning-brief", tags=["morning-brief"])
 @router.get("", response_model=MorningBriefSummary)
 def get_morning_brief(db: Annotated[Session, Depends(get_db)]) -> MorningBriefSummary:
     return morning_brief_service.get_morning_brief(db)
-
-
-@router.post("/view", status_code=204, response_model=None)
-def record_brief_view(db: Annotated[Session, Depends(get_db)]) -> None:
-    morning_brief_service.record_brief_view(db)

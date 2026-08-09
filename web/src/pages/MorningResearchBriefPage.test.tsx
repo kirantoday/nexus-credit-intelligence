@@ -39,6 +39,7 @@ const RUN_DETAILS: MorningBriefSummary["run_details"] = {
     mode: "delta",
     window_start_date: "2026-08-07",
     window_end_date: "2026-08-07",
+    research_day: "2026-08-07",
     errors_count: 0,
   },
   latest_run: {
@@ -50,6 +51,7 @@ const RUN_DETAILS: MorningBriefSummary["run_details"] = {
     mode: "delta",
     window_start_date: "2026-08-07",
     window_end_date: "2026-08-07",
+    research_day: "2026-08-07",
     errors_count: 0,
   },
   since: "2026-08-08T06:00:00Z",
@@ -99,9 +101,10 @@ const BASE_DEVELOPMENT: IssuerDevelopment = {
 };
 
 const BASE_SUMMARY: MorningBriefSummary = {
-  period_start: "2026-08-07T10:00:00Z",
-  period_start_is_fallback: false,
-  period_end: "2026-08-08T10:00:00Z",
+  latest_research_day: "2026-08-07",
+  preceding_research_day: "2026-08-06",
+  research_cycle_is_fallback: false,
+  as_of: "2026-08-08T10:00:00Z",
   issuers_with_developments: 1,
   severity_counts: { high: 1, medium: 0, low: 0 },
   new_developments: [BASE_DEVELOPMENT],
@@ -122,15 +125,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mockRecordView(): void {
-  vi.spyOn(filingMonitorApi, "recordMorningBriefView").mockResolvedValue(undefined);
-}
-
 describe("MorningResearchBriefPage", () => {
   it("renders the summary bar and issuer development cards", async () => {
     vi.spyOn(filingMonitorApi, "fetchMorningBrief").mockResolvedValue(BASE_SUMMARY);
     vi.spyOn(researchUniverseApi, "fetchResearchUniverses").mockResolvedValue(NO_UNIVERSES);
-    mockRecordView();
 
     renderWithProviders(<MorningResearchBriefPage />);
 
@@ -140,38 +138,80 @@ describe("MorningResearchBriefPage", () => {
     expect(
       screen.getByText("Potential bankruptcy or receivership filing detected in a new 8-K."),
     ).toBeInTheDocument();
-    expect(screen.getByText("What changed since your last review")).toBeInTheDocument();
+    expect(screen.getByText("What changed in the latest research cycle")).toBeInTheDocument();
+    expect(
+      screen.getByText("Latest research day: Aug 7, 2026 · Compared with: Aug 6, 2026"),
+    ).toBeInTheDocument();
     // Appears twice: once in the IssuerDevelopmentCard header, once in the
     // nested AlertCard's own issuer link.
     expect(screen.getAllByText("Acme Distressed Co (ACME)").length).toBeGreaterThan(0);
   });
 
-  it("records a brief view exactly once after the brief loads", async () => {
-    vi.spyOn(filingMonitorApi, "fetchMorningBrief").mockResolvedValue(BASE_SUMMARY);
+  it("never calls any view-recording endpoint — the window is derived server-side, not from page visits", async () => {
+    const fetchMorningBriefSpy = vi
+      .spyOn(filingMonitorApi, "fetchMorningBrief")
+      .mockResolvedValue(BASE_SUMMARY);
     vi.spyOn(researchUniverseApi, "fetchResearchUniverses").mockResolvedValue(NO_UNIVERSES);
-    const recordViewSpy = vi
-      .spyOn(filingMonitorApi, "recordMorningBriefView")
-      .mockResolvedValue(undefined);
 
     renderWithProviders(<MorningResearchBriefPage />);
 
     await waitFor(() => {
-      expect(recordViewSpy).toHaveBeenCalledTimes(1);
+      expect(fetchMorningBriefSpy).toHaveBeenCalledTimes(1);
     });
+    // `filingMonitorApi` has no `recordMorningBriefView`/view-recording
+    // export at all anymore (PLAN.md Milestone 7.5.2's business-day-cycle
+    // correction) — nothing to spy on or assert was never called, which is
+    // itself the point: there is no such call to make.
+    expect("recordMorningBriefView" in filingMonitorApi).toBe(false);
   });
 
-  it("shows the fallback-boundary message on a first-ever view", async () => {
+  it("shows the identical comparison window across repeated fetches (idempotent refresh)", async () => {
+    // The brief's window is a pure function of the API response — refetching
+    // (e.g. a background revalidation) with the same underlying data must
+    // render the same window every time.
+    const fetchMorningBriefSpy = vi
+      .spyOn(filingMonitorApi, "fetchMorningBrief")
+      .mockResolvedValue(BASE_SUMMARY);
+    vi.spyOn(researchUniverseApi, "fetchResearchUniverses").mockResolvedValue(NO_UNIVERSES);
+
+    const { unmount } = render(<MorningResearchBriefPage />, {
+      wrapper: ({ children }) => (
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <MemoryRouter>{children}</MemoryRouter>
+        </QueryClientProvider>
+      ),
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByText("Latest research day: Aug 7, 2026 · Compared with: Aug 6, 2026"),
+      ).toBeInTheDocument();
+    });
+    unmount();
+
+    // A second, independent mount ("reopening" the page) against the same
+    // server state must show the identical window.
+    renderWithProviders(<MorningResearchBriefPage />);
+    await waitFor(() => {
+      expect(
+        screen.getByText("Latest research day: Aug 7, 2026 · Compared with: Aug 6, 2026"),
+      ).toBeInTheDocument();
+    });
+    expect(fetchMorningBriefSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the fallback message when no research cycle has ever completed", async () => {
     vi.spyOn(filingMonitorApi, "fetchMorningBrief").mockResolvedValue({
       ...BASE_SUMMARY,
-      period_start_is_fallback: true,
+      research_cycle_is_fallback: true,
     });
     vi.spyOn(researchUniverseApi, "fetchResearchUniverses").mockResolvedValue(NO_UNIVERSES);
-    mockRecordView();
 
     renderWithProviders(<MorningResearchBriefPage />);
 
     await waitFor(() => {
-      expect(screen.getByText(/First time viewing/)).toBeInTheDocument();
+      expect(screen.getByText(/No completed research cycle yet/)).toBeInTheDocument();
     });
   });
 
@@ -184,13 +224,12 @@ describe("MorningResearchBriefPage", () => {
       no_material_changes: true,
     });
     vi.spyOn(researchUniverseApi, "fetchResearchUniverses").mockResolvedValue(NO_UNIVERSES);
-    mockRecordView();
 
     renderWithProviders(<MorningResearchBriefPage />);
 
     await waitFor(() => {
       expect(
-        screen.getByText("No material research developments since your last review."),
+        screen.getByText("No material research developments in the latest research cycle."),
       ).toBeInTheDocument();
     });
   });
@@ -208,7 +247,6 @@ describe("MorningResearchBriefPage", () => {
       historical_intelligence_issuer_count: 1,
     });
     vi.spyOn(researchUniverseApi, "fetchResearchUniverses").mockResolvedValue(NO_UNIVERSES);
-    mockRecordView();
 
     renderWithProviders(<MorningResearchBriefPage />);
 
@@ -222,7 +260,6 @@ describe("MorningResearchBriefPage", () => {
       new Error("Network unreachable"),
     );
     vi.spyOn(researchUniverseApi, "fetchResearchUniverses").mockResolvedValue(NO_UNIVERSES);
-    mockRecordView();
 
     renderWithProviders(<MorningResearchBriefPage />);
 
@@ -237,7 +274,6 @@ describe("MorningResearchBriefPage", () => {
     const fetchAlertsSpy = vi
       .spyOn(filingMonitorApi, "fetchAlerts")
       .mockResolvedValue(ONE_ALERT_PAGE);
-    mockRecordView();
 
     renderWithProviders(<MorningResearchBriefPage />);
 

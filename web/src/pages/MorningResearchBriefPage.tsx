@@ -1,4 +1,4 @@
-import { type ReactElement, useEffect, useRef } from "react";
+import type { ReactElement } from "react";
 import { useSearchParams } from "react-router";
 import {
   Alert,
@@ -23,7 +23,7 @@ import { BriefSummaryBar } from "../components/BriefSummaryBar";
 import { IssuerDevelopmentCard } from "../components/IssuerDevelopmentCard";
 import { RunDetailsPanel } from "../components/RunDetailsPanel";
 import { useAcknowledgeAlert, useAlerts, useDismissAlert } from "../queries/useAlerts";
-import { useMorningBrief, useRecordMorningBriefView } from "../queries/useMorningBrief";
+import { useMorningBrief } from "../queries/useMorningBrief";
 import { useResearchUniverses } from "../queries/useResearchUniverses";
 
 function filterDevelopments(
@@ -50,13 +50,18 @@ function filterDevelopments(
 }
 
 /**
- * The Morning Research Brief (PLAN.md Milestone 7.5.2 correction): "What
- * materially changed since this user last reviewed the Morning Research
- * Brief?" `new_developments`/`historical_intelligence` come pre-grouped and
- * pre-ranked from the API — filters below apply client-side to that already
- * -fetched data, never a broader unscoped query. The "Show historical
- * alerts" toggle is a separate, explicit escape hatch to the full all-time
- * flat list (`GET /api/alerts`, unchanged).
+ * The Morning Research Brief (PLAN.md Milestone 7.5.2's business-day-cycle
+ * correction): "What materially changed during the latest completed
+ * business-day research cycle, compared with the preceding one?" The
+ * comparison window comes entirely from the API (canonical run data +
+ * calendar arithmetic) — this page never records or reads any view/visit
+ * state, so opening, refreshing, or revisiting it can never change what
+ * counts as "new." `new_developments`/`historical_intelligence` come
+ * pre-grouped and pre-ranked from the API — filters below apply
+ * client-side to that already-fetched data, never a broader unscoped
+ * query. The "Show historical alerts" toggle is a separate, explicit
+ * escape hatch to the full all-time flat list (`GET /api/alerts`,
+ * unchanged).
  */
 export function MorningResearchBriefPage(): ReactElement {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -64,21 +69,6 @@ export function MorningResearchBriefPage(): ReactElement {
   const universesQuery = useResearchUniverses();
   const acknowledgeMutation = useAcknowledgeAlert();
   const dismissMutation = useDismissAlert();
-  const recordViewMutation = useRecordMorningBriefView();
-  const hasRecordedView = useRef(false);
-
-  // Records this visit as a view only after the brief has already been
-  // read (so this visit's own view is never mistaken for the prior
-  // boundary), and only once per mount — a background refetch of the same
-  // query must never re-record a view (PLAN.md Milestone 7.5.2 correction:
-  // idempotent refresh/reopen behavior).
-  useEffect(() => {
-    if (briefQuery.isSuccess && !hasRecordedView.current) {
-      hasRecordedView.current = true;
-      recordViewMutation.mutate();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [briefQuery.isSuccess]);
 
   const severity = (searchParams.get("severity") as EvidenceSeverity | null) ?? undefined;
   const universeId = searchParams.get("universe") ?? undefined;
@@ -120,7 +110,9 @@ export function MorningResearchBriefPage(): ReactElement {
           Morning Research Brief
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          {showHistory ? "All Research Alerts — All-Time" : "What changed since your last review"}
+          {showHistory
+            ? "All Research Alerts — All-Time"
+            : "What changed in the latest research cycle"}
         </Typography>
       </Box>
 

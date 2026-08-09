@@ -155,7 +155,9 @@ export interface SeverityCounts {
  * One "daily run" (PLAN.md Milestone 7.5.2) — pipeline-agnostic on purpose:
  * `pipeline` is operator/debugging context only, never a distinction the UI
  * asks the analyst to understand. Never represents a `mode=backfill` run —
- * those are structurally excluded server-side.
+ * those are structurally excluded server-side. `research_day` is the
+ * real-world business day this run's data represents (business-day-cycle
+ * correction) — never the wall-clock date the job happened to execute on.
  */
 export interface DailyRunSummary {
   id: string;
@@ -166,6 +168,7 @@ export interface DailyRunSummary {
   completed_at: string | null;
   window_start_date: string | null;
   window_end_date: string | null;
+  research_day: string;
   errors_count: number;
 }
 
@@ -193,9 +196,9 @@ export interface IssuerDevelopment {
 /** Secondary, diagnostics-only pipeline-run detail (Milestone 7.5.2
  * correction) — everything the original 7.5.2 daily-run-boundary fix
  * computed, unchanged, just moved out of the analyst's primary view.
- * `since` is the pipeline run's own boundary, a different question ("how
- * did the last discovery run perform") than the brief's own user-relative
- * `period_start` ("what's new to me"). */
+ * `since` is the pipeline run's own `started_at` boundary — raw
+ * operational detail, distinct from the brief's primary
+ * `latest_research_day` framing. */
 export interface RunDetails {
   last_successful_run: DailyRunSummary | null;
   latest_run: DailyRunSummary | null;
@@ -209,26 +212,31 @@ export interface RunDetails {
 }
 
 /**
- * The Morning Research Brief (Milestone 7.5.2 correction): "What
- * materially changed since this user last reviewed the Morning Research
- * Brief?" `period_start` is user-relative — the analyst's own last
- * recorded brief view — never a pipeline-run watermark;
- * `period_start_is_fallback` is true only for a genuinely first-ever view
- * (no prior view recorded), in which case `period_start` is the previous
- * business-day morning boundary, not an arbitrary run timestamp.
+ * The Morning Research Brief (Milestone 7.5.2's business-day-cycle
+ * correction): "What materially changed during the latest completed
+ * business-day research cycle, compared with the preceding one?"
+ * `latest_research_day`/`preceding_research_day` are derived purely from
+ * canonical successful daily-run data plus calendar business-day
+ * arithmetic — never from a page view, a request timestamp, or "now."
+ * Opening, refreshing, or revisiting the brief can never change these
+ * values; only a new successful daily/delta run completing can.
+ * `research_cycle_is_fallback` is true only when no successful daily run
+ * has ever completed at all.
  *
  * `new_developments`/`historical_intelligence` are a strict partition of
- * this period's alerts by `is_backfill` on each underlying `AlertRow`:
- * `new_developments` are genuinely new events (the discovery run's own
- * narrow window), `historical_intelligence` is an older event Nexus just
- * happened to discover this period (the enrichment orchestrator's wider
- * lookback). The same issuer can appear in both. `severity_counts` covers
- * `new_developments` only.
+ * this cycle's alerts (triggered on or after the start of
+ * `latest_research_day`, America/New_York) by `is_backfill` on each
+ * underlying `AlertRow`: `new_developments` are genuinely new events (the
+ * discovery run's own narrow window), `historical_intelligence` is an
+ * older event Nexus just happened to discover this cycle (the enrichment
+ * orchestrator's wider lookback). The same issuer can appear in both.
+ * `severity_counts` covers `new_developments` only.
  */
 export interface MorningBriefSummary {
-  period_start: string;
-  period_start_is_fallback: boolean;
-  period_end: string;
+  latest_research_day: string;
+  preceding_research_day: string;
+  research_cycle_is_fallback: boolean;
+  as_of: string;
   issuers_with_developments: number;
   severity_counts: SeverityCounts;
   new_developments: IssuerDevelopment[];
@@ -255,27 +263,6 @@ export interface AlertsQuery {
 
 export async function fetchMorningBrief(): Promise<MorningBriefSummary> {
   return apiFetch<MorningBriefSummary>("/api/morning-brief");
-}
-
-/** Records that the brief was viewed, advancing the boundary for next
- * time. Call only after `fetchMorningBrief` has already resolved, so this
- * visit never reads its own not-yet-recorded view as its own boundary.
- * Retries directly (not via TanStack Query's mutation `retry` option,
- * which was live-verified in production to not actually re-attempt this
- * call — see PLAN.md TD-019): `record_brief_view` is idempotent by
- * construction, so a retry is always safe, and a real intermittent `503`
- * was observed in production for this specific endpoint. */
-export async function recordMorningBriefView(): Promise<void> {
-  const attempts = 3;
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      await apiFetch<void>("/api/morning-brief/view", { method: "POST" });
-      return;
-    } catch (err) {
-      if (attempt === attempts) throw err;
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-  }
 }
 
 export async function fetchAlerts(query: AlertsQuery): Promise<AlertsPage> {
