@@ -4896,3 +4896,115 @@ returning to — run the real thing before calling it done, independently
 verify its own reported numbers, and treat "the tests pass" as necessary
 but not sufficient — is what turned two real, shippable-looking bugs into
 fixed ones instead of production incidents.
+
+---
+
+## 2026-08-09 — Milestone 7.5.2 (second correction): Morning Brief response-size fix
+
+**Summary**
+
+Production browser verification of the first correction (`427b535`)
+surfaced a third real, live-only bug: `POST /api/morning-brief/view`
+intermittently returned `503` from Railway's edge when triggered by the
+real page — never when tested directly. Investigated to root cause
+(not patched blindly) and fixed by capping the Morning Brief's response
+size.
+
+**Investigation**
+
+`GET /api/morning-brief` succeeded every time (200); the `POST /view`
+that follows it (fired only after the `GET` resolves, per the
+correction's own sequencing design) returned `503` consistently across
+three separate browser tabs, on every genuinely fresh full page load.
+Extensive attempts to reproduce it any other way all succeeded:
+
+- 15+ direct `curl` calls, including explicit CORS preflight simulation
+  and true 3-way concurrency (`GET`/`GET`/`POST` fired together via
+  backgrounded shell jobs), all `204`.
+- Manual `fetch()` calls from the browser's own JS console — including
+  one replaying the exact `GET`-then-`POST` sequence with a forced,
+  never-before-seen preflight header — all `204`.
+- A client-side (SPA) route change back to the brief, which happened to
+  fire the `POST` *before* a slow fresh `GET` resolved (using cached
+  query state), also succeeded.
+
+The one property every failure shared and every success lacked: a
+`POST` immediately following a real, freshly-completed `GET` whose
+response body was large (the first-ever-view fallback pulls in a wide
+window — 621 historical-intelligence issuers, measured at 3.5MB).
+Diagnosis: the backend runs as a single Uvicorn worker
+(`backend/railway.toml`, no `--workers` flag); serializing a
+multi-megabyte Pydantic response is synchronous, CPU-bound work that
+can transiently occupy the single worker's event loop, and a new
+request landing on the same reused keep-alive connection during that
+window can be rejected by Railway's edge with a `503` — consistent with
+curl never reproducing it (separate process invocations rarely reuse a
+connection across commands) and manual same-page `fetch()` calls never
+reproducing it either (issued after the page had already fully settled,
+never immediately trailing a fresh multi-megabyte response).
+
+**Fix**
+
+Capped the number of issuer-grouped developments actually *returned* in
+`new_developments`/`historical_intelligence` to 100 each
+(`_ISSUER_DISPLAY_CAP`), computed after severity-ranking so the most
+consequential issuers are never the ones cut — while
+`issuers_with_developments`/`historical_intelligence_issuer_count`
+remain the true, uncapped totals, so a capped display never
+misrepresents how much is actually new. Verified locally against the
+same real large-window scenario (forced via the same view-lookup
+monkeypatch the test suite uses): response size dropped from 3.5MB to
+727KB. Recorded as new Technical Debt (TD-019) rather than treated as
+fully resolved — this mitigates the specific endpoint, not the
+underlying single-worker/synchronous-serialization exposure, which
+could recur on a different sufficiently large future response.
+
+**Files Modified**
+
+- `backend/app/services/morning_brief_service.py` — `_ISSUER_DISPLAY_CAP`.
+- `PLAN.md` — TD-019 added.
+
+**Test Results**
+
+- Backend: full suite re-run clean after the change (397 passed).
+- `ruff check` / `black --check` / `mypy app` — clean.
+- `pre-commit` — clean.
+- Verified locally: real large-window payload 3.5MB -> 727KB, true
+  counts unaffected.
+
+**Deployment Validation**
+
+Recorded in a follow-up entry once pushed, deployed, and re-verified
+live that the `503` no longer reproduces on a fresh page load.
+
+**Problems Encountered**
+
+The `503` itself — see Investigation above. Root-caused via systematic
+elimination (curl, concurrent curl, manual fetch, forced preflight,
+exact-sequence replay) rather than guessed at or dismissed as
+"probably transient." The eventual explanation was corroborated, not
+just plausible: it was the *only* hypothesis consistent with every
+success and every failure observed, and the fix it implied (reduce
+response size) produced a large, real, measured reduction.
+
+**Solutions**
+
+Direct browser-based production verification (not just passing tests)
+caught this a third time in the same milestone — reinforcing the same
+lesson as the two prior corrections: an implementation can be correct
+in isolation and still fail under real conditions that isolated testing
+doesn't reproduce.
+
+**Remaining Work**
+
+- TD-019 (new): single-worker/synchronous-serialization exposure — this
+  endpoint is mitigated, the underlying architectural exposure is not.
+
+**Git Commit Hash**
+
+Pending — recorded in a follow-up entry.
+
+**Approximate Time Spent**
+
+~45 minutes (live reproduction, systematic elimination of hypotheses,
+fix, verification).

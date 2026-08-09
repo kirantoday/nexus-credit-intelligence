@@ -307,9 +307,22 @@ def _group_by_issuer(
 
 # Internal fetch cap for the alert list each period's grouping is built
 # from — generous relative to this system's real data volume (hundreds,
-# not millions, of alerts per period); a true page-size limit on the
-# *issuer*-grouped output was judged unnecessary at this scale.
+# not millions, of alerts per period).
 _PERIOD_ALERT_FETCH_LIMIT = 2000
+
+# Display cap on the number of issuer-grouped developments actually
+# returned in each of `new_developments`/`historical_intelligence` — a
+# real, live-caught necessity, not a stylistic choice: an uncapped
+# response against a genuinely large period (e.g. a first-ever brief
+# view, which pulls in everything back to the previous business day) was
+# measured at 3.5MB, and its JSON-serialization time was long enough to
+# occasionally cause the very next request on the same reused connection
+# to be rejected by Railway's edge with a spurious 503 — reproduced live,
+# not guessed, and not reproducible via any single isolated request.
+# `issuers_with_developments`/`historical_intelligence_issuer_count` are
+# always the *true* counts, computed before this cap is applied — a
+# capped display never misrepresents how much is actually new.
+_ISSUER_DISPLAY_CAP = 100
 
 
 def get_morning_brief(db: Session) -> MorningBriefSummary:
@@ -367,8 +380,8 @@ def get_morning_brief(db: Session) -> MorningBriefSummary:
         period_end=period_end,
         issuers_with_developments=len(new_developments),
         severity_counts=severity_counts,
-        new_developments=new_developments,
-        historical_intelligence=historical_intelligence,
+        new_developments=new_developments[:_ISSUER_DISPLAY_CAP],
+        historical_intelligence=historical_intelligence[:_ISSUER_DISPLAY_CAP],
         historical_intelligence_issuer_count=len(historical_intelligence),
         no_material_changes=(len(new_developments) == 0),
         run_details=_build_run_details(db),
