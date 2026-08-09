@@ -5372,12 +5372,52 @@ N/A (no bug this pass).
   planned, not started, still deliberately out of scope. Not to begin
   until the user explicitly approves it.
 
+**Deployment Validation**
+
+Pushed to `origin/main` (`eafb77e`, then `7d06b91` docs follow-up).
+Railway's redeploy was caught mid-transition on the first post-push
+check — `GET /api/morning-brief` returned a real `500` for a few
+minutes because the *old* deployed code was still running against the
+already-migrated database with `morning_brief_view` dropped (migration
+`0013` had been applied live ahead of the code push). Polled every 15s
+until the endpoint returned `200`; resolved once Railway's build/deploy
+completed, with no manual intervention required. Live-verified against
+production afterward:
+
+- `GET /api/morning-brief` (direct `curl`, three separate requests):
+  `latest_research_day: "2026-08-07"`, `preceding_research_day:
+  "2026-08-06"`, `research_cycle_is_fallback: false` — identical across
+  all three calls.
+- `POST /api/morning-brief/view` → `404` (route genuinely removed, not
+  just erroring — direct proof TD-019's endpoint no longer exists).
+- Browser walkthrough (Chrome, production Vercel frontend against
+  production Railway API): `https://nexus-credit-intelligence.vercel.app/research-brief`
+  renders "Latest research day: Aug 7, 2026 · Compared with: Aug 6,
+  2026" — an exact match to the milestone's required example. Reloaded
+  the page fully (fresh navigation, not a soft refresh) and confirmed
+  byte-identical text after reload. Network tab showed exactly one
+  request to `/api/morning-brief` (200) and zero requests to `/view` —
+  confirming the frontend no longer calls the removed endpoint at all,
+  not just that the call would fail gracefully. Console showed zero
+  errors. Expanded "Show run/data details" and confirmed the secondary
+  operational panel (`Latest successful daily run`, `Run window: Aug 7,
+  2026 – Aug 8, 2026`, universes/issuers monitored, filing/evidence
+  counts) still renders correctly, unaffected by the primary summary's
+  redesign.
+- Note: browser verification was performed on 2026-08-08 (a Saturday,
+  per this entry's own timestamp) — real-world confirmation, not just a
+  seeded-test one, that the brief correctly continued showing the Aug
+  7/Aug 6 business-day comparison on a non-business day rather than
+  computing an artificial empty weekend period.
+
 **Git Commit Hash**
 
-`eafb77e`
+`eafb77e` (implementation), `7d06b91` (docs: commit-hash + PLAN.md
+follow-up)
 
 **Approximate Time Spent**
 
-~1.5 hours (design correction, service/schema/route rewrite,
+~2 hours (design correction, service/schema/route rewrite,
 `morning_brief_view` removal and migration, full test suite rewrite,
-documentation, full verification pass).
+documentation, full verification pass, deployment, and live production
+browser verification).
