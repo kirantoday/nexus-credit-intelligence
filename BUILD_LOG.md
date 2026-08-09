@@ -5008,3 +5008,92 @@ doesn't reproduce.
 
 ~45 minutes (live reproduction, systematic elimination of hypotheses,
 fix, verification).
+
+---
+
+## 2026-08-09 — Milestone 7.5.2 (third correction): honest re-diagnosis of the `503`, retry mitigation
+
+**Summary**
+
+Re-verified the response-size fix (`307ca17`) against production and
+found it did **not** resolve the `503` — a direct, live re-test with a
+now-tiny (1106-byte) `GET /api/morning-brief` response still reproduced
+the exact same failure on a fresh browser page load. The payload-size
+hypothesis from the prior entry is disproved. Rather than claim a fix
+that didn't work, this entry corrects the record and ships an honest
+mitigation: a safe retry.
+
+**Re-investigation**
+
+With the capped response deployed and confirmed live-small, a fresh
+page load in a fourth separate tab still produced `GET 200` / `POST
+503`. Further checks: fetched and grepped the deployed JS bundle
+directly (`curl` + `grep` against the live Vercel asset) to rule out a
+stale-build or bundling artifact — the request construction matches the
+source exactly. Every manual/scripted reproduction attempt (curl,
+concurrent curl, manual same-page `fetch()`, forced-fresh-preflight
+`fetch()`) continued to succeed; only a genuine fresh browser page load
+fails, and every retry — manual or automated — succeeds. No further
+hypothesis was confirmable from this environment (no access to
+Railway's own edge/request logs). Recorded honestly as **not
+conclusively root-caused**, correcting the prior entry's payload-size
+conclusion rather than letting an unverified fix stand undisputed in
+the record.
+
+**Mitigation shipped**
+
+`useRecordMorningBriefView` now retries twice with a 1s delay — safe,
+since `record_brief_view` is idempotent by construction (a retry either
+finds the gap already advanced, a no-op, or genuinely records the
+view). Verified live: a manual 3-call retry loop against the production
+endpoint succeeded 3/3. This does not block core functionality — `GET
+/api/morning-brief` has never failed in any test, live or scripted; a
+failed `POST /view` only means the boundary doesn't advance that one
+visit, self-healing on the next successful call (same session, on
+retry, or next real visit).
+
+**Files Modified**
+
+- `web/src/queries/useMorningBrief.ts` — `useRecordMorningBriefView`
+  retry.
+- `PLAN.md` — TD-019 corrected: response-size cap kept (good practice
+  regardless) but explicitly no longer claimed as the fix; retry
+  recorded as the actual mitigation; root cause recorded as open, not
+  resolved.
+
+**Test Results**
+
+`tsc -b` / `eslint` / `prettier --check` — clean. No backend change this
+pass (frontend-only).
+
+**Problems Encountered**
+
+The real problem here was almost documenting a fix that didn't actually
+work — caught only by re-testing the *specific claim* ("payload size is
+the cause") against production after deploying it, rather than trusting
+the plausible-sounding investigation from the previous entry. A
+diagnosis that explains every observation is still a hypothesis until
+the fix it implies is independently re-verified.
+
+**Solutions**
+
+Re-tested the exact claim in production before accepting it. When it
+failed, corrected the documentation rather than leaving a disproved
+conclusion in the permanent record, and shipped a mitigation whose
+effectiveness (retry succeeds) was itself verified live rather than
+assumed.
+
+**Remaining Work**
+
+- TD-019 (updated): `POST /api/morning-brief/view`'s intermittent `503`
+  on fresh browser page loads remains **not root-caused** — mitigated
+  via retry, which is empirically reliable but not an explanation.
+
+**Git Commit Hash**
+
+Pending — recorded in a follow-up entry.
+
+**Approximate Time Spent**
+
+~30 minutes (re-verification, retry mitigation, honest documentation
+correction).
