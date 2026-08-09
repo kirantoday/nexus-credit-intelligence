@@ -10,7 +10,7 @@ actions.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -27,6 +27,7 @@ from app.core.types import (
 )
 from app.domain.alert import AlertEvent
 from app.domain.filing_monitor_run import FilingMonitorRun
+from app.domain.market_discovery import MarketDiscoveryRun
 from app.domain.research_evidence import ResearchEvidence
 from app.providers.base.http_client import ThrottledHttpClient
 from app.repositories import (
@@ -43,6 +44,7 @@ from app.schemas.filing_monitor import (
     AlertEvidenceDetail,
     AlertRow,
     AlertsPage,
+    DailyRunSummary,
     FilingMonitorRunRow,
     MorningBriefSummary,
     ResearchEvidenceRow,
@@ -210,6 +212,7 @@ def list_alerts(
     detection_method: DetectionMethod | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    triggered_since: datetime | None = None,
     page: int = 1,
     page_size: int = 50,
 ) -> AlertsPage:
@@ -248,6 +251,7 @@ def list_alerts(
         detection_method=detection_method,
         date_from=date_from,
         date_to=date_to,
+        triggered_since=triggered_since,
         page=page,
         page_size=page_size,
     )
@@ -289,29 +293,91 @@ def dismiss_alert(
     return _alert_to_row(db, alert)
 
 
+def _filing_monitor_run_to_daily_summary(run: FilingMonitorRun) -> DailyRunSummary:
+    return DailyRunSummary(
+        id=run.id,
+        pipeline="filing_monitor",
+        mode=run.mode,
+        status=run.status,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        window_start_date=None,
+        window_end_date=None,
+        errors_count=run.errors_count,
+    )
+
+
+def _market_discovery_run_to_daily_summary(run: MarketDiscoveryRun) -> DailyRunSummary:
+    return DailyRunSummary(
+        id=run.id,
+        pipeline="market_discovery",
+        mode=run.mode,
+        status=run.status,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        window_start_date=run.window_start_date,
+        window_end_date=run.window_end_date,
+        errors_count=run.errors_count,
+    )
+
+
+def _latest_successful_daily_run(db: Session) -> DailyRunSummary | None:
+    """The one authoritative "latest successful daily run" (PLAN.md
+    Milestone 7.5.2 section 4) — whichever of `filing_monitor_run`'s and
+    `market_discovery_run`'s latest `delta`/`baseline` success is more
+    recent. Callers never need to know which pipeline produced it."""
+    candidates: list[tuple[datetime, DailyRunSummary]] = []
+    fm_run = filing_monitor_run_repository.get_latest_successful_daily_run(db)
+    if fm_run is not None and fm_run.completed_at is not None:
+        candidates.append((fm_run.completed_at, _filing_monitor_run_to_daily_summary(fm_run)))
+    md_run = market_discovery_repository.get_latest_successful_daily_run(db)
+    if md_run is not None and md_run.completed_at is not None:
+        candidates.append((md_run.completed_at, _market_discovery_run_to_daily_summary(md_run)))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda c: c[0])[1]
+
+
+def _latest_daily_run(db: Session) -> DailyRunSummary | None:
+    """The most recent `delta`/`baseline` run of either pipeline regardless
+    of outcome — backs the Morning Brief's "current run" status."""
+    candidates: list[tuple[datetime, DailyRunSummary]] = []
+    fm_run = filing_monitor_run_repository.get_latest_daily_run(db)
+    if fm_run is not None:
+        candidates.append((fm_run.started_at, _filing_monitor_run_to_daily_summary(fm_run)))
+    md_run = market_discovery_repository.get_latest_daily_run(db)
+    if md_run is not None:
+        candidates.append((md_run.started_at, _market_discovery_run_to_daily_summary(md_run)))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda c: c[0])[1]
+
+
 def get_morning_brief(db: Session) -> MorningBriefSummary:
-    """Provider-aware "what changed since last successful run" (PLAN.md
-    Milestone 7.5 section 16) — the single "new filings discovered" metric
-    from Milestone 6.5 was SEC-specific and insufficient once CourtListener
-    (and, with Milestone 7.5, market-wide SEC discovery) exist as
-    independent evidence sources.
+    """ "What changed since the last successful DAILY run?" (PLAN.md
+    Milestone 7.5.2 section 2) — never "what historical research exists in
+    the database?". `since` resolves to the single authoritative "latest
+    successful daily run" boundary (`_latest_successful_daily_run`,
+    `mode=backfill` structurally excluded) and is the *one* value every
+    "new_*"/actionable-alert count below is computed against — and the one
+    exposed to the frontend so the alert rows rendered under this summary
+    use the identical boundary, never a broader one (section 7).
 
-    "Since last successful run" is resolved across *both* known-issuer
-    monitoring (`filing_monitor_run`) and market-wide discovery
-    (`market_discovery_run`) — whichever is more recent — since either
-    pipeline can be the most recent source of genuinely new evidence.
+    `since` is the run's `started_at`, deliberately not its `completed_at`:
+    every filing/evidence/alert the run itself discovers is necessarily
+    written *before* that run's own completion timestamp, so a
+    `completed_at` boundary would silently exclude the very run's own
+    output — discovered live running the real 2026-08-07 delta, whose
+    entire evidence/alert output fell inside its own
+    `[started_at, completed_at]` window and vanished from the brief until
+    this was corrected. `started_at` is safe as a non-overlapping boundary
+    across consecutive daily runs, since a run's own `started_at` is always
+    after the previous run's `completed_at` in this pipeline's sequential
+    operating model.
     """
-    latest_successful = filing_monitor_run_repository.get_latest_successful_run(db)
-    all_runs = filing_monitor_run_repository.list_runs(db, page_size=1)
-    latest_run = all_runs[0] if all_runs else None
-
-    latest_discovery_run = market_discovery_repository.get_latest_successful_run(db)
-    since_candidates = [
-        run.completed_at
-        for run in (latest_successful, latest_discovery_run)
-        if run is not None and run.completed_at is not None
-    ]
-    since = max(since_candidates) if since_candidates else None
+    latest_successful = _latest_successful_daily_run(db)
+    latest_run = _latest_daily_run(db)
+    since = latest_successful.started_at if latest_successful else None
 
     universes_monitored = len(
         collection_repository.list_collections(db, collection_type=CollectionType.RESEARCH_UNIVERSE)
@@ -327,20 +393,27 @@ def get_morning_brief(db: Session) -> MorningBriefSummary:
     new_research_evidence = research_evidence_repository.count_evidence_created_since(db, since)
 
     # "Actionable" alerts (spec wording, Milestone 7.5 section 16): those
-    # not yet acted upon, `status=new` — distinct from the full historical
-    # alert count, which Alerts/history views already cover separately.
-    # Uses true aggregate queries (not a page-limited list summation) so the
-    # severity/AI-assisted breakdown stays correct regardless of alert volume.
-    severity_counts = alert_repository.count_alerts_by_severity(db, status=AlertStatus.NEW)
+    # not yet acted upon, `status=new`, scoped to the same daily-run
+    # boundary as every other metric here (Milestone 7.5.2 section 7) —
+    # distinct from the full historical alert count, which Alerts/history
+    # views already cover separately without this scoping. Uses true
+    # aggregate queries (not a page-limited list summation) so the
+    # severity/AI-assisted breakdown stays correct regardless of volume.
+    severity_counts = alert_repository.count_alerts_by_severity(
+        db, status=AlertStatus.NEW, triggered_since=since
+    )
     actionable_total = sum(severity_counts.values())
     high = severity_counts.get(EvidenceSeverity.HIGH, 0)
     medium = severity_counts.get(EvidenceSeverity.MEDIUM, 0)
     low = severity_counts.get(EvidenceSeverity.LOW, 0)
-    ai_assisted = alert_repository.count_ai_assisted_alerts(db, status=AlertStatus.NEW)
+    ai_assisted = alert_repository.count_ai_assisted_alerts(
+        db, status=AlertStatus.NEW, triggered_since=since
+    )
 
     return MorningBriefSummary(
-        last_successful_run=_run_to_row(latest_successful) if latest_successful else None,
-        latest_run=_run_to_row(latest_run) if latest_run else None,
+        last_successful_run=latest_successful,
+        latest_run=latest_run,
+        since=since,
         universes_monitored=universes_monitored,
         issuers_monitored=issuers_monitored,
         new_sec_filings=new_sec_filings,

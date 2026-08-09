@@ -24,10 +24,9 @@ percentage, known issues, next goal), see **[`PLAN.md`](./PLAN.md) § Project St
 — this README is a stable overview and is not re-synced line-by-line every milestone
 the way `PLAN.md` is.
 
-**Known limitation:** live Supabase migration verification (`alembic upgrade head`
-against a real project, `pgvector`/`pg_trgm` extension creation) is **pending valid
-development credentials** and has not yet been run against an actual Supabase
-database. See `PLAN.md` § Known Issues (KI-001).
+Live Supabase migration verification (KI-001) was resolved 2026-08-05 — `alembic
+upgrade head` runs cleanly against the real, shared Supabase project. See `PLAN.md`
+§ Known Issues for the full resolution record.
 
 ---
 
@@ -239,8 +238,10 @@ application). See `ARCHITECTURE_DECISIONS.md` ADR-013 for the full rationale.
 6. Run migrations: `cd backend && ./.venv/Scripts/python -m alembic upgrade head`.
    This requires `DIRECT_DATABASE_URL` to be set.
 
-**Not yet verified end-to-end against a real Supabase project** — see
-[Project status](#project-status).
+Verified end-to-end against the real, shared Supabase project (KI-001, closed
+2026-08-05) — `alembic upgrade head` applies cleanly, the `nexus` schema is fully
+isolated, and every milestone since has run real discovery/enrichment pipelines
+against it live.
 
 ---
 
@@ -279,6 +280,55 @@ SPA rewrites. Deployment steps:
    the frontend itself is configured.
 
 Deployed: https://nexus-credit-intelligence.vercel.app.
+
+---
+
+## Operational scripts — SEC market discovery & enrichment
+
+`app.scripts.run_market_discovery` (PLAN.md Milestone 7.5/7.5.2) is the one
+production entry point for discovering distress-relevant issuers from live SEC
+filing activity, resolving their identity, and running them through the
+SEC/CourtListener/OpenFIGI enrichment orchestrator. It always writes through the
+same evidence/alert pipeline as every other trigger in this codebase — there is no
+separate write path for "historical" vs. "daily" data, only a different `--mode`.
+
+```bash
+cd backend
+
+# Historical backfill — an explicit date range, labeled honestly as backfilled
+# data (never presented as newly-filed overnight activity). Used for the
+# Milestone 7.5 pilot/backfill and for Milestone 7.5.3's historical repair.
+./.venv/Scripts/python -m app.scripts.run_market_discovery \
+    --mode backfill --start 2026-01-01 --end 2026-08-06
+
+# Daily delta — discovers everything since the last successful run's watermark
+# (any mode) through today. This is the command a real nightly run uses; it
+# self-computes its window, so it is never given an explicit --start/--end.
+./.venv/Scripts/python -m app.scripts.run_market_discovery --mode delta
+```
+
+**The Morning Research Brief (`GET /api/morning-brief`) is powered by whichever
+run — of either `market_discovery_run` or the older, known-issuer-only
+`filing_monitor_run` — is the most recent successful `delta`/`baseline`-mode run
+of either pipeline.** `mode=backfill` runs are structurally excluded from this
+selection (PLAN.md Milestone 7.5.2): a historical backfill never becomes "the
+last successful daily run," no matter how recently it completed. Historical data
+stays fully queryable elsewhere (Issuer Detail, Research Universes, evidence
+drill-down, and the Morning Brief's own "Show historical alerts" toggle) — it is
+just never counted in the Brief's default "what's new" metrics.
+
+**Future nightly command** (documented, not yet scheduled — Railway Cron
+activation requires separate explicit approval per PLAN.md §24.6):
+
+```bash
+python -m app.scripts.run_market_discovery --mode delta
+```
+
+`app.scripts.run_overnight_filing_monitor` (the older, Milestone 6.5
+known-issuer-only pipeline) remains available for the same three modes
+(`--mode baseline|delta|backfill`) but is superseded by
+`run_market_discovery` for market-wide daily discovery, since it can only refresh
+issuers Nexus already knows about, never discover new ones.
 
 ---
 

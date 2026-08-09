@@ -4,9 +4,11 @@ import {
   Alert,
   Box,
   CircularProgress,
+  FormControlLabel,
   MenuItem,
   Paper,
   Stack,
+  Switch,
   TextField,
   Typography,
 } from "@mui/material";
@@ -35,6 +37,7 @@ export function MorningResearchBriefPage(): ReactElement {
   const universeId = searchParams.get("universe") ?? undefined;
   const status = (searchParams.get("status") as AlertStatus | null) ?? undefined;
   const detectionMethod = (searchParams.get("detection") as DetectionMethod | null) ?? undefined;
+  const showHistory = searchParams.get("history") === "1";
 
   function updateParams(updates: Record<string, string | null>): void {
     const next = new URLSearchParams(searchParams);
@@ -48,7 +51,20 @@ export function MorningResearchBriefPage(): ReactElement {
     setSearchParams(next, { replace: true });
   }
 
-  const alertsQuery = useAlerts({ severity, universeId, status, detectionMethod, pageSize: 100 });
+  // Default scope is the latest successful DAILY run's boundary — showing
+  // "6 actionable alerts" in the summary bar next to hundreds of all-time
+  // alert rows below it is exactly the bug this milestone fixed (PLAN.md
+  // Milestone 7.5.2 section 7). The "Show historical alerts" toggle is the
+  // one escape hatch, and it's explicit, not a default.
+  const triggeredSince = showHistory ? undefined : (briefQuery.data?.since ?? undefined);
+  const alertsQuery = useAlerts({
+    severity,
+    universeId,
+    status,
+    detectionMethod,
+    triggeredSince,
+    pageSize: 100,
+  });
 
   return (
     <Stack spacing={3}>
@@ -57,7 +73,9 @@ export function MorningResearchBriefPage(): ReactElement {
           Morning Research Brief
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          New Research Alerts — Since Last Successful Run
+          {showHistory
+            ? "All Research Alerts — All-Time"
+            : "New Research Alerts — Since Last Successful Daily Run"}
         </Typography>
       </Box>
 
@@ -129,6 +147,16 @@ export function MorningResearchBriefPage(): ReactElement {
             <MenuItem value="acknowledged">Acknowledged</MenuItem>
             <MenuItem value="dismissed">Dismissed</MenuItem>
           </TextField>
+          <FormControlLabel
+            sx={{ ml: { sm: "auto" } }}
+            control={
+              <Switch
+                checked={showHistory}
+                onChange={(e) => updateParams({ history: e.target.checked ? "1" : null })}
+              />
+            }
+            label="Show historical alerts (all-time, not just this daily run)"
+          />
         </Stack>
       </Paper>
 

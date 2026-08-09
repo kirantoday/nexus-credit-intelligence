@@ -69,13 +69,13 @@ the milestone-by-milestone stop-and-wait workflow.
 
 | Field | Value |
 |---|---|
-| **Overall Progress** | ~53% — 10 of 19 milestone units complete (16 numbered milestones + 6.5, 7.5, and 7.5.1 inserted; 1–7, 6.5, 7.5, and 7.5.1 done) |
-| **Current Milestone** | Milestone 7.5.1 — Signal Quality & Research Universe Calibration (inserted, complete — see below) |
-| **Current Status** | Milestone 7.5.1 is complete. An audit of Milestone 7.5's evidence-driven Research Universe classifications found a real, root-caused precision bug: `universe_classification_service.classify_issuer` gated automatic membership on `research_evidence`'s raw Layer-1 deterministic severity, which has no concept of *whose* event a matched phrase describes — live-verified in production, the majority of "verified" System-Detected: Chapter 11 memberships (BlackSky, Ameresco, Skyworks, and ~35 others of 54) were actually about a director's former employer, a customer, a peer, or SEC boilerplate, not the issuer's own bankruptcy. Fixed by gating on the AI-reviewed alert's severity plus a new `issuer_is_subject` signal instead of the raw Layer-1 severity alone; a second, independently-proven bug in SEC's own full-text-search `forms` parameter (mixing amendment-suffix forms into one request silently dropped ~96% of real hits) was also fixed. A controlled, idempotent, auditable reconciliation script (`app.scripts.reclassify_system_universes`) recomputed every evidence-driven membership from the corrected rules — Chapter 11 54→20, Distressed Core 398→299, Default/Covenant Stress 281→173, while a previously-dead category (Post-Emergence, structurally unreachable before this fix) now correctly holds 14 real memberships. Zero issuers/filings/evidence/alerts/provenance rows were deleted — only `collection_membership` rows in the 8 system-seeded universes were corrected. See `BUILD_LOG.md` for the full audit findings, before/after counts, and quality review. |
-| **Last Updated** | 2026-08-08 |
+| **Overall Progress** | ~57% — 12 of 20 milestone units complete (16 numbered milestones + 6.5, 7.5, 7.5.1, 7.5.2 inserted, 7.5.3 planned; 1–7, 6.5, 7.5, 7.5.1, and 7.5.2 done; Milestone 15 also completed early, discovered already-satisfied) |
+| **Current Milestone** | None in progress — Milestone 7.5.2 complete, awaiting explicit approval to begin Milestone 7.5.3 or Milestone 8 |
+| **Current Status** | Milestone 7.5.2 is complete. Root cause of production's stale "Last successful run: Aug 6" display, found by code inspection before any change: `get_latest_successful_run` (both `filing_monitor_run` and `market_discovery_run`) treats *any* successful mode — including `backfill` — as the watermark/display source, so a historical backfill's completion time was silently standing in for "the last time we checked in on a normal operating day," and no genuine `delta`-mode run of either pipeline had ever completed. Fixed by adding `get_latest_successful_daily_run`/`get_latest_daily_run` (mode `delta`/`baseline` only) alongside the existing (unchanged) any-mode functions. A second real bug was found live running the actual 2026-08-07 delta: the Morning Brief's `since` boundary was originally the latest run's `completed_at`, which excludes that very run's own output (everything a run creates is necessarily written before it finishes) — corrected to `started_at`. The real delta run (`market_discovery_service`, TD-014 active) discovered 246 new issuers, 1207 new SEC filings, 822 new evidence rows, 356 new alerts, 0 errors; a same-window re-run proved full idempotency (zero new rows). Milestone 15 (Railway/Vercel deployment) was found already satisfied and marked "Completed Early." Full metrics in `BUILD_LOG.md`. |
+| **Last Updated** | 2026-08-09 |
 | **Current Git Branch** | main |
-| **Latest Commit** | `f11ef00` — Milestone 7.5.1: signal quality and Research Universe calibration |
-| **Next Milestone** | Milestone 8 — Watchlists (§18 step 8), unstarted, awaiting explicit approval to begin |
+| **Latest Commit** | `f11ef00` — Milestone 7.5.1: signal quality and Research Universe calibration (Milestone 7.5.2's commit hash recorded here once pushed, per this project's established two-commit doc pattern) |
+| **Next Milestone** | Milestone 7.5.3 (Historical Discovery Coverage Repair) or Milestone 8 (Watchlists) — both unstarted, awaiting explicit approval to begin either |
 
 ---
 
@@ -97,6 +97,8 @@ milestone completes; it is not itself a log (see `BUILD_LOG.md` for that).
 | 7 | CourtListener adapter + docket view | Complete | 2026-08-07 | `9154e9e` | Migrations `0008` (`court_docket`, `court_docket_entry`, `docket_document`, `research_evidence.docket_entry_id`) and `0009` (corrective — see Problems Encountered) applied and round-tripped live. Real, permanently-committed proof: 3 real CourtListener/RECAP dockets live-searched, live-verified by exact `courtlistener_docket_id` match, and linked to 3 already-seeded real issuers with independently-confirmed real Chapter 11 events (Diebold Nixdorf, EchoStar/Hughes Satellite Systems Corporation, Office Properties Income Trust) — 665 real docket entries ingested (429 + 111 + 125), 28 `research_evidence` rows, 27 `alert_event` rows (24 high / 2 medium / 1 low), all AI-reviewed, all correctly wired into the same provider-agnostic evidence/alert pipeline ADR-018 anticipated before this milestone existed (`evidence_provider=courtlistener`, no `alert_event` schema change). Combined Morning Research Brief now shows 55 total alerts across both real providers (28 SEC + 27 CourtListener). Docket discovery is a curated, live-verified linking step, not an automatic per-issuer feed like SEC filings — see ADR-019 for why. 300 backend tests pass (274→300, +26), 67 frontend tests pass (61→67, +6) across 12 files. Found and fixed three genuine live-caught issues (see Problems Encountered): an Alembic `checkconstraint_byname` blind spot requiring a corrective migration; a real signal-to-noise problem where routine Chapter 11 case boilerplate flooded evidence via the ambiguous-context "bare mention" rule (fixed with `DOCKET_EXCLUDED_RULE_IDS`); and an unbounded Anthropic SDK timeout that let a real, severely degraded CourtListener response (66.7s for a single page, confirmed via isolated diagnostic) stall a sync run with no error. Full live browser walkthrough completed: Issuer Detail's new "What happened in court?" section (real docket header + entries, honest "(no description on file)"/"Not on RECAP" for genuinely incomplete real PACER data), Morning Research Brief showing cross-provider real alerts together. See ADR-019. |
 | 7.5 | SEC Market Discovery & Automatic Issuer Enrichment (inserted, approved — see below) | Complete | 2026-08-07 | `cd73c5b` | Reusable SEC full-text-search discovery pipeline (`efts.sec.gov`) + CIK-first shared issuer resolver + provider-agnostic enrichment orchestrator (`issuer_enrichment_status`) covering SEC/CourtListener/OpenFIGI for both newly-discovered and already-known issuers. ADR-020 supersedes ADR-019 to allow strict, signal-hierarchy-based automatic CourtListener docket linking — jurisdiction/HQ correspondence explicitly excluded as a required signal (0 auto-links produced, by design — conservative policy held at scale). Hard human-approval gate honored: July 2026 pilot (89 candidates, 1 error) reviewed and approved before the January–August 2026 backfill (603 candidates, 11 errors) ran with the identical pipeline. Final state: 541 issuers, 6,036 SEC filings, 5,417 evidence records, 1,856 alerts, all real-provider-sourced. See `BUILD_LOG.md` Parts 1–2 for full metrics and quality review. |
 | 7.5.1 | Signal Quality & Research Universe Calibration (inserted, approved — see below) | Complete | 2026-08-08 | `f11ef00` | Audit-driven precision fix for Milestone 7.5's evidence-driven Research Universe classification. Root cause: raw Layer-1 severity has no entity attribution, so a bare "chapter 11"/"event of default" phrase match scored identically for the issuer's own event vs. a director's former employer's, a customer's, or SEC boilerplate. Fixed by gating on the AI-reviewed alert's severity + a new `issuer_is_subject` field (migration `0011`); a second, live-proven SEC full-text-search `forms`-parameter bug (amendment-suffix forms silently corrupting the filter, ~96% coverage loss) also fixed. `app.scripts.reclassify_system_universes` reconciled all 8 evidence-driven universes idempotently — Chapter 11 54→20, Distressed Core 398→299, Default/Covenant Stress 281→173, Liability Management 68→33, Refinancing Risk 130→115; Going Concern 210→244 and Post-Emergence 0→14 (a previously-dead category) increased, correctly capturing real signal the old raw-severity gate structurally could not reach. Zero canonical data deleted. |
+| 7.5.2 | Daily Delta Run & Morning Research Brief Semantics (inserted, approved — see below) | Complete | 2026-08-09 | (pending — see `BUILD_LOG.md`) | Root-caused the stale "Last successful run: Aug 6" display: `get_latest_successful_run` on both run tables treated *any* successful mode — including `backfill` — as the watermark/display source. Fixed with new `get_latest_successful_daily_run`/`get_latest_daily_run` (mode `delta`/`baseline` only) driving `get_morning_brief`, plus a second real bug found live during the Aug 7 run: `since` was originally set to the latest run's `completed_at`, which excludes that very run's own output (everything a run creates is written before it finishes) — corrected to `started_at`. A real 2026-08-07→08 delta via the unmodified `market_discovery_service` (TD-014 active) discovered 246 new issuers, 39 already-known, 1207 new SEC filings, 822 new evidence rows, 356 new alerts (49 high / 65 medium / 242 low; 351 AI-assisted / 5 deterministic), 0 errors, elapsed 3509s (~58.5 min). Re-run over the identical window (as `backfill` mode, since `delta` mode self-advances its window from the watermark) produced zero new rows across every table — full idempotency proven, 38.7s. `new_court_events=0` root-caused as genuinely correct, not a bug: CourtListener enrichment only attempts a search once an issuer has docket-relevant evidence on file, and only 3 of 285 processed candidates did, all returning no matching docket. Two new Technical Debt items recorded (TD-016, TD-017) rather than expanding this milestone's scope. |
+| 7.5.3 | Historical Discovery Coverage Repair (inserted, planned — not started) | Not Started | — | — | Re-runs the 2026-01-01→2026-08-06 historical discovery window with TD-014's corrected SEC full-text-search `forms` behavior active, reconciling only newly-discovered historical gaps (e.g. FAT Brands, Bitcoin Depot, Inotiv, GoHealth) idempotently against already-processed data. Deliberately deferred out of Milestone 7.5.2, which stays focused on daily operating semantics. |
 | 8 | Watchlists (10 coverage + 1 benchmark) + comparison view | Not Started | — | — | Awaiting explicit approval to begin |
 | 9 | Research notes/documents + audit events | Not Started | — | — | |
 | 10 | Alerts (rules, engine, panel/page) | Not Started | — | — | |
@@ -104,7 +106,7 @@ milestone completes; it is not itself a log (see `BUILD_LOG.md` for that).
 | 12 | Universal Search | Not Started | — | — | |
 | 13 | AI Research Assistant + gated embeddings | Not Started | — | — | |
 | 14 | Disabled licensed-provider capability cards | Not Started | — | — | |
-| 15 | Railway/Vercel deployment validation | Not Started | — | — | |
+| 15 | Railway/Vercel deployment validation | Completed Early | 2026-08-09 | (verified during Milestone 7.5.2, no dedicated deployment commit — deploy already existed) | Discovered already satisfied while implementing Milestone 7.5.2, not newly deployed by this milestone. Live-verified: `GET https://nexus-credit-intelligence-production.up.railway.app/health` → `200 {"status":"healthy","environment":"production"}`; `GET https://nexus-credit-intelligence.vercel.app/` → `200`; a real `OPTIONS` preflight from the Vercel origin to the Railway API returns `access-control-allow-origin: https://nexus-credit-intelligence.vercel.app` (CORS correctly configured, not just "not blocked"); Alembic migrations applied live via `DIRECT_DATABASE_URL` per KI-001 (closed 2026-08-05). This is roadmap bookkeeping only — no deployment action was taken by this milestone. |
 | 16 | End-to-end verification against Completion Criteria (§20) | Not Started | — | — | |
 
 ---
@@ -132,6 +134,8 @@ already made in §1–23; will grow with genuine shortcuts taken during implemen
 | TD-013 | A single, very long-running (~1.5–5.8 hour) `market_discovery_service.run_discovery` process against the live shared Supabase connection pool hit a handful of transient `psycopg.OperationalError: server closed the connection unexpectedly` / SEC read-timeout / SEC 503 errors during Milestone 7.5's July pilot (1 of ~92 candidates) and January–August historical backfill (11 of ~603 candidates, ~2%) — all isolated to the one issuer being processed at the time (per-issuer commit/rollback boundaries, verified live: zero orphaned `sec_filing`/`research_evidence`/`alert_event` rows for every affected issuer), never corrupting another issuer's already-committed work, and correctly keeping the run's watermark from advancing. Explicitly *not* redesigned into automatic per-issuer retry-with-backoff this milestone, per direct instruction: a single-digit-percentage transient error rate across a many-hours run against a shared connection pool is a real but non-repeatable-in-the-logic-bug sense operational characteristic, not a design flaw to react to on one observation | Low | If a future milestone's live runs show a *repeatable* (not just occasional) failure pattern, add bounded automatic retry-with-backoff at the per-issuer level in `market_discovery_service`/`enrichment_orchestrator` (both already have the per-issuer isolation boundary such a retry would slot into) | Open (deferred by explicit direction — recovery is manual/targeted today, proven safe and idempotent via the Milestone 7.5 Baird Medical Investment Holdings recovery) |
 | TD-014 | ~~SEC full-text-search `forms` parameter silently corrupted when amendment-suffix forms (e.g. `"8-K/A"`) were mixed into the same comma-separated list as base forms~~ **Resolved in Milestone 7.5.1.** Live-verified directly against `efts.sec.gov`: `forms=8-K` alone returned 577 real "chapter 11" hits over a fixed window, `forms=8-K,10-K` returned 1002, but `forms=8-K,10-K/A` (one amendment suffix mixed in) returned 0 — the real 10-form `MONITORED_FORM_TYPES` list this milestone's Layer-0 discovery sends returned just 50 instead of the ~1460 confirmed to genuinely exist, a >96% real coverage loss silently affecting every one of Milestone 7.5's 18 Layer-0 queries. Root-caused via a benchmark check against known 2026 bankruptcy filers (FAT Brands, Bitcoin Depot, Inotiv, GoHealth — all real, all missed) required by this milestone's own audit process. | — | `market_discovery_service._split_forms_for_full_text_search` | **Resolved** (`backend/app/services/market_discovery_service.py`) — not yet re-run against historical data; a future discovery run will pick up the fix, this milestone did not re-run the full backfill to avoid scope creep beyond signal-quality calibration |
 | TD-015 | 19 existing alerts covering definitive-category evidence (Chapter 11/bankruptcy-or-receivership/plan-confirmed) still have `alert_event.issuer_is_subject = NULL` after 5 reconciliation passes (`app.scripts.reclassify_system_universes`) — each pass's AI re-review call failed for a persistent (not obviously transient) subset, converging from 32 failures to 19 with diminishing returns per additional pass. Safe by construction: `NULL` is treated the same as a confirmed third party for the `verified` gate (never silently promotes), so these 19 issuers' affected memberships sit at `partial` (system-suggested, correctly not overclaiming) rather than being wrongly excluded or wrongly verified | Low | Investigate why these specific 19 re-review calls fail consistently (possibly a specific excerpt/prompt-length edge case) if a future pass over this data is warranted; re-running the script again is always safe (idempotent) and may resolve more on its own | Open (safe residual, not a correctness issue — `backend/app/scripts/reclassify_system_universes.py`) |
+| TD-016 | No AI call/token/cost observability exists anywhere in this codebase — confirmed by reading `AnthropicProvider.complete()` (`backend/app/ai/providers/anthropic_provider.py`): it discards the raw Anthropic SDK response's `usage` (input/output token counts) entirely, returning only `text`/`model`/`stop_reason` via `CompletionResponse`. There is also no counter anywhere for total AI review invocations (`review_evidence_candidates` calls), including calls that returned no qualifying alert or failed to parse. The real 2026-08-07 delta run could only report a verified lower bound (351 `ai_assisted` alerts, DB-counted) on successful AI review calls, never a true call count, token count, or cost estimate — per explicit instruction, no cost figure was invented to fill this gap | Medium | Capture `response.usage.input_tokens`/`output_tokens` and a per-call counter in `CompletionResponse`/`review_evidence_candidates`, likely bundled with the future Adaptive Model Router work (explicitly out of scope for Milestone 7.5.2) | Open (discovered during Milestone 7.5.2's real-run cost/observability reporting requirement) |
+| TD-017 | `market_discovery_run.evidence_created`/`alerts_created` (and the CLI's printed run summary) undercount real activity — they only tally evidence/alerts created directly inside `market_discovery_service.run_discovery`'s own per-candidate loop, not evidence/alerts the enrichment orchestrator's `_enrich_sec` creates for the same issuer in the same run (a separate `process_issuer_filings_fn` call with its own, often much wider, lookback window — up to `SEC_FIRST_CHECK_LOOKBACK_DAYS`=90 days for a never-before-seen issuer). Live-confirmed during the real 2026-08-07 delta run: the run's own printed summary reported `evidence_created: 0, alerts_created: 0` while the database genuinely gained 822 evidence rows and 356 alerts in that same run. The Morning Brief itself is unaffected (it queries `created_at`/`triggered_at` directly, never these run-row counters), but an operator reading the run's own CLI output or the persisted `market_discovery_run` row for capacity/cost planning would be misled | Medium | Have `enrich_issuer_fn`'s return value (or `_enrich_sec`/`_enrich_courtlistener` directly) report evidence/alert counts back to `run_discovery`'s local counters, so `market_discovery_run.evidence_created`/`alerts_created` reflect true total activity, not just the discovery loop's own direct contribution | Open (discovered during Milestone 7.5.2's real-run verification, root-caused via live DB row counts, not guessed) |
 
 ---
 
@@ -280,6 +284,80 @@ fix (its only rule scores `medium`, below the old raw-severity `high`
 gate), not a regression. Full findings, the complete before/after count
 table, representative quality-review examples per category, and test
 results are recorded in `BUILD_LOG.md`.
+
+**Milestone 7.5.2 (Daily Delta Run & Morning Research Brief Semantics) is
+complete**, inserted before Milestone 8 by explicit direction to prove
+the real day-to-day operating loop before building anything further on
+top of it. Root cause of production's stale "Last successful run: Aug 6"
+display, found by code inspection before any change: `get_latest_
+successful_run` on both `filing_monitor_run` and `market_discovery_run`
+treats *any* successful mode — including `backfill` — as the watermark/
+display source, so a historical backfill's completion silently stood in
+for "the last normal daily check-in," and no genuine `delta`-mode run of
+either pipeline had ever actually completed. The fix establishes one
+authoritative "latest successful daily run" concept — mode `delta`/
+`baseline` only, `backfill` explicitly excluded, whichever of the two
+Milestone 7.5 pipelines is more recent — driving both the Morning Brief's
+summary metrics and its displayed alert rows through the identical
+boundary, so the page can never show a small "actionable alerts" count
+above a list of hundreds of unrelated historical alerts below it.
+Historical backfill data is untouched and remains fully queryable in
+Issuer Detail, Research Universes, and evidence drill-down — only the
+Morning Brief's *default* view is daily-scoped (a "Show historical
+alerts" toggle remains available as the one explicit escape hatch).
+
+A second real bug was found live, not guessed, running the actual
+2026-08-07 delta: `since` (the boundary every "new_*" count is computed
+against) was originally set to the latest successful run's `completed_at`
+— but everything that run itself discovers is necessarily written
+*before* its own completion timestamp, so a `completed_at` boundary
+silently excluded the run's own output entirely (the run's first pass
+showed `evidence_created: 0`/`alerts_created: 0` in the brief despite 822
+real evidence rows and 356 real alerts having just been created).
+Corrected to `started_at`, which is safe and non-overlapping across
+consecutive daily runs by construction (a run's `started_at` always
+follows the previous run's `completed_at` in this pipeline's sequential
+operating model).
+
+A real 2026-08-07→08 delta ran through the existing, unmodified
+market-discovery pipeline (TD-014's SEC `forms` fix active): 38 SEC
+full-text-search queries, 519 filings examined, 285 candidate filings, 246
+new issuers discovered, 39 already-known issuers touched, 0 ambiguous/
+rejected, 1207 new SEC filings, 822 new research evidence rows, 356 new
+alerts (49 high / 65 medium / 242 low; 351 AI-assisted, 5 deterministic),
+0 CourtListener docket entries (root-caused as genuinely correct — only 3
+of 285 processed issuers had docket-relevant evidence on file to even
+trigger a CourtListener search, and all 3 returned no matching docket), 0
+errors, elapsed 3509s (~58.5 minutes) — the first realistic nightly
+operating-time estimate for this pipeline. A same-window re-run (as
+`backfill` mode with explicit `--start`/`--end`, since `delta` mode
+self-advances its window from the watermark and can't literally repeat a
+past window) proved full idempotency: identical row counts across
+`issuer`/`sec_filing`/`research_evidence`/`alert_event`/
+`market_discovery_candidate`/`security`/`court_docket_entry` before and
+after, 38.7s elapsed. No exact AI token/cost figure is reported — the
+codebase captures no token usage or per-call count today (see TD-016);
+351 AI-assisted alerts is a verified lower bound on successful AI review
+calls, not a call count. TD-017 records a related, separately-discovered
+gap: the run's own printed/persisted `evidence_created`/`alerts_created`
+counters don't include the enrichment orchestrator's own evidence/alert
+creation, undercounting real activity — the Morning Brief itself is
+unaffected, since it queries `created_at`/`triggered_at` directly, never
+these run-row counters. Railway Cron remains deliberately unactivated —
+this milestone proved the daily run manually; scheduling is a separate,
+explicitly-approved follow-up. Milestone 15 (Railway/Vercel deployment
+validation) was found already satisfied while verifying this milestone's
+production behavior and marked "Completed Early," not newly deployed by
+this milestone. Full metrics, the idempotency-rerun result, and
+production verification are recorded in `BUILD_LOG.md`.
+
+**Milestone 7.5.3 (Historical Discovery Coverage Repair) is planned, not
+started** — re-runs the 2026-01-01→2026-08-06 historical window with
+TD-014's corrected `forms` behavior, reconciling only newly-discovered
+historical gaps (FAT Brands, Bitcoin Depot, Inotiv, GoHealth, and any
+others found) idempotently. Deliberately deferred out of 7.5.2, which
+stays focused on daily operating semantics, not historical backfill
+repair.
 
 **Milestone 8 (Watchlists, §18 step 8) has not started**, and awaits
 explicit approval before beginning, per the same stop-and-wait rule that

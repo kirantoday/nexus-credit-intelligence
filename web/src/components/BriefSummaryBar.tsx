@@ -1,7 +1,7 @@
 import type { ReactElement } from "react";
 import { Box, Chip, Paper, Stack, Typography } from "@mui/material";
 import type { MorningBriefSummary } from "../api/filingMonitor";
-import { formatDateTime } from "../lib/format";
+import { formatDate, formatDateTime } from "../lib/format";
 
 function Stat({ label, value }: { label: string; value: string | number }): ReactElement {
   return (
@@ -26,18 +26,28 @@ export function BriefSummaryBar({ summary }: { summary: MorningBriefSummary }): 
           ? "error"
           : "default";
 
+  const dailyRun = summary.last_successful_run;
+  const runWindow =
+    dailyRun?.window_start_date && dailyRun.window_end_date
+      ? dailyRun.window_start_date === dailyRun.window_end_date
+        ? formatDate(dailyRun.window_start_date)
+        : `${formatDate(dailyRun.window_start_date)} – ${formatDate(dailyRun.window_end_date)}`
+      : null;
+
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }} flexWrap="wrap">
+      <Stack spacing={0.5} sx={{ mb: 2 }}>
+        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+          <Typography variant="body2" color="text.secondary">
+            Latest successful daily run:{" "}
+            {dailyRun ? formatDateTime(dailyRun.completed_at ?? dailyRun.started_at) : "never"}
+          </Typography>
+          {run && <Chip label={`Current run: ${run.status}`} size="small" color={runStatusColor} />}
+        </Stack>
         <Typography variant="body2" color="text.secondary">
-          Last successful run:{" "}
-          {summary.last_successful_run
-            ? formatDateTime(
-                summary.last_successful_run.completed_at ?? summary.last_successful_run.started_at,
-              )
-            : "never"}
+          Data through: {summary.since ? formatDateTime(summary.since) : "—"}
+          {runWindow ? ` · Run window: ${runWindow}` : ""}
         </Typography>
-        {run && <Chip label={`Current run: ${run.status}`} size="small" color={runStatusColor} />}
       </Stack>
       <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
         <Stat label="Universes monitored" value={summary.universes_monitored} />
@@ -54,7 +64,7 @@ export function BriefSummaryBar({ summary }: { summary: MorningBriefSummary }): 
       </Stack>
       {summary.no_new_alerts && (
         <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-          No new distress alerts since the last successful run.
+          No new distress alerts since the last successful daily run.
         </Typography>
       )}
     </Paper>

@@ -9,7 +9,7 @@ implicit admin" posture, TD-002).
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -36,9 +36,14 @@ def list_alerts(
     detection_method: DetectionMethod | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    triggered_since: datetime | None = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> AlertsPage:
+    """`triggered_since` scopes to Nexus's own processing time — pass the
+    Morning Brief's `since` value to show only alerts from the latest
+    successful daily run (PLAN.md Milestone 7.5.2 section 7). Omit it to see
+    the full historical alert list."""
     return filing_monitor_api_service.list_alerts(
         db,
         issuer_id=issuer_id,
@@ -50,6 +55,7 @@ def list_alerts(
         detection_method=detection_method,
         date_from=date_from,
         date_to=date_to,
+        triggered_since=triggered_since,
         page=page,
         page_size=page_size,
     )

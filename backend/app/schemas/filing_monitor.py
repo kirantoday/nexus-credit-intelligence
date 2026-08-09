@@ -49,6 +49,29 @@ class FilingMonitorRunsPage(BaseModel):
     runs: list[FilingMonitorRunRow]
 
 
+class DailyRunSummary(BaseModel):
+    """One "daily run" (PLAN.md Milestone 7.5.2) — deliberately
+    pipeline-agnostic: an analyst reading the Morning Research Brief should
+    never have to know or care whether `filing_monitor_run` or
+    `market_discovery_run` produced it. `pipeline` is kept for operator/
+    debugging transparency only, never surfaced as a concept the UI asks
+    the analyst to understand. Excludes `mode=backfill` runs entirely — a
+    historical backfill is never "the daily run," regardless of how recent
+    or how narrow its window (PLAN.md Milestone 7.5.2 section 3/4)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID
+    pipeline: str
+    mode: FilingMonitorRunMode
+    status: FilingMonitorRunStatus
+    started_at: datetime
+    completed_at: datetime | None
+    window_start_date: date | None
+    window_end_date: date | None
+    errors_count: int
+
+
 class SecFilingRow(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -162,8 +185,9 @@ class SeverityCounts(BaseModel):
 
 class MorningBriefSummary(BaseModel):
     """Backs the Morning Research Brief page's summary bar (PLAN.md 24.9,
-    Milestone 7.5 section 16 — provider-aware). Deliberately worded to
-    outlive SEC being the only evidence provider: no field name here is
+    Milestone 7.5 section 16 — provider-aware; Milestone 7.5.2 section 4 —
+    one authoritative daily-run boundary). Deliberately worded to outlive
+    SEC being the only evidence provider: no field name here is
     SEC-specific. `new_sec_filings`/`new_court_events`/`new_research_evidence`
     replace the old single "new filings discovered" metric (insufficient
     once CourtListener exists as a second real provider) — each counts by
@@ -171,12 +195,26 @@ class MorningBriefSummary(BaseModel):
     record's own real-world event date, so a historical backfill discovered
     today correctly shows as new *to Nexus* today without implying the
     underlying event itself happened today (PLAN.md Milestone 7.5 section 17).
+
+    `last_successful_run`/`latest_run` are now `DailyRunSummary` —
+    `mode=backfill` runs are structurally excluded (Milestone 7.5.2), so
+    these can never again silently point at a historical backfill. `since`
+    is the exact boundary every "new_*"/actionable-alert count in this
+    response was computed against — exposed explicitly so the alert list
+    the page renders below the summary can be scoped to the identical
+    boundary (`GET /api/filing-monitor/alerts?triggered_since=...`),
+    never a broader, inconsistent one (Milestone 7.5.2 section 7). `since`
+    equals `last_successful_run.started_at`, not `.completed_at` — a run's
+    own discovered filings/evidence/alerts are always written before that
+    run finishes, so a `completed_at` boundary would exclude the run's own
+    output.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    last_successful_run: FilingMonitorRunRow | None
-    latest_run: FilingMonitorRunRow | None
+    last_successful_run: DailyRunSummary | None
+    latest_run: DailyRunSummary | None
+    since: datetime | None
     universes_monitored: int
     issuers_monitored: int
     new_sec_filings: int

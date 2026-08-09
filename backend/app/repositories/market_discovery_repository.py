@@ -127,6 +127,42 @@ def get_latest_successful_run(db: Session) -> MarketDiscoveryRun | None:
     return _run_to_domain(row) if row is not None else None
 
 
+def get_latest_successful_daily_run(db: Session) -> MarketDiscoveryRun | None:
+    """Mirrors `filing_monitor_run_repository.get_latest_successful_daily_run`
+    (PLAN.md Milestone 7.5.2): excludes `mode=backfill` — a historical
+    backfill's completion must never stand in for "the last time we
+    checked in on a normal operating day." `get_latest_successful_run`
+    itself stays unchanged, since it still correctly governs the next
+    `delta` run's own watermark resume-point."""
+    success_statuses = (
+        FilingMonitorRunStatus.SUCCESS.value,
+        FilingMonitorRunStatus.BASELINE_ESTABLISHED.value,
+    )
+    daily_modes = (FilingMonitorRunMode.DELTA.value, FilingMonitorRunMode.BASELINE.value)
+    stmt = (
+        select(RunModel)
+        .where(RunModel.status.in_(success_statuses), RunModel.mode.in_(daily_modes))
+        .order_by(RunModel.completed_at.desc())
+        .limit(1)
+    )
+    row = db.execute(stmt).scalars().first()
+    return _run_to_domain(row) if row is not None else None
+
+
+def get_latest_daily_run(db: Session) -> MarketDiscoveryRun | None:
+    """The most recent `delta`/`baseline` run regardless of outcome —
+    mirrors `filing_monitor_run_repository.get_latest_daily_run`."""
+    daily_modes = (FilingMonitorRunMode.DELTA.value, FilingMonitorRunMode.BASELINE.value)
+    stmt = (
+        select(RunModel)
+        .where(RunModel.mode.in_(daily_modes))
+        .order_by(RunModel.started_at.desc())
+        .limit(1)
+    )
+    row = db.execute(stmt).scalars().first()
+    return _run_to_domain(row) if row is not None else None
+
+
 def list_runs(db: Session, *, page: int = 1, page_size: int = 20) -> list[MarketDiscoveryRun]:
     stmt = (
         select(RunModel)

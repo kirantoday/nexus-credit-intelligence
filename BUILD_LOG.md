@@ -4143,3 +4143,416 @@ also be the process responsible for admitting the state was wrong.
   `7c921dbd1e6aa34e8cc976ba3a4655feb3524203`, matching the local commit
   exactly.
 - Remote branch: https://github.com/kirantoday/nexus-credit-intelligence/tree/main
+
+---
+
+## 2026-08-09 — Milestone 7.5.2: Daily Delta Run & Morning Research Brief Semantics
+
+**Summary**
+
+Inserted before Milestone 8 by explicit direction to prove the real
+day-to-day operating loop — a genuine 2026-08-07 daily delta through the
+production market-discovery pipeline — before building anything further
+on top of it. Two real bugs were root-caused (not guessed) and fixed: the
+Morning Research Brief's "Last successful run" display silently pointed
+at a historical `backfill` run instead of any genuine daily run, and,
+discovered only by actually running the real delta, the fix's own `since`
+boundary initially excluded the very run's output it was supposed to
+report. TD-014's SEC `forms` fix (Milestone 7.5.1) was active for this
+run; the January–August historical repair itself is explicitly deferred
+to the newly-inserted Milestone 7.5.3, not run here.
+
+**Root Cause Investigation (before any code change)**
+
+Production's Morning Research Brief reported "Last successful run: Aug 6,
+2026 around 6:01 PM" despite Milestones 7.5 and 7.5.1 having both run
+(and pushed) after that. Read `filing_monitor_api_service.get_morning_brief`,
+`filing_monitor_run_repository.get_latest_successful_run`, and
+`market_discovery_repository.get_latest_successful_run` before changing
+anything, then queried the live database directly:
+
+- `filing_monitor_run`'s most recent successful row (`dbf7430b`) was
+  `mode=backfill`, `completed_at=2026-08-06 22:01:15 UTC` — exactly
+  matching the stale "Aug 6, 6:01 PM" display.
+- `market_discovery_run`'s most recent successful row (`62abe8ab`) was
+  also `mode=backfill`, `completed_at=2026-08-07 14:11:01 UTC`.
+- **No `mode=delta` run of either pipeline had ever completed in this
+  database.** `get_latest_successful_run` on both repositories filters
+  only by status (`success`/`baseline_established`), never by mode, so a
+  historical backfill's completion time was silently standing in for "the
+  last time we checked in on a normal operating day."
+
+**One Authoritative Daily-Run Concept**
+
+Added `get_latest_successful_daily_run`/`get_latest_daily_run` to both
+`filing_monitor_run_repository` and `market_discovery_repository` —
+identical mode filter (`delta`/`baseline` only, `backfill` excluded) on
+top of the existing status filter — added *alongside*, not replacing,
+the existing `get_latest_successful_run` functions, which are still
+correct for their original purpose (a `delta` run's own watermark
+resume-point legitimately should include a prior backfill's work, so it
+never needlessly re-scans it). `filing_monitor_api_service._latest_
+successful_daily_run`/`_latest_daily_run` combine both pipelines,
+preferring whichever is more recent, and expose the result as a new
+pipeline-agnostic `DailyRunSummary` schema — an analyst reading the brief
+never needs to know or care whether `filing_monitor_run` or
+`market_discovery_run` produced it. `get_morning_brief` was rewritten to
+scope every "new_*"/actionable-alert count to this one boundary via a new
+`triggered_since` parameter threaded through `alert_repository.list_alerts`/
+`count_alerts_by_severity`/`count_ai_assisted_alerts` (filters
+`alert_event.triggered_at`, Nexus's own processing time — deliberately
+independent of `as_of_date`, the event's real-world date, per the existing
+Milestone 7.5 event-date-vs-processing-date distinction). The frontend
+(`MorningResearchBriefPage.tsx`) now defaults its alert list to the same
+`since` boundary the summary bar used, with an explicit "Show historical
+alerts" toggle as the one escape hatch — the page can no longer show a
+small "actionable alerts" count above a list of hundreds of unrelated
+historical alerts. `format.ts`'s `formatDateTime` now renders in explicit
+`America/New_York` rather than the viewer's local timezone, matching this
+milestone's "today's Morning Brief" being a shared analyst-facing concept.
+
+**A Second Real Bug, Found Only By Running The Real Delta**
+
+Running the actual 2026-08-07 delta (below) revealed the fix above was
+still incomplete: the brief's own printed `since` reflected the new
+`market_discovery` `delta` run correctly, but `new_sec_filings`/
+`new_research_evidence`/`actionable_alerts_total` all reported **0**
+immediately after a run that had genuinely just created 1207 SEC filings,
+822 evidence rows, and 356 alerts (confirmed via direct row counts —
+`created_at`/`triggered_at >= now() - 2 hours` returned exactly those
+figures). Root cause: `since` was set to the latest successful run's
+`completed_at` — but every filing/evidence/alert a run discovers is
+necessarily written *before* that run's own completion timestamp, so a
+`completed_at` boundary silently excluded the entire run's own output.
+Corrected to `started_at`, which is safe and non-overlapping across
+consecutive daily runs by construction (a run's own `started_at` always
+follows the previous run's `completed_at` in this pipeline's sequential
+operating model, and for the very first-ever daily run, "since I started
+running" is exactly the right definition of "new"). Re-verified against
+the live database after the fix: `new_sec_filings=1207`,
+`new_research_evidence=822`, `actionable_alerts_total=356` (49 high / 65
+medium / 242 low; 351 AI-assisted / 5 deterministic) — matching the real
+row counts exactly.
+
+**Real 2026-08-07→08 Daily Delta Run**
+
+Ran `python -m app.scripts.run_market_discovery --mode delta` — the
+existing, unmodified production entry point, no one-off Aug-7-specific
+code. `delta` mode self-computed its window from the current watermark
+(`previous_watermark.date()=2026-08-07` from the last successful — a
+backfill — run, `resolved_end=date.today()=2026-08-08`), landing exactly
+on the requested "source activity on 2026-08-07" window without any
+manual override.
+
+| Metric | Value |
+|---|---|
+| Status | `success`, 0 errors |
+| Window | 2026-08-07 .. 2026-08-08 |
+| Started / completed (UTC) | 2026-08-08 23:19:05.994 / 2026-08-09 00:19:08.138 |
+| Elapsed | 3509.0s (~58.5 minutes) |
+| SEC full-text-search queries executed | 38 |
+| Filings examined (raw FTS hits) | 519 |
+| Candidate filings (unique `(cik, accession_no)`) | 285 |
+| Issuers resolved — already known (`matched_existing`) | 39 |
+| Issuers resolved — newly discovered (`verified_new`) | 246 |
+| Issuers ambiguous / rejected | 0 / 0 |
+| New SEC filings (`created_at >= since`) | 1207 |
+| New research evidence (`created_at >= since`) | 822 |
+| New CourtListener docket entries | 0 |
+| Actionable alerts (`triggered_at >= since`) | 356 |
+| — High / Medium / Low | 49 / 65 / 242 |
+| — AI-assisted / deterministic | 351 / 5 |
+| OpenFIGI enrichment outcomes | `complete` 73, `no_data` 182, `failed_retryable` 20 |
+| SEC enrichment outcomes | `complete` 247, `no_data` 27, `failed_retryable` 1 |
+| CourtListener enrichment outcomes | `no_data` 3, `unsupported` 272 |
+
+The large evidence/alert/filing counts relative to a single day's window
+are real and explained, not a bug: 246 newly-discovered issuers each
+triggered the enrichment orchestrator's `_enrich_sec` (never-checked
+issuer → `SEC_FIRST_CHECK_LOOKBACK_DAYS=90`-day lookback, independent of
+the discovery run's own narrower window), which found and processed real
+prior SEC activity for issuers that had just qualified as
+distress-relevant. This is existing Milestone 7.5 enrichment-orchestrator
+behavior, unmodified by this milestone.
+
+`new_court_events=0` was investigated, not assumed correct. Root cause:
+`enrichment_orchestrator._enrich_courtlistener` only attempts a
+CourtListener search when the issuer already has docket-relevant evidence
+on file (`DOCKET_RELEVANT_EVIDENCE_TYPES`) — of the 285 processed
+candidates, only 3 had such evidence at the time CourtListener enrichment
+ran (272 were `unsupported`, correctly skipped without a search); all 3
+searches returned no matching docket (`no_data`). Zero is the genuinely
+correct outcome for this window, not a manufactured or suppressed count.
+
+**Idempotency Re-Run**
+
+`delta` mode self-advances its window from the watermark, so a second
+literal `--mode delta` invocation would move forward to a new window
+(2026-08-09), not repeat the same one. To prove idempotency over the
+*identical* 2026-08-07→08 window and exercise the identical dedup code
+paths a repeated delta would use, re-ran the same window explicitly via
+`--mode backfill --start 2026-08-07 --end 2026-08-08` (a backfill-mode run
+never affects the daily-run boundary, since it's structurally excluded
+from `get_latest_successful_daily_run`).
+
+| Table | Before rerun | After rerun |
+|---|---|---|
+| `issuer` | 787 | 787 |
+| `sec_filing` | 7243 | 7243 |
+| `research_evidence` | 6239 | 6239 |
+| `alert_event` | 2212 | 2212 |
+| `market_discovery_candidate` | 891 | 891 |
+| `security` | 566 | 566 |
+| `court_docket_entry` | 665 | 665 |
+
+Zero new rows in any table. The rerun completed in 38.7s (vs. 3509.0s the
+first time): all 285 candidates were skipped immediately via the existing
+`existing.rule_version == RULE_VERSION` idempotency check
+(`market_discovery_service.run_discovery`), so `issuers_resolved_existing`/
+`issuers_resolved_new`/`evidence_created`/`alerts_created` were all `0` —
+full idempotent skip, not a partial/silent one. `GET /api/morning-brief`
+was re-verified after the rerun to still report the original `delta`
+run (`2a6d174c`) as `last_successful_run`, confirming the backfill-mode
+idempotency check never contaminates the daily-run boundary.
+
+**Watermark and Failure Safety**
+
+Verified by code (both existing, unmodified this milestone, and exercised
+live by the real run above) rather than by manufacturing a live
+production failure:
+
+- `get_latest_successful_daily_run` filters `status IN (success,
+  baseline_established)` — a `completed_with_errors` run can never be
+  reported as "the last successful daily run," regression-covered by
+  `tests/integration/test_filing_monitor_service.py`'s existing
+  `COMPLETED_WITH_ERRORS` assertions (still passing, unmodified).
+- `market_discovery_service.run_discovery`'s `resolved_watermark =
+  previous_watermark if errors_count else now()` means a run with any
+  error never advances the watermark, so the next run safely re-attempts
+  the same unresolved window.
+- Per-candidate (`resolve_issuer_fn`) and per-issuer
+  (`process_issuer_filings_fn`, `enrich_issuer_fn`) `try/except`
+  isolation, each with its own `db.rollback()`, means one candidate's or
+  one provider's failure cannot roll back another's already-committed
+  success — confirmed live: the real run above completed with
+  `errors_count=0`, and TD-013 already documents this isolation holding
+  under real transient-failure conditions during Milestone 7.5's much
+  longer historical backfill.
+
+**AI Usage / Cost Observability**
+
+Per explicit instruction, no cost estimate was invented. Investigated
+what is actually capturable: `AnthropicProvider.complete()`
+(`backend/app/ai/providers/anthropic_provider.py`) discards the raw
+Anthropic SDK response's `usage` (input/output token counts) entirely,
+returning only `text`/`model`/`stop_reason`; no counter exists anywhere
+for total AI review invocations, including calls that didn't produce a
+qualifying alert. What could be reliably reported: LLM provider
+`anthropic`, model `claude-sonnet-5` (from `Settings.anthropic_model`),
+and a DB-verified **lower bound** of 351 successful AI-assisted alert
+syntheses (`alert_event.detection_method=ai_assisted`, scoped to this
+run's `since` boundary) — not a true call count, and no token/cost
+figure. Recorded as new Technical Debt (TD-016).
+
+A second, related gap was found investigating why the run's own printed
+summary showed `evidence_created: 0, alerts_created: 0` despite the real
+822/356 counts above: `market_discovery_run`'s counters only tally
+evidence/alerts created directly inside the discovery loop's own
+`process_issuer_filings_fn` call, never the enrichment orchestrator's
+separate `_enrich_sec` call for the same issuer in the same run. The
+Morning Brief itself is unaffected (it queries `created_at`/`triggered_at`
+directly, never these run-row counters), but an operator reading the
+run's own CLI output or the persisted run row would be misled. Recorded
+as new Technical Debt (TD-017) rather than expanding this milestone's
+scope into `enrichment_orchestrator`'s return-value contract.
+
+**Milestone 15 Bookkeeping**
+
+While verifying this milestone's production behavior, discovered
+Milestone 15 (Railway/Vercel deployment validation) was already fully
+satisfied, just never marked complete in `PLAN.md`. Live-verified, not
+assumed: `GET https://nexus-credit-intelligence-production.up.railway.app/health`
+→ `200 {"status":"healthy","environment":"production"}`;
+`GET https://nexus-credit-intelligence.vercel.app/` → `200`; a real
+`OPTIONS` CORS preflight from the Vercel origin to the Railway API
+returns `access-control-allow-origin:
+https://nexus-credit-intelligence.vercel.app`; Alembic migrations already
+applied live via `DIRECT_DATABASE_URL` (KI-001, closed 2026-08-05).
+Marked "Completed Early" in `PLAN.md` §Milestone Status — roadmap
+bookkeeping only, no deployment action taken by this milestone.
+
+**Railway Cron — Deliberately Not Activated**
+
+`PLAN.md` §24.6 documents a target nightly schedule; per explicit
+instruction, the scheduler was not activated this milestone. The daily
+run was proven manually (above); the exact production command for a
+future nightly invocation is documented in `README.md` § Operational
+scripts. Activation requires separate, explicit approval.
+
+**Files Created**
+
+- `backend/tests/integration/test_daily_run_boundary.py`
+
+**Files Modified**
+
+- `backend/app/repositories/filing_monitor_run_repository.py` —
+  `get_latest_successful_daily_run`, `get_latest_daily_run`.
+- `backend/app/repositories/market_discovery_repository.py` — mirrored.
+- `backend/app/repositories/alert_repository.py` — `triggered_since`
+  parameter on `list_alerts`/`count_alerts_by_severity`/
+  `count_ai_assisted_alerts`.
+- `backend/app/schemas/filing_monitor.py` — new `DailyRunSummary`;
+  `MorningBriefSummary.last_successful_run`/`latest_run` retyped to it,
+  new `since` field.
+- `backend/app/services/filing_monitor_api_service.py` — daily-run
+  combination helpers, rewritten `get_morning_brief`, `triggered_since`
+  threaded through the service-level `list_alerts`.
+- `backend/app/api/routes/alerts.py` — `triggered_since` query parameter.
+- `web/src/api/filingMonitor.ts` — `DailyRunSummary` type,
+  `MorningBriefSummary` retyped, `AlertsQuery.triggeredSince`.
+- `web/src/components/BriefSummaryBar.tsx` — "Latest successful daily
+  run"/"Data through"/"Run window" display.
+- `web/src/pages/MorningResearchBriefPage.tsx` — default `triggeredSince`
+  scoping, "Show historical alerts" toggle.
+- `web/src/pages/MorningResearchBriefPage.test.tsx` — fixture updated to
+  `DailyRunSummary` shape.
+- `web/src/lib/format.ts` — `formatDateTime` explicit `America/New_York`.
+- `PLAN.md` — Milestone 7.5.2/7.5.3 inserted, Milestone 15 marked
+  Completed Early, TD-016/TD-017 added, Project Status/Next Immediate
+  Goal updated.
+- `README.md` — Operational scripts section (backfill/delta/nightly
+  commands, which run powers the Morning Brief), stale KI-001 references
+  corrected.
+
+**Database Changes**
+
+None — no migration this milestone. All changes are read/query-path
+(repository filters, service composition) and one existing-column
+semantics fix (`since` derivation).
+
+**API Endpoints Added**
+
+None new. `GET /api/alerts` gained an optional `triggered_since` query
+parameter (backward compatible — omitted, behavior is unchanged).
+`GET /api/morning-brief`'s response gained a `since` field and retyped
+`last_successful_run`/`latest_run` to `DailyRunSummary`.
+
+**Frontend Pages Added**
+
+None new — `MorningResearchBriefPage.tsx` modified in place.
+
+**Environment Variables Added**
+
+None.
+
+**Tests Added**
+
+`backend/tests/integration/test_daily_run_boundary.py` (4 new integration
+tests, all passing against the live shared Supabase project):
+- `test_filing_monitor_repo_daily_run_excludes_more_recent_backfill`
+- `test_market_discovery_repo_daily_run_excludes_more_recent_backfill`
+- `test_get_morning_brief_daily_boundary_ignores_later_backfill`
+- `test_alert_repository_triggered_since_filters_by_processing_time`
+
+`web/src/pages/MorningResearchBriefPage.test.tsx` updated in place for
+the new `DailyRunSummary` fixture shape and subtitle wording (all 4
+existing tests, unchanged in intent, still passing).
+
+**Test Results**
+
+- Backend: 384 passed (380 pre-existing + 4 new), 0 failed.
+- Frontend: 68 passed across 12 files, 0 failed.
+- `ruff check` / `black --check` / `mypy app` — all clean (152 backend
+  source files).
+- `eslint` / `tsc -b` / `prettier --check` — all clean.
+- `alembic check` — "No new upgrade operations detected" (zero drift).
+- Backend boots (`GET /health` → 200 locally and in production).
+- Frontend production build succeeds (`vite build`).
+
+**Commands Executed**
+
+```
+python -m app.scripts.run_market_discovery --mode delta
+python -m app.scripts.run_market_discovery --mode backfill --start 2026-08-07 --end 2026-08-08
+python -m pytest -q
+python -m ruff check app/ tests/
+python -m black --check app/ tests/
+python -m mypy app/
+python -m alembic check
+npm run lint / npm run typecheck / npm run format:check / npm run build
+npx vitest run
+```
+
+**Deployment Validation**
+
+Pending — recorded in a follow-up entry once pushed and production is
+re-verified with this milestone's changes deployed (Railway/Vercel
+auto-deploy on push to `main`).
+
+**Problems Encountered**
+
+1. The Morning Brief's `since` boundary, as first implemented, excluded
+   the very run whose output it was meant to report — see "A Second Real
+   Bug" above. Found by actually running the real delta and comparing its
+   printed/reported metrics against direct database row counts, not by
+   inspection alone; this is exactly why the milestone required a real
+   run rather than a synthetic/mocked proof.
+2. `alert_event.triggered_at` is a `server_default=now()` column, and
+   Postgres's `now()` returns the enclosing transaction's start time —
+   constant across every statement in a single test transaction. The new
+   `triggered_since` regression test initially failed because two alerts
+   seeded moments apart in test code received an identical `triggered_at`.
+   Fixed by setting `triggered_at` explicitly post-creation in the test,
+   modeling two genuinely distinct processing times the way two separate
+   real daily-run invocations naturally would.
+3. `delta` mode cannot be asked to repeat a past window (it always
+   self-advances from the current watermark), so the idempotency re-run
+   used `--mode backfill` with the identical explicit window instead —
+   documented above as a deliberate substitution, not an oversight.
+
+**Solutions**
+
+All three were caught by direct verification against the live database
+and live run output rather than trusting the implementation's own
+self-reported numbers — the same discipline this project has applied at
+every prior milestone.
+
+**Remaining Work**
+
+- TD-016 (new): No AI call/token/cost observability exists in the
+  codebase.
+- TD-017 (new): `market_discovery_run.evidence_created`/`alerts_created`
+  undercount real activity (enrichment-orchestrator-triggered evidence
+  isn't tallied).
+- Milestone 7.5.3 (Historical Discovery Coverage Repair) — planned, not
+  started, deliberately deferred out of this milestone's scope.
+- Railway Cron activation — documented, not activated; requires separate
+  explicit approval.
+
+**Git Commit Hash**
+
+Pending — recorded in a follow-up entry per this project's established
+two-commit documentation pattern.
+
+**Approximate Time Spent**
+
+~4 hours (governance/diagnosis, implementation, real ~59-minute live
+discovery run + ~1-minute idempotency rerun, verification, documentation).
+
+**Developer Notes**
+
+The most consequential moment of this milestone wasn't the initial fix —
+it was the decision to actually run the real Aug 7 delta rather than
+trust the fix by inspection alone. The first version of `since` looked
+correct in isolation (it read the latest successful daily run's
+completion time, which sounds exactly right for "as of when this brief is
+current"), and every existing unit-shaped test would have passed against
+it. Only running it for real, then independently cross-checking its
+reported zeros against direct `created_at`/`triggered_at` row counts,
+surfaced that "as of when the run finished" and "since before the run's
+own work began" are different boundaries — and that the whole point of a
+daily-delta brief is the second one. This mirrors Milestone 7.5.1's
+lesson almost exactly: a plausible-sounding implementation and a
+literally-verified one are not the same thing, and this codebase's
+recurring habit of checking real data before declaring success is what
+keeps catching the gap between them.

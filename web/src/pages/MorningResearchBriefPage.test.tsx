@@ -27,38 +27,27 @@ const NO_UNIVERSES = { universes: [] };
 const BASE_SUMMARY: MorningBriefSummary = {
   last_successful_run: {
     id: "run-1",
-    started_at: "2026-08-06T09:00:00Z",
-    completed_at: "2026-08-06T09:05:00Z",
+    pipeline: "market_discovery",
+    started_at: "2026-08-08T06:00:00Z",
+    completed_at: "2026-08-08T06:05:00Z",
     status: "success",
     mode: "delta",
-    previous_watermark: "2026-08-05T09:00:00Z",
-    resulting_watermark: "2026-08-06T09:00:00Z",
-    issuers_checked: 24,
-    filings_discovered: 1,
-    filings_processed: 1,
-    alerts_created: 1,
+    window_start_date: "2026-08-07",
+    window_end_date: "2026-08-07",
     errors_count: 0,
-    error_summary: null,
-    backfill_lookback_days: null,
-    is_backfill: false,
   },
   latest_run: {
     id: "run-1",
-    started_at: "2026-08-06T09:00:00Z",
-    completed_at: "2026-08-06T09:05:00Z",
+    pipeline: "market_discovery",
+    started_at: "2026-08-08T06:00:00Z",
+    completed_at: "2026-08-08T06:05:00Z",
     status: "success",
     mode: "delta",
-    previous_watermark: "2026-08-05T09:00:00Z",
-    resulting_watermark: "2026-08-06T09:00:00Z",
-    issuers_checked: 24,
-    filings_discovered: 1,
-    filings_processed: 1,
-    alerts_created: 1,
+    window_start_date: "2026-08-07",
+    window_end_date: "2026-08-07",
     errors_count: 0,
-    error_summary: null,
-    backfill_lookback_days: null,
-    is_backfill: false,
   },
+  since: "2026-08-08T06:05:00Z",
   universes_monitored: 15,
   issuers_monitored: 24,
   new_sec_filings: 1,
@@ -125,7 +114,9 @@ describe("MorningResearchBriefPage", () => {
     expect(
       screen.getByText("Potential bankruptcy or receivership filing detected in a new 8-K."),
     ).toBeInTheDocument();
-    expect(screen.getByText("New Research Alerts — Since Last Successful Run")).toBeInTheDocument();
+    expect(
+      screen.getByText("New Research Alerts — Since Last Successful Daily Run"),
+    ).toBeInTheDocument();
   });
 
   it("shows a success message when there are no alerts matching the filters", async () => {

@@ -107,6 +107,52 @@ def get_latest_successful_run(db: Session) -> FilingMonitorRun | None:
     return _to_domain(row) if row is not None else None
 
 
+def get_latest_successful_daily_run(db: Session) -> FilingMonitorRun | None:
+    """The "latest successful daily run" (PLAN.md Milestone 7.5.2) — unlike
+    `get_latest_successful_run`, explicitly excludes `mode=backfill`: a
+    historical backfill's completion time must never stand in for "the
+    last time we checked in on a normal operating day," which is exactly
+    the bug this milestone found live in production (a `backfill` run's
+    timestamp was silently driving the Morning Brief's "Last successful
+    run" display). `get_latest_successful_run` itself is deliberately left
+    unchanged — it still governs the next `delta` run's own watermark
+    resume-point, where a backfill legitimately *should* count (it did
+    real work that a following delta run must not needlessly re-scan)."""
+    success_statuses = (
+        FilingMonitorRunStatus.SUCCESS.value,
+        FilingMonitorRunStatus.BASELINE_ESTABLISHED.value,
+    )
+    daily_modes = (FilingMonitorRunMode.DELTA.value, FilingMonitorRunMode.BASELINE.value)
+    stmt = (
+        select(FilingMonitorRunModel)
+        .where(
+            FilingMonitorRunModel.status.in_(success_statuses),
+            FilingMonitorRunModel.mode.in_(daily_modes),
+        )
+        .order_by(FilingMonitorRunModel.completed_at.desc())
+        .limit(1)
+    )
+    row = db.execute(stmt).scalars().first()
+    return _to_domain(row) if row is not None else None
+
+
+def get_latest_daily_run(db: Session) -> FilingMonitorRun | None:
+    """The most recent `delta`/`baseline` run regardless of outcome — used
+    for the Morning Brief's "current run" status (e.g. a delta run that
+    just failed), scoped to the same daily-only mode set as
+    `get_latest_successful_daily_run` so the two concepts never disagree
+    about what counts as "daily"."""
+    daily_modes = (FilingMonitorRunMode.DELTA.value, FilingMonitorRunMode.BASELINE.value)
+    stmt = (
+        select(FilingMonitorRunModel)
+        .where(FilingMonitorRunModel.mode.in_(daily_modes))
+        .order_by(FilingMonitorRunModel.started_at.desc())
+        .limit(1)
+    )
+    row = db.execute(stmt).scalars().first()
+    return _to_domain(row) if row is not None else None
+
+
 def list_runs(db: Session, *, page: int = 1, page_size: int = 20) -> list[FilingMonitorRun]:
     stmt = (
         select(FilingMonitorRunModel)

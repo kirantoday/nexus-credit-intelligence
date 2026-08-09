@@ -99,9 +99,18 @@ def list_alerts(
     detection_method: DetectionMethod | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    triggered_since: datetime | None = None,
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[list[AlertEvent], int]:
+    """`date_from`/`date_to` filter by `as_of_date` — the real-world SOURCE
+    event date (PLAN.md Milestone 7.5.2 section 8), useful for "alerts
+    about events from this calendar period" regardless of when Nexus
+    discovered them. `triggered_since` is the other axis entirely — Nexus's
+    own PROCESSING time (`triggered_at`) — the one the Morning Research
+    Brief's daily-run scoping needs: "alerts Nexus created since the last
+    successful daily run," which a March-dated filing discovered today
+    correctly satisfies even though its `as_of_date` is months old."""
     stmt = select(AlertEventModel)
     if issuer_id is not None:
         stmt = stmt.where(AlertEventModel.issuer_id == issuer_id)
@@ -119,6 +128,8 @@ def list_alerts(
         stmt = stmt.where(AlertEventModel.as_of_date >= date_from)
     if date_to is not None:
         stmt = stmt.where(AlertEventModel.as_of_date <= date_to)
+    if triggered_since is not None:
+        stmt = stmt.where(AlertEventModel.triggered_at >= triggered_since)
 
     total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
 
@@ -135,10 +146,13 @@ def count_alerts_by_severity(
     db: Session,
     *,
     status: AlertStatus | None = None,
+    triggered_since: datetime | None = None,
 ) -> dict[EvidenceSeverity, int]:
     stmt = select(AlertEventModel.severity, func.count()).group_by(AlertEventModel.severity)
     if status is not None:
         stmt = stmt.where(AlertEventModel.status == status.value)
+    if triggered_since is not None:
+        stmt = stmt.where(AlertEventModel.triggered_at >= triggered_since)
     rows = db.execute(stmt).all()
     return {EvidenceSeverity(severity): count for severity, count in rows}
 
@@ -147,6 +161,7 @@ def count_ai_assisted_alerts(
     db: Session,
     *,
     status: AlertStatus | None = None,
+    triggered_since: datetime | None = None,
 ) -> int:
     stmt = (
         select(func.count())
@@ -155,6 +170,8 @@ def count_ai_assisted_alerts(
     )
     if status is not None:
         stmt = stmt.where(AlertEventModel.status == status.value)
+    if triggered_since is not None:
+        stmt = stmt.where(AlertEventModel.triggered_at >= triggered_since)
     return db.execute(stmt).scalar_one()
 
 

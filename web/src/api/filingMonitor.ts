@@ -151,13 +151,36 @@ export interface SeverityCounts {
   low: number;
 }
 
+/**
+ * One "daily run" (PLAN.md Milestone 7.5.2) — pipeline-agnostic on purpose:
+ * `pipeline` is operator/debugging context only, never a distinction the UI
+ * asks the analyst to understand. Never represents a `mode=backfill` run —
+ * those are structurally excluded server-side.
+ */
+export interface DailyRunSummary {
+  id: string;
+  pipeline: string;
+  mode: FilingMonitorRunMode;
+  status: FilingMonitorRunStatus;
+  started_at: string;
+  completed_at: string | null;
+  window_start_date: string | null;
+  window_end_date: string | null;
+  errors_count: number;
+}
+
 /** Backs the Morning Research Brief page's summary bar — provider-aware
  * (Milestone 7.5): "new filings discovered" alone was SEC-specific and
  * insufficient once CourtListener (and market-wide SEC discovery) exist as
- * independent evidence sources, so it's broken out per provider/category. */
+ * independent evidence sources, so it's broken out per provider/category.
+ * `since` (Milestone 7.5.2) is the exact boundary every "new_*"/actionable
+ * count below was computed against — pass it as `triggeredSince` to
+ * `fetchAlerts` so the alert list below the summary bar is scoped to the
+ * identical boundary, never a broader, all-time one. */
 export interface MorningBriefSummary {
-  last_successful_run: FilingMonitorRunRow | null;
-  latest_run: FilingMonitorRunRow | null;
+  last_successful_run: DailyRunSummary | null;
+  latest_run: DailyRunSummary | null;
+  since: string | null;
   universes_monitored: number;
   issuers_monitored: number;
   new_sec_filings: number;
@@ -181,6 +204,7 @@ export interface AlertsQuery {
   detectionMethod?: DetectionMethod;
   dateFrom?: string;
   dateTo?: string;
+  triggeredSince?: string;
   page?: number;
   pageSize?: number;
 }
@@ -200,6 +224,7 @@ export async function fetchAlerts(query: AlertsQuery): Promise<AlertsPage> {
   if (query.detectionMethod) params.set("detection_method", query.detectionMethod);
   if (query.dateFrom) params.set("date_from", query.dateFrom);
   if (query.dateTo) params.set("date_to", query.dateTo);
+  if (query.triggeredSince) params.set("triggered_since", query.triggeredSince);
   params.set("page", String(query.page ?? 1));
   params.set("page_size", String(query.pageSize ?? 50));
   return apiFetch<AlertsPage>(`/api/alerts?${params.toString()}`);

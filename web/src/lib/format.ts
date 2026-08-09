@@ -40,10 +40,21 @@ export function formatDate(value: string | null): string {
   });
 }
 
+/**
+ * Daily-run/alert timestamps are rendered in America/New_York explicitly
+ * (PLAN.md Milestone 7.5.2 section 5) rather than the viewer's local
+ * timezone — "today's Morning Brief" is a shared analyst-facing concept
+ * that must mean the same calendar day for every viewer, not shift with
+ * browser locale.
+ */
 export function formatDateTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+  return date.toLocaleString("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "America/New_York",
+  });
 }
 
 export function formatOrDash(value: string | null): string {
