@@ -307,15 +307,19 @@ cd backend
 ./.venv/Scripts/python -m app.scripts.run_market_discovery --mode delta
 ```
 
-**The Morning Research Brief (`GET /api/morning-brief`) is powered by whichever
-run — of either `market_discovery_run` or the older, known-issuer-only
-`filing_monitor_run` — is the most recent successful `delta`/`baseline`-mode run
-of either pipeline.** `mode=backfill` runs are structurally excluded from this
-selection (PLAN.md Milestone 7.5.2): a historical backfill never becomes "the
-last successful daily run," no matter how recently it completed. Historical data
+**The Morning Research Brief (`GET /api/morning-brief`) answers "what materially
+changed since this user last reviewed the brief?"** — a user-relative boundary
+(`morning_brief_view`), not a pipeline-run watermark (PLAN.md Milestone 7.5.2's
+correction). Alerts in the current period are grouped by issuer, ranked by
+severity, and split into `new_developments` (genuinely new events) vs.
+`historical_intelligence` (an older event Nexus happened to discover this
+period), via the existing `alert_event.is_backfill` signal. The discovery
+pipeline itself still drives *what data exists* — whichever of
+`market_discovery_run`/`filing_monitor_run` is the most recent successful
+`delta`/`baseline`-mode run (`mode=backfill` structurally excluded) — but that
+is now secondary "run/data details," not the primary boundary. Historical data
 stays fully queryable elsewhere (Issuer Detail, Research Universes, evidence
-drill-down, and the Morning Brief's own "Show historical alerts" toggle) — it is
-just never counted in the Brief's default "what's new" metrics.
+drill-down, and the Morning Brief's own "Show historical alerts" toggle).
 
 **Future nightly command** (documented, not yet scheduled — Railway Cron
 activation requires separate explicit approval per PLAN.md §24.6):

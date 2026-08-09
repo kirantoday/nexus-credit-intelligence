@@ -6,7 +6,8 @@ repository conventions (function-style, domain objects only, flush-not-commit).
 
 from __future__ import annotations
 
-from datetime import date
+from collections import defaultdict
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -69,6 +70,7 @@ def _membership_to_domain(row: CollectionMembershipModel) -> CollectionMembershi
         added_at=row.added_at,
         added_by=row.added_by,
         system_seeded=row.system_seeded,
+        updated_at=row.updated_at,
     )
 
 
@@ -228,6 +230,7 @@ def upgrade_membership_verification(
     row.rationale_as_of_date = rationale_as_of_date
     if supporting_provenance_ids:
         row.supporting_provenance_ids = [str(pid) for pid in supporting_provenance_ids]
+    row.updated_at = datetime.now(UTC)
     db.flush()
     db.refresh(row)
     return _membership_to_domain(row)
@@ -266,6 +269,7 @@ def set_membership_verification(
     row.rationale_as_of_date = rationale_as_of_date
     if supporting_provenance_ids:
         row.supporting_provenance_ids = [str(pid) for pid in supporting_provenance_ids]
+    row.updated_at = datetime.now(UTC)
     db.flush()
     db.refresh(row)
     return _membership_to_domain(row)
@@ -308,6 +312,32 @@ def list_collections_for_issuer(db: Session, issuer_id: UUID) -> list[Collection
     )
     rows = db.execute(stmt).scalars().all()
     return [_collection_to_domain(row) for row in rows]
+
+
+def list_collections_for_issuers(
+    db: Session, issuer_ids: list[UUID]
+) -> dict[UUID, list[Collection]]:
+    """Batch form of `list_collections_for_issuer` — one query for many
+    issuers instead of one query per issuer, keyed by issuer id. Avoids an
+    N+1 pattern when assembling a page of records that reference many
+    distinct issuers (e.g. the Morning Research Brief's issuer-grouped
+    developments)."""
+    if not issuer_ids:
+        return {}
+    stmt = (
+        select(CollectionMembershipModel.issuer_id, CollectionModel)
+        .join(
+            CollectionMembershipModel,
+            CollectionMembershipModel.collection_id == CollectionModel.id,
+        )
+        .where(CollectionMembershipModel.issuer_id.in_(set(issuer_ids)))
+        .order_by(CollectionModel.name.asc())
+    )
+    rows = db.execute(stmt).all()
+    result: dict[UUID, list[Collection]] = defaultdict(list)
+    for issuer_id, collection_row in rows:
+        result[issuer_id].append(_collection_to_domain(collection_row))
+    return result
 
 
 def count_members(db: Session, collection_id: UUID) -> int:
@@ -367,4 +397,34 @@ def list_issuers_for_collection(
     return [
         (_issuer_row_to_domain(issuer_row), _membership_to_domain(membership_row))
         for issuer_row, membership_row in rows
+    ]
+
+
+def list_system_seeded_memberships_changed_since(
+    db: Session, since: datetime
+) -> list[tuple[CollectionMembership, Collection]]:
+    """Evidence-driven (`system_seeded=True`) memberships either newly added
+    (`added_at >= since`) or upgraded in place (`updated_at >= since`, e.g.
+    `partial` -> `verified`) — backs the Morning Research Brief's "issuer's
+    Research Universe membership changed materially" surfacing (PLAN.md
+    Milestone 7.5.2 correction). Scoped to `system_seeded` only: a
+    manually-curated membership change is an analyst's own action, not a
+    research "development" the brief should announce. Membership *removal*
+    is not detected here — `universe_classification_service.classify_issuer`
+    (the live daily path) never removes a membership, only
+    `app.scripts.reclassify_system_universes`'s manual reconciliation pass
+    does, which is out of this daily-run boundary's scope by design."""
+    stmt = (
+        select(CollectionMembershipModel, CollectionModel)
+        .join(CollectionModel, CollectionModel.id == CollectionMembershipModel.collection_id)
+        .where(
+            CollectionMembershipModel.system_seeded.is_(True),
+            (CollectionMembershipModel.added_at >= since)
+            | (CollectionMembershipModel.updated_at >= since),
+        )
+    )
+    rows = db.execute(stmt).all()
+    return [
+        (_membership_to_domain(membership_row), _collection_to_domain(collection_row))
+        for membership_row, collection_row in rows
     ]

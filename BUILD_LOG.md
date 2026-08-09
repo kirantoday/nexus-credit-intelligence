@@ -4595,3 +4595,304 @@ lesson almost exactly: a plausible-sounding implementation and a
 literally-verified one are not the same thing, and this codebase's
 recurring habit of checking real data before declaring success is what
 keeps catching the gap between them.
+
+---
+
+## 2026-08-09 — Milestone 7.5.2 (correction): Morning Research Brief user-relative semantics
+
+**Summary**
+
+Same-day, explicit follow-up direction: the daily-run-boundary fix
+completed earlier this milestone was still, at bottom, "what did the
+last pipeline run do" — correct, but not the actual product question.
+Corrected the Morning Research Brief's definition to "what materially
+changed since this user last reviewed the Morning Research Brief?" —
+a user-relative boundary, issuer-grouped and severity-ranked
+developments, new-vs-historical partitioning, Research Universe
+membership-change surfacing, and pipeline/run counters demoted to a
+secondary block. A genuine performance regression was found and fixed
+live before this shipped, not after.
+
+**Pre-Implementation Inspection (reported before any code change)**
+
+Per explicit instruction, inspected and reported findings before
+implementing:
+
+- **(a) Current boundary**: `since` = the latest successful `delta`/
+  `baseline`-mode pipeline run's `started_at` (7.5.2's first-pass fix) —
+  entirely pipeline-run-driven, no concept of when a person last looked.
+- **(b) User-level state**: none exists, confirmed by direct inspection,
+  not assumption. `Settings.auth_enabled = False` (TD-002, open); no
+  `user` table; no session/cookie middleware anywhere in `app/api`; no
+  `Depends(get_current_user)`; zero `localStorage`/`sessionStorage`
+  usage anywhere in the frontend. Only free-text labels
+  (`owner_user_id`, `acknowledged_by`, `dismissed_by`) exist — labels,
+  not identity. Decision: do not fake per-user state; use a single
+  shared timeline as the documented interim posture, with the real
+  per-user requirement recorded as new Technical Debt.
+- **(c) Proposed design**: reported in full before implementing — new
+  `morning_brief_view` table (pure-read `GET`, side-effecting `POST
+  /view` gated by a `MIN_VIEW_GAP` heuristic), reuse of the already-
+  correct `alert_event.is_backfill` signal for the new/historical split
+  (verified live during 7.5.2's original browser walkthrough — no new
+  field needed), a new `collection_membership.updated_at` column for
+  membership-upgrade detection, and the reshaped `MorningBriefSummary`/
+  `IssuerDevelopment`/`RunDetails` response shape.
+- **(d) Migration required**: yes — confirmed and flagged before writing
+  any schema.
+
+**Implementation**
+
+- Migration `0012`: `morning_brief_view` (append-only: `id`, `viewed_at`,
+  `created_at`) and `collection_membership.updated_at` (backfilled to
+  `added_at` for all ~540+ pre-existing rows via an explicit `UPDATE` in
+  the same migration — the naive `ADD COLUMN ... DEFAULT now()` behavior
+  would otherwise have made every existing membership appear to have
+  "just changed" the first time the corrected boundary logic ran).
+  Applied live against the shared Supabase project; `alembic check`
+  confirms zero drift; live-verified the backfill (`0` rows with
+  `updated_at != added_at` out of `1167`).
+- New `app/models/brief_view.py`, `app/domain/brief_view.py`,
+  `app/repositories/brief_view_repository.py` (`record_view`,
+  `get_latest_view` — dumb, no business logic; the gap policy lives in
+  the service layer).
+- `app/services/morning_brief_service.py` (new): `_resolve_period_start`
+  (real view or previous-business-day-morning fallback, 06:00
+  America/New_York, Mon-Fri only — federal holidays not specially
+  handled, low-stakes since this path is reachable only once),
+  `_should_record_new_view`/`record_brief_view` (the idempotent-refresh
+  gap predicate, factored out as a pure function mirroring
+  `enrichment_orchestrator._should_run`'s shape for direct unit
+  testing), and the relocated (unchanged) daily-run-boundary logic from
+  7.5.2's first pass, now backing a secondary `RunDetails` block.
+  `get_morning_brief` is a pure read; `record_brief_view` is the only
+  function with a side effect, called separately.
+- `app/repositories/collection_repository.py`:
+  `list_system_seeded_memberships_changed_since` (added-or-upgraded
+  memberships since a boundary, scoped to `system_seeded=True` only —
+  a manually-curated membership change is an analyst's own action, not
+  a research "development").
+  `upgrade_membership_verification`/`set_membership_verification` now
+  set `updated_at` on real changes.
+- `app/schemas/morning_brief.py` (new): `MorningBriefSummary`,
+  `IssuerDevelopment`, `UniverseMembershipChange`, `RunDetails`. The old
+  `MorningBriefSummary` in `app/schemas/filing_monitor.py` was removed
+  (superseded, not duplicated); `DailyRunSummary`/`SeverityCounts` are
+  still reused from there.
+- `app/api/routes/morning_brief.py`: `GET` unchanged in shape (now backed
+  by the new service); new `POST /view` (`response_model=None` — a
+  FastAPI/Starlette quirk requires this explicitly for a 204 response
+  with a `None`-typed handler, discovered live when the app failed to
+  import).
+- Frontend: `IssuerDevelopmentCard.tsx` (new — issuer header + universe-
+  change chips + nested `AlertCard`s), `RunDetailsPanel.tsx` (new —
+  collapsed-by-default secondary diagnostics), `BriefSummaryBar.tsx`
+  rewritten (period/analyst-relevant counts only),
+  `MorningResearchBriefPage.tsx` rewritten (records a view once per
+  mount via a `useRef` guard, after the brief query has already
+  resolved; existing severity/universe/detection/status filters now
+  apply client-side to the pre-grouped `new_developments`/
+  `historical_intelligence` arrays; "Show historical alerts" toggle
+  preserved unchanged, still backed by the flat, ungrouped
+  `GET /api/alerts`). `client.ts`'s `apiFetch` now handles a `204` body
+  (the app's first 204 endpoint).
+
+**A Real Performance Regression, Found and Fixed Before Shipping**
+
+Live-tested the actual `GET /api/morning-brief` endpoint against the
+real production database before considering this done — it did not
+return within 50 seconds. Root cause: the first implementation called
+`alert_to_row` per alert, which itself issues two queries (an issuer
+lookup, a universe-membership lookup) — fine at the existing
+`/api/alerts` endpoint's page-capped scale (≤200), but applied to a
+whole period's worth of alerts (~350 real alerts, 225 distinct issuers,
+confirmed via direct query) meant 700+ sequential round trips to the
+shared, remote Supabase instance. Fixed with two new batch-lookup
+functions — `issuer_repository.list_issuers_by_ids`,
+`collection_repository.list_collections_for_issuers` — replacing the
+N+1 pattern with two queries total regardless of alert volume. The
+same real request, re-tested after the fix, completed in 1.687 seconds
+(response body 3.5MB). This also collapsed the new test suite's own
+runtime from 274s to 7.5s, confirming the fix's effect wasn't
+observation-specific.
+
+**Files Created**
+
+- `backend/alembic/versions/0012_brief_view_and_membership_updated_at.py`
+- `backend/app/models/brief_view.py`, `backend/app/domain/brief_view.py`,
+  `backend/app/repositories/brief_view_repository.py`
+- `backend/app/services/morning_brief_service.py`
+- `backend/app/schemas/morning_brief.py`
+- `backend/tests/unit/test_morning_brief_boundary.py`
+- `backend/tests/integration/test_morning_brief_service.py`
+- `web/src/components/IssuerDevelopmentCard.tsx`,
+  `web/src/components/RunDetailsPanel.tsx`
+
+**Files Modified**
+
+- `backend/app/models/collection.py`, `backend/app/domain/collection.py`,
+  `backend/app/repositories/collection_repository.py` — `updated_at`,
+  `list_system_seeded_memberships_changed_since`,
+  `list_collections_for_issuers`.
+- `backend/app/repositories/issuer_repository.py` —
+  `list_issuers_by_ids`.
+- `backend/app/schemas/filing_monitor.py` — old `MorningBriefSummary`
+  removed (moved to the new schema module).
+- `backend/app/services/filing_monitor_api_service.py` — `get_morning_brief`
+  and its daily-run-boundary helpers removed (relocated to
+  `morning_brief_service.py`); `_alert_to_row` renamed to public
+  `alert_to_row` (still used by the unaffected flat `/api/alerts` path).
+- `backend/app/api/routes/morning_brief.py` — new service, new `POST
+  /view` endpoint.
+- `backend/tests/integration/test_filing_monitor_api_service.py`,
+  `backend/tests/integration/test_daily_run_boundary.py` — updated for
+  the relocated/renamed functions; 3 tests whose coverage moved to the
+  new test file removed (not duplicated).
+- `web/src/api/filingMonitor.ts` — reshaped `MorningBriefSummary`,
+  new `IssuerDevelopment`/`UniverseMembershipChange`/`RunDetails` types,
+  `recordMorningBriefView`.
+- `web/src/api/client.ts` — `204` response handling.
+- `web/src/queries/useMorningBrief.ts` — `useRecordMorningBriefView`.
+- `web/src/queries/useAlerts.ts` — `useAlerts` accepts an `enabled`
+  option (the historical-alerts toggle now conditionally fetches).
+- `web/src/pages/MorningResearchBriefPage.tsx`,
+  `web/src/pages/MorningResearchBriefPage.test.tsx`,
+  `web/src/components/BriefSummaryBar.tsx`.
+- `PLAN.md` — Milestone 7.5.2's entries extended with the correction;
+  TD-018 added.
+
+**Database Changes**
+
+Migration `0012`: `morning_brief_view` (new table),
+`collection_membership.updated_at` (new column, backfilled).
+
+**API Endpoints Added**
+
+`POST /api/morning-brief/view` (204, no body). `GET /api/morning-brief`
+response shape changed (not backward compatible with the pre-correction
+shape) — the same milestone's own frontend is the only consumer, updated
+in the same change.
+
+**Tests Added**
+
+- `tests/unit/test_morning_brief_boundary.py` (7 tests): fallback
+  weekday math (weekday/Monday/Sunday reference points), the
+  idempotent-refresh gap predicate (none-exists, within-gap,
+  past-gap, exactly-at-gap).
+- `tests/integration/test_morning_brief_service.py` (9 tests, the full
+  explicitly-required scenario set): previous-day return, a
+  Friday-to-Monday-shaped multi-day gap, a longer multi-day skip, a
+  first-ever view (fallback), an old filing discovered today
+  (historical intelligence), a genuinely new event today (new
+  development), a Research Universe membership change, no material
+  changes, idempotent refresh/reopen.
+- `web/src/pages/MorningResearchBriefPage.test.tsx` rewritten: summary +
+  issuer development cards, records-a-view-once, fallback-boundary
+  message, no-material-changes empty state, historical-intelligence
+  section, brief-fetch error, historical-toggle behavior (7 tests).
+
+**Test Results**
+
+- Backend: 397 passed (400 attempted minus 3 tests whose coverage moved,
+  net from 384; one unrelated pre-existing test failed once on a
+  transient shared-connection-pool drop — TD-013's documented pattern —
+  and passed cleanly on immediate re-run in isolation).
+- Frontend: 71 passed across 12 files.
+- `ruff check` / `black --check` / `mypy app` — clean (157 backend
+  source files). `eslint` / `tsc -b` / `prettier --check` — clean.
+- `alembic check` — zero drift. `pre-commit run --all-files` — clean.
+- Backend boots; frontend production build succeeds.
+
+**Commands Executed**
+
+```
+python -m alembic revision --autogenerate -m "brief view and membership updated_at"
+python -m alembic upgrade head
+python -m pytest -q
+python -m mypy app/
+npm run build
+npx vitest run
+pre-commit run --all-files
+```
+
+**Deployment Validation**
+
+Recorded in a follow-up entry once pushed and production is re-verified
+with this correction deployed.
+
+**Problems Encountered**
+
+1. **A real performance regression** — see "A Real Performance
+   Regression" above. Caught by actually calling the live endpoint
+   against real production data before considering the milestone done,
+   not by inspection or by trusting the passing test suite (the
+   integration tests were passing throughout, since they exercise the
+   same live database but at a scale — and, before the fix, an
+   incidentally slow but not-yet-timed-out one — that didn't surface the
+   problem until it was tested end-to-end as a real HTTP request).
+2. **FastAPI `status_code=204` requires `response_model=None`
+   explicitly** when the handler's return annotation is `None` — without
+   it, the app failed to import entirely
+   (`AssertionError: Status code 204 must not have a response body`).
+   Fixed immediately; no other endpoint in this codebase had used 204
+   before, so this was a first-time gap, not a regression.
+3. **Test flakiness from assuming ordering/emptiness of a shared,
+   already-populated table.** Several new integration tests initially
+   assumed either that a freshly-seeded `morning_brief_view` row would
+   be the global "latest" one, or that a multi-day-old boundary would
+   safely include a test's own alert within `list_alerts`'s DESC-ordered,
+   capped fetch window — both false once real production data (2200+
+   alerts, much of it with recent `triggered_at` from this same
+   session's earlier real runs) is already in the shared database.
+   Fixed by monkeypatching the view-lookup directly for boundary-value
+   tests (deterministic regardless of ambient rows) and by keeping
+   seeded alerts' `triggered_at` safely recent (so they rank within the
+   fetch window regardless of real data volume) while varying
+   `period_start` alone to test gap size — the same "assume real data
+   already exists" discipline this project has applied at every prior
+   milestone, just newly relevant in the opposite direction (too much
+   data, not too little).
+
+**Solutions**
+
+All three were caught by direct verification against live behavior — an
+actual HTTP call for the performance issue, an actual app-import attempt
+for the FastAPI quirk, and actual live-database test runs (not just
+green-in-isolation ones) for the ordering assumptions.
+
+**Remaining Work**
+
+- TD-018 (new): the brief's "since you last looked" boundary is a single
+  shared timeline, not per-user, since no authentication/session
+  infrastructure exists yet (TD-002).
+- Milestone 7.5.3 (Historical Discovery Coverage Repair) — still planned,
+  not started, still deliberately out of scope.
+- Railway Cron activation — still documented, not activated.
+
+**Git Commit Hash**
+
+Pending — recorded in a follow-up entry per this project's established
+two-commit documentation pattern.
+
+**Approximate Time Spent**
+
+~3 hours (pre-implementation inspection and reporting, schema/service/
+frontend implementation, the live performance investigation and fix,
+comprehensive scenario testing, documentation).
+
+**Developer Notes**
+
+The performance regression is the second time in this same milestone
+that a real, live, end-to-end check caught something the test suite
+alone did not (the first was `since` excluding a run's own output). Both
+share a shape: the implementation was internally consistent and every
+existing test passed, but a property only observable by actually running
+the real thing — real timing, real data volume, real request/response
+cycle — was wrong. Neither gap was subtle in hindsight (of course querying
+per-alert doesn't scale; of course a `completed_at` boundary excludes a
+run's own writes), but neither was caught by static analysis, type
+checking, or a green test suite either. The discipline this project keeps
+returning to — run the real thing before calling it done, independently
+verify its own reported numbers, and treat "the tests pass" as necessary
+but not sufficient — is what turned two real, shippable-looking bugs into
+fixed ones instead of production incidents.

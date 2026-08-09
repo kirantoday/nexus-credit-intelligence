@@ -169,15 +169,34 @@ export interface DailyRunSummary {
   errors_count: number;
 }
 
-/** Backs the Morning Research Brief page's summary bar — provider-aware
- * (Milestone 7.5): "new filings discovered" alone was SEC-specific and
- * insufficient once CourtListener (and market-wide SEC discovery) exist as
- * independent evidence sources, so it's broken out per provider/category.
- * `since` (Milestone 7.5.2) is the exact boundary every "new_*"/actionable
- * count below was computed against — pass it as `triggeredSince` to
- * `fetchAlerts` so the alert list below the summary bar is scoped to the
- * identical boundary, never a broader, all-time one. */
-export interface MorningBriefSummary {
+/** One Research Universe membership change for an issuer this period —
+ * surfaced only because it is itself a material development (Milestone
+ * 7.5.2 correction), never routine universe bookkeeping. */
+export interface UniverseMembershipChange {
+  universe_name: string;
+  change_type: "added" | "upgraded";
+  verification_status: "verified" | "partial" | "unverified";
+}
+
+/** One issuer's material developments this period — the brief's
+ * fundamental display unit, not an individual alert. `alerts` is ranked
+ * severity-first, most-recent-second. */
+export interface IssuerDevelopment {
+  issuer_id: string;
+  issuer_legal_name: string;
+  issuer_ticker: string | null;
+  max_severity: EvidenceSeverity;
+  alerts: AlertRow[];
+  universe_changes: UniverseMembershipChange[];
+}
+
+/** Secondary, diagnostics-only pipeline-run detail (Milestone 7.5.2
+ * correction) — everything the original 7.5.2 daily-run-boundary fix
+ * computed, unchanged, just moved out of the analyst's primary view.
+ * `since` is the pipeline run's own boundary, a different question ("how
+ * did the last discovery run perform") than the brief's own user-relative
+ * `period_start` ("what's new to me"). */
+export interface RunDetails {
   last_successful_run: DailyRunSummary | null;
   latest_run: DailyRunSummary | null;
   since: string | null;
@@ -186,12 +205,37 @@ export interface MorningBriefSummary {
   new_sec_filings: number;
   new_court_events: number;
   new_research_evidence: number;
-  actionable_alerts_total: number;
-  alerts_by_severity: SeverityCounts;
-  deterministic_alert_count: number;
-  ai_assisted_alert_count: number;
   failures_count: number;
-  no_new_alerts: boolean;
+}
+
+/**
+ * The Morning Research Brief (Milestone 7.5.2 correction): "What
+ * materially changed since this user last reviewed the Morning Research
+ * Brief?" `period_start` is user-relative — the analyst's own last
+ * recorded brief view — never a pipeline-run watermark;
+ * `period_start_is_fallback` is true only for a genuinely first-ever view
+ * (no prior view recorded), in which case `period_start` is the previous
+ * business-day morning boundary, not an arbitrary run timestamp.
+ *
+ * `new_developments`/`historical_intelligence` are a strict partition of
+ * this period's alerts by `is_backfill` on each underlying `AlertRow`:
+ * `new_developments` are genuinely new events (the discovery run's own
+ * narrow window), `historical_intelligence` is an older event Nexus just
+ * happened to discover this period (the enrichment orchestrator's wider
+ * lookback). The same issuer can appear in both. `severity_counts` covers
+ * `new_developments` only.
+ */
+export interface MorningBriefSummary {
+  period_start: string;
+  period_start_is_fallback: boolean;
+  period_end: string;
+  issuers_with_developments: number;
+  severity_counts: SeverityCounts;
+  new_developments: IssuerDevelopment[];
+  historical_intelligence: IssuerDevelopment[];
+  historical_intelligence_issuer_count: number;
+  no_material_changes: boolean;
+  run_details: RunDetails;
 }
 
 export interface AlertsQuery {
@@ -211,6 +255,13 @@ export interface AlertsQuery {
 
 export async function fetchMorningBrief(): Promise<MorningBriefSummary> {
   return apiFetch<MorningBriefSummary>("/api/morning-brief");
+}
+
+/** Records that the brief was viewed, advancing the boundary for next
+ * time. Call only after `fetchMorningBrief` has already resolved, so this
+ * visit never reads its own not-yet-recorded view as its own boundary. */
+export async function recordMorningBriefView(): Promise<void> {
+  await apiFetch<void>("/api/morning-brief/view", { method: "POST" });
 }
 
 export async function fetchAlerts(query: AlertsQuery): Promise<AlertsPage> {

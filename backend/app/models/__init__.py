@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from app.models import (  # noqa: F401
     alert,
+    brief_view,
     capital_structure,
     collection,
     court_docket,

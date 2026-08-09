@@ -6,7 +6,12 @@ import { MemoryRouter } from "react-router";
 import { MorningResearchBriefPage } from "./MorningResearchBriefPage";
 import * as filingMonitorApi from "../api/filingMonitor";
 import * as researchUniverseApi from "../api/researchUniverse";
-import type { AlertRow, AlertsPage, MorningBriefSummary } from "../api/filingMonitor";
+import type {
+  AlertRow,
+  AlertsPage,
+  IssuerDevelopment,
+  MorningBriefSummary,
+} from "../api/filingMonitor";
 
 function renderWithProviders(ui: ReactElement): void {
   const queryClient = new QueryClient({
@@ -24,7 +29,7 @@ function renderWithProviders(ui: ReactElement): void {
 
 const NO_UNIVERSES = { universes: [] };
 
-const BASE_SUMMARY: MorningBriefSummary = {
+const RUN_DETAILS: MorningBriefSummary["run_details"] = {
   last_successful_run: {
     id: "run-1",
     pipeline: "market_discovery",
@@ -47,18 +52,13 @@ const BASE_SUMMARY: MorningBriefSummary = {
     window_end_date: "2026-08-07",
     errors_count: 0,
   },
-  since: "2026-08-08T06:05:00Z",
+  since: "2026-08-08T06:00:00Z",
   universes_monitored: 15,
   issuers_monitored: 24,
   new_sec_filings: 1,
   new_court_events: 0,
   new_research_evidence: 1,
-  actionable_alerts_total: 1,
-  alerts_by_severity: { high: 1, medium: 0, low: 0 },
-  deterministic_alert_count: 1,
-  ai_assisted_alert_count: 0,
   failures_count: 0,
-  no_new_alerts: false,
 };
 
 const BASE_ALERT: AlertRow = {
@@ -79,7 +79,7 @@ const BASE_ALERT: AlertRow = {
   primary_source_label: "8-K filed 2026-08-01, Accession 0001234-26-000123",
   primary_source_url: "https://www.sec.gov/Archives/edgar/data/example.htm",
   as_of_date: "2026-08-01",
-  triggered_at: "2026-08-06T09:00:00Z",
+  triggered_at: "2026-08-08T09:00:00Z",
   status: "new",
   acknowledged_at: null,
   acknowledged_by: null,
@@ -87,6 +87,28 @@ const BASE_ALERT: AlertRow = {
   dismissed_by: null,
   dismissal_reason: null,
   is_backfill: false,
+};
+
+const BASE_DEVELOPMENT: IssuerDevelopment = {
+  issuer_id: "issuer-1",
+  issuer_legal_name: "Acme Distressed Co",
+  issuer_ticker: "ACME",
+  max_severity: "high",
+  alerts: [BASE_ALERT],
+  universe_changes: [],
+};
+
+const BASE_SUMMARY: MorningBriefSummary = {
+  period_start: "2026-08-07T10:00:00Z",
+  period_start_is_fallback: false,
+  period_end: "2026-08-08T10:00:00Z",
+  issuers_with_developments: 1,
+  severity_counts: { high: 1, medium: 0, low: 0 },
+  new_developments: [BASE_DEVELOPMENT],
+  historical_intelligence: [],
+  historical_intelligence_issuer_count: 0,
+  no_material_changes: false,
+  run_details: RUN_DETAILS,
 };
 
 const ONE_ALERT_PAGE: AlertsPage = {
@@ -100,57 +122,98 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function mockRecordView(): void {
+  vi.spyOn(filingMonitorApi, "recordMorningBriefView").mockResolvedValue(undefined);
+}
+
 describe("MorningResearchBriefPage", () => {
-  it("renders the summary bar and alert cards", async () => {
+  it("renders the summary bar and issuer development cards", async () => {
     vi.spyOn(filingMonitorApi, "fetchMorningBrief").mockResolvedValue(BASE_SUMMARY);
     vi.spyOn(researchUniverseApi, "fetchResearchUniverses").mockResolvedValue(NO_UNIVERSES);
-    vi.spyOn(filingMonitorApi, "fetchAlerts").mockResolvedValue(ONE_ALERT_PAGE);
+    mockRecordView();
 
     renderWithProviders(<MorningResearchBriefPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Actionable alerts")).toBeInTheDocument();
+      expect(screen.getByText("Issuers with developments")).toBeInTheDocument();
     });
     expect(
       screen.getByText("Potential bankruptcy or receivership filing detected in a new 8-K."),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText("New Research Alerts — Since Last Successful Daily Run"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("What changed since your last review")).toBeInTheDocument();
+    // Appears twice: once in the IssuerDevelopmentCard header, once in the
+    // nested AlertCard's own issuer link.
+    expect(screen.getAllByText("Acme Distressed Co (ACME)").length).toBeGreaterThan(0);
   });
 
-  it("shows a success message when there are no alerts matching the filters", async () => {
+  it("records a brief view exactly once after the brief loads", async () => {
+    vi.spyOn(filingMonitorApi, "fetchMorningBrief").mockResolvedValue(BASE_SUMMARY);
+    vi.spyOn(researchUniverseApi, "fetchResearchUniverses").mockResolvedValue(NO_UNIVERSES);
+    const recordViewSpy = vi
+      .spyOn(filingMonitorApi, "recordMorningBriefView")
+      .mockResolvedValue(undefined);
+
+    renderWithProviders(<MorningResearchBriefPage />);
+
+    await waitFor(() => {
+      expect(recordViewSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("shows the fallback-boundary message on a first-ever view", async () => {
     vi.spyOn(filingMonitorApi, "fetchMorningBrief").mockResolvedValue({
       ...BASE_SUMMARY,
-      actionable_alerts_total: 0,
-      no_new_alerts: true,
+      period_start_is_fallback: true,
     });
     vi.spyOn(researchUniverseApi, "fetchResearchUniverses").mockResolvedValue(NO_UNIVERSES);
-    vi.spyOn(filingMonitorApi, "fetchAlerts").mockResolvedValue({
-      alerts: [],
-      total: 0,
-      page: 1,
-      page_size: 100,
+    mockRecordView();
+
+    renderWithProviders(<MorningResearchBriefPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/First time viewing/)).toBeInTheDocument();
     });
+  });
+
+  it("shows a success message when there are no material developments", async () => {
+    vi.spyOn(filingMonitorApi, "fetchMorningBrief").mockResolvedValue({
+      ...BASE_SUMMARY,
+      issuers_with_developments: 0,
+      severity_counts: { high: 0, medium: 0, low: 0 },
+      new_developments: [],
+      no_material_changes: true,
+    });
+    vi.spyOn(researchUniverseApi, "fetchResearchUniverses").mockResolvedValue(NO_UNIVERSES);
+    mockRecordView();
 
     renderWithProviders(<MorningResearchBriefPage />);
 
     await waitFor(() => {
       expect(
-        screen.getByText("No research alerts match these filters — nothing to review right now."),
+        screen.getByText("No material research developments since your last review."),
       ).toBeInTheDocument();
     });
   });
 
-  it("shows an error message when the alerts API call fails", async () => {
-    vi.spyOn(filingMonitorApi, "fetchMorningBrief").mockResolvedValue(BASE_SUMMARY);
+  it("renders historical intelligence in its own de-emphasized section", async () => {
+    const historicalAlert: AlertRow = { ...BASE_ALERT, id: "alert-2", is_backfill: true };
+    vi.spyOn(filingMonitorApi, "fetchMorningBrief").mockResolvedValue({
+      ...BASE_SUMMARY,
+      new_developments: [],
+      issuers_with_developments: 0,
+      no_material_changes: true,
+      historical_intelligence: [
+        { ...BASE_DEVELOPMENT, issuer_id: "issuer-2", alerts: [historicalAlert] },
+      ],
+      historical_intelligence_issuer_count: 1,
+    });
     vi.spyOn(researchUniverseApi, "fetchResearchUniverses").mockResolvedValue(NO_UNIVERSES);
-    vi.spyOn(filingMonitorApi, "fetchAlerts").mockRejectedValue(new Error("Network unreachable"));
+    mockRecordView();
 
     renderWithProviders(<MorningResearchBriefPage />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Could not load alerts/)).toBeInTheDocument();
+      expect(screen.getByText("Newly Discovered Historical Intelligence")).toBeInTheDocument();
     });
   });
 
@@ -159,12 +222,38 @@ describe("MorningResearchBriefPage", () => {
       new Error("Network unreachable"),
     );
     vi.spyOn(researchUniverseApi, "fetchResearchUniverses").mockResolvedValue(NO_UNIVERSES);
-    vi.spyOn(filingMonitorApi, "fetchAlerts").mockResolvedValue(ONE_ALERT_PAGE);
+    mockRecordView();
 
     renderWithProviders(<MorningResearchBriefPage />);
 
     await waitFor(() => {
       expect(screen.getByText(/Could not load the brief summary/)).toBeInTheDocument();
+    });
+  });
+
+  it("shows the all-time flat alert list only when the historical toggle is on", async () => {
+    vi.spyOn(filingMonitorApi, "fetchMorningBrief").mockResolvedValue(BASE_SUMMARY);
+    vi.spyOn(researchUniverseApi, "fetchResearchUniverses").mockResolvedValue(NO_UNIVERSES);
+    const fetchAlertsSpy = vi
+      .spyOn(filingMonitorApi, "fetchAlerts")
+      .mockResolvedValue(ONE_ALERT_PAGE);
+    mockRecordView();
+
+    renderWithProviders(<MorningResearchBriefPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Issuers with developments")).toBeInTheDocument();
+    });
+    // The default (non-historical) view never calls the flat alerts endpoint.
+    expect(fetchAlertsSpy).not.toHaveBeenCalled();
+
+    screen.getByLabelText("Show historical alerts (all-time, not just this period)").click();
+
+    await waitFor(() => {
+      expect(screen.getByText("All Research Alerts — All-Time")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(fetchAlertsSpy).toHaveBeenCalled();
     });
   });
 });

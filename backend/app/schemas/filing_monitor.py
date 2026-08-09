@@ -183,46 +183,10 @@ class SeverityCounts(BaseModel):
     low: int
 
 
-class MorningBriefSummary(BaseModel):
-    """Backs the Morning Research Brief page's summary bar (PLAN.md 24.9,
-    Milestone 7.5 section 16 — provider-aware; Milestone 7.5.2 section 4 —
-    one authoritative daily-run boundary). Deliberately worded to outlive
-    SEC being the only evidence provider: no field name here is
-    SEC-specific. `new_sec_filings`/`new_court_events`/`new_research_evidence`
-    replace the old single "new filings discovered" metric (insufficient
-    once CourtListener exists as a second real provider) — each counts by
-    `created_at` (when Nexus discovered/persisted the record), never by the
-    record's own real-world event date, so a historical backfill discovered
-    today correctly shows as new *to Nexus* today without implying the
-    underlying event itself happened today (PLAN.md Milestone 7.5 section 17).
-
-    `last_successful_run`/`latest_run` are now `DailyRunSummary` —
-    `mode=backfill` runs are structurally excluded (Milestone 7.5.2), so
-    these can never again silently point at a historical backfill. `since`
-    is the exact boundary every "new_*"/actionable-alert count in this
-    response was computed against — exposed explicitly so the alert list
-    the page renders below the summary can be scoped to the identical
-    boundary (`GET /api/filing-monitor/alerts?triggered_since=...`),
-    never a broader, inconsistent one (Milestone 7.5.2 section 7). `since`
-    equals `last_successful_run.started_at`, not `.completed_at` — a run's
-    own discovered filings/evidence/alerts are always written before that
-    run finishes, so a `completed_at` boundary would exclude the run's own
-    output.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    last_successful_run: DailyRunSummary | None
-    latest_run: DailyRunSummary | None
-    since: datetime | None
-    universes_monitored: int
-    issuers_monitored: int
-    new_sec_filings: int
-    new_court_events: int
-    new_research_evidence: int
-    actionable_alerts_total: int
-    alerts_by_severity: SeverityCounts
-    deterministic_alert_count: int
-    ai_assisted_alert_count: int
-    failures_count: int
-    no_new_alerts: bool
+# NOTE: the Morning Research Brief's response schema (formerly defined here
+# as `MorningBriefSummary`) moved to `app.schemas.morning_brief` in
+# Milestone 7.5.2's correction — the brief is a user-relative "what changed
+# since I last looked" product surface, not a pipeline-run status page, and
+# deserves its own module rather than living inside this pipeline-run-
+# focused one. `DailyRunSummary`/`SeverityCounts` above are still reused
+# there (imported, not duplicated) for the secondary `run_details` block.

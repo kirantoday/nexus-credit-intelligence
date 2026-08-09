@@ -7,11 +7,12 @@ import {
   fetchAlerts,
 } from "../api/filingMonitor";
 
-export function useAlerts(query: AlertsQuery) {
+export function useAlerts(query: AlertsQuery, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ["alerts", query],
     queryFn: () => fetchAlerts(query),
     placeholderData: (previousData) => previousData,
+    enabled: options?.enabled,
   });
 }
 

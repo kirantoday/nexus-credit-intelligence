@@ -72,3 +72,4 @@ class CollectionMembership(CollectionMembershipCreate):
 
     id: UUID
     added_at: datetime
+    updated_at: datetime

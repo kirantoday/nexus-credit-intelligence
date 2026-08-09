@@ -45,7 +45,7 @@ from app.repositories import (
     market_discovery_repository,
     provenance_repository,
 )
-from app.services import filing_monitor_api_service
+from app.services import morning_brief_service
 from tests.integration.conftest import reported_public_provenance
 
 
@@ -152,11 +152,12 @@ def test_market_discovery_repo_daily_run_excludes_more_recent_backfill(
     assert latest_daily.mode is FilingMonitorRunMode.DELTA
 
 
-def test_get_morning_brief_daily_boundary_ignores_later_backfill(db_session: Session) -> None:
+def test_run_details_daily_boundary_ignores_later_backfill(db_session: Session) -> None:
     """End-to-end reproduction of the production bug: a `market_discovery`
     delta run completes, then a `filing_monitor` backfill run completes
-    later. The Morning Brief's `last_successful_run`/`since` must reflect
-    the delta run, never the more-recent backfill."""
+    later. `RunDetails.last_successful_run`/`.since` (the diagnostics block
+    Milestone 7.5.2's correction moved this logic into, unchanged) must
+    reflect the delta run, never the more-recent backfill."""
     delta_run = market_discovery_repository.create_run(
         db_session,
         MarketDiscoveryRunCreate(
@@ -176,15 +177,15 @@ def test_get_morning_brief_daily_boundary_ignores_later_backfill(db_session: Ses
     )
     _complete(db_session, backfill_run.id, market_discovery=False)
 
-    brief = filing_monitor_api_service.get_morning_brief(db_session)
+    brief = morning_brief_service.get_morning_brief(db_session)
 
-    assert brief.last_successful_run is not None
-    assert brief.last_successful_run.id == delta_run.id
-    assert brief.last_successful_run.mode == FilingMonitorRunMode.DELTA
+    assert brief.run_details.last_successful_run is not None
+    assert brief.run_details.last_successful_run.id == delta_run.id
+    assert brief.run_details.last_successful_run.mode == FilingMonitorRunMode.DELTA
     # `since` is the run's `started_at`, not `completed_at` — everything the
     # run itself discovers is necessarily written before its own completion,
     # so a `completed_at` boundary would exclude the run's own output.
-    assert brief.since == completed_delta.started_at
+    assert brief.run_details.since == completed_delta.started_at
 
 
 def test_alert_repository_triggered_since_filters_by_processing_time(

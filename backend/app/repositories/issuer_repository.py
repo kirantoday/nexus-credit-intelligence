@@ -53,6 +53,17 @@ def get_issuer(db: Session, issuer_id: UUID) -> Issuer | None:
     return _to_domain(row) if row is not None else None
 
 
+def list_issuers_by_ids(db: Session, issuer_ids: list[UUID]) -> dict[UUID, Issuer]:
+    """Batch lookup, keyed by id — avoids an N+1 `get_issuer` call per row
+    when assembling a page of records that reference many distinct issuers
+    (e.g. the Morning Research Brief's issuer-grouped developments)."""
+    if not issuer_ids:
+        return {}
+    stmt = select(IssuerModel).where(IssuerModel.id.in_(set(issuer_ids)))
+    rows = db.execute(stmt).scalars().all()
+    return {row.id: _to_domain(row) for row in rows}
+
+
 def get_issuer_by_cik(db: Session, cik: str) -> Issuer | None:
     """Idempotent re-ingestion check: has this real-world issuer already been created."""
     stmt = select(IssuerModel).where(IssuerModel.cik == cik)
