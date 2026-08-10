@@ -23,7 +23,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from app.ai.factory import LLMConfigurationError, get_llm_provider
+from app.ai.factory import LLMConfigurationError, build_model_router
 from app.config import get_settings
 from app.core.types import FilingMonitorRunMode, FilingMonitorRunStatus
 from app.db.session import SessionLocal
@@ -65,10 +65,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        llm = get_llm_provider(settings)
+        router = build_model_router(settings)
         print(f"AI evidence review: enabled (LLM_PROVIDER={settings.llm_provider}).")
     except LLMConfigurationError as exc:
-        llm = None
+        router = None
         print(
             f"AI evidence review: disabled ({exc}). Running deterministic-only — this is a "
             "supported, fully operational mode, not a degraded one."
@@ -80,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
         run = filing_monitor_service.run_monitor(
             db,
             http_client,
-            llm,
+            router,
             mode=FilingMonitorRunMode(args.mode),
             backfill_days=args.backfill_days,
             environment=settings.environment,

@@ -44,7 +44,13 @@ class AnthropicProvider:
         text = "".join(
             block.text for block in response.content if isinstance(block, anthropic.types.TextBlock)
         )
-        return CompletionResponse(text=text, model=response.model, stop_reason=response.stop_reason)
+        return CompletionResponse(
+            text=text,
+            model=response.model,
+            stop_reason=response.stop_reason,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+        )
 
     def call_tools(self, request: object) -> object:
         raise NotImplementedError("reserved for Milestone 13")

@@ -173,3 +173,20 @@ def count_evidence_created_since(db: Session, since: datetime | None) -> int:
     if since is not None:
         stmt = stmt.where(ResearchEvidenceModel.created_at >= since)
     return db.execute(stmt).scalar_one()
+
+
+def sample_confidence_values(db: Session, *, limit: int) -> list[float]:
+    """A recent sample of `confidence` values across every persisted
+    evidence row (PLAN.md Milestone 7.5.3's pre-run AI cost estimate) —
+    the only real, already-observed distribution of "how strong is a
+    typical Layer-1 match" this codebase has, used to estimate how much of
+    a future run's evidence would clear/miss `ai_deterministic_confidence_floor`.
+    Not scoped to any one discovery run — a general sample, explicitly
+    reported as such, never presented as this run's own forecast."""
+    stmt = (
+        select(ResearchEvidenceModel.confidence)
+        .where(ResearchEvidenceModel.confidence.is_not(None))
+        .order_by(ResearchEvidenceModel.created_at.desc())
+        .limit(limit)
+    )
+    return [c for c in db.execute(stmt).scalars().all() if c is not None]

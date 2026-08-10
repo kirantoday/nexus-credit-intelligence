@@ -20,7 +20,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.ai.providers.base import LLMProvider
+from app.ai.model_router import ModelRouter
 from app.core.court_docket_matcher import select_best_match
 from app.core.distress_rules import DOCKET_EXCLUDED_RULE_IDS, match_rules
 from app.core.types import CourtDocketLinkMatchOutcome, DetectionMethod, EvidenceType, ProviderName
@@ -177,11 +177,12 @@ class DocketSyncResult:
 def sync_one_docket(
     db: Session,
     http_client: ThrottledHttpClient,
-    llm: LLMProvider | None,
+    router: ModelRouter | None,
     *,
     docket: CourtDocket,
     environment: str,
     is_backfill: bool = False,
+    discovery_run_id: UUID | None = None,
     sync_docket_entries_fn: SyncDocketEntriesFn = cl_sync_docket_entries,
 ) -> DocketSyncResult:
     """Sync one already-linked docket's entries and synthesize alerts from
@@ -213,9 +214,10 @@ def sync_one_docket(
             db,
             evidence=all_evidence,
             describe_source=lambda e: _describe_courtlistener_source(db, e),
-            llm=llm,
+            router=router,
             environment=environment,
             is_backfill=is_backfill,
+            discovery_run_id=discovery_run_id,
         )
 
     return DocketSyncResult(
@@ -242,11 +244,12 @@ class AutoLinkResult:
 def attempt_auto_link(
     db: Session,
     http_client: ThrottledHttpClient,
-    llm: LLMProvider | None,
+    router: ModelRouter | None,
     *,
     issuer_id: UUID,
     issuer_legal_name: str,
     environment: str,
+    discovery_run_id: UUID | None = None,
     search_dockets_fn: SearchDocketsFn = cl_search_dockets,
     sync_docket_entries_fn: SyncDocketEntriesFn = cl_sync_docket_entries,
 ) -> AutoLinkResult:
@@ -318,9 +321,10 @@ def attempt_auto_link(
         sync_result = sync_one_docket(
             db,
             http_client,
-            llm,
+            router,
             docket=docket,
             environment=environment,
+            discovery_run_id=discovery_run_id,
             sync_docket_entries_fn=sync_docket_entries_fn,
         )
         db.commit()

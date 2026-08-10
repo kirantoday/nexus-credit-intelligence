@@ -53,7 +53,9 @@ class FetchResult(Generic[_DtoT]):
     retrieved_at: datetime
 
 
-def build_http_client(*, user_agent: str, api_token: str | None) -> ThrottledHttpClient:
+def build_http_client(
+    *, user_agent: str, api_token: str | None, max_retry_after_seconds: float = 60.0
+) -> ThrottledHttpClient:
     """The one place Authorization/throttle/retry configuration for
     CourtListener is assembled, so every caller (the live service, the seed
     script, tests) gets identical, real behavior.
@@ -68,6 +70,17 @@ def build_http_client(*, user_agent: str, api_token: str | None) -> ThrottledHtt
     docket can run to hundreds of entries across many paginated requests,
     so a full sync is expected to take a genuinely long time today, not to
     hang indefinitely.
+
+    `max_retry_after_seconds` (default matches `Settings.courtlistener_retry_after_max_seconds`
+    — callers with a live `Settings` instance should pass that explicitly,
+    this default only covers callers that don't): PLAN.md Milestone 7.5.3's
+    live-caught defect — a single `Retry-After`-driven wait blocked an
+    entire discovery batch for 4+ hours because nothing capped it. Beyond
+    this ceiling, `ThrottledHttpClient.get` raises `RetryAfterTooLongError`
+    instead of sleeping, which this codebase's existing per-issuer/
+    per-provider isolation (`enrichment_orchestrator.enrich_issuer`)
+    already turns into a `FAILED_RETRYABLE` status with a `next_retry_at`
+    — CourtListener stalling never blocks the rest of a discovery run.
     """
     extra_headers = {"Authorization": f"Token {api_token}"} if api_token else None
     return ThrottledHttpClient(
@@ -77,6 +90,7 @@ def build_http_client(*, user_agent: str, api_token: str | None) -> ThrottledHtt
         extra_headers=extra_headers,
         retry_on_status=frozenset({429}),
         max_retries=2,
+        max_retry_after_seconds=max_retry_after_seconds,
     )
 
 

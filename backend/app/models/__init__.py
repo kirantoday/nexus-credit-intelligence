@@ -17,6 +17,7 @@ resolves, regardless of import order.
 from __future__ import annotations
 
 from app.models import (  # noqa: F401
+    ai_call_log,
     alert,
     capital_structure,
     collection,

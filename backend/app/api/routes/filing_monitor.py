@@ -14,7 +14,7 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.ai.factory import LLMConfigurationError, get_llm_provider
+from app.ai.factory import LLMConfigurationError, build_model_router
 from app.config import get_settings
 from app.core.types import FilingMonitorRunMode
 from app.db.session import get_db
@@ -75,9 +75,9 @@ def trigger_manual_run(
         )
 
     try:
-        llm = get_llm_provider(settings)
+        router = build_model_router(settings)
     except LLMConfigurationError:
-        llm = None
+        router = None
 
     return filing_monitor_api_service.trigger_manual_run(
         db,
@@ -85,5 +85,5 @@ def trigger_manual_run(
         backfill_days=backfill_days,
         environment=settings.environment,
         sec_user_agent=settings.sec_user_agent,
-        llm=llm,
+        router=router,
     )

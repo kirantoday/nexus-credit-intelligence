@@ -72,6 +72,49 @@ class Settings(BaseSettings):
     # tool-calling and embeddings may end up sourced from different vendors.
     embedding_provider: str | None = None
 
+    # Model routing (PLAN.md Milestone 7.5.3 AI cost-control correction).
+    # `anthropic_model` above stays the Sonnet identity (unchanged, still the
+    # single-model default for any caller not going through the router, e.g.
+    # `app.scripts.reclassify_system_universes`). These are read exclusively
+    # by `app.ai.model_router` — no other module should embed a model id.
+    ai_haiku_model_id: str = "claude-haiku-4-5-20251001"
+    ai_sonnet_model_id: str = "claude-sonnet-5"
+    ai_routing_enabled: bool = True
+    # Below this Haiku-reported confidence, escalate to Sonnet once.
+    # Never applied to definitive/high-impact categories (Chapter 11,
+    # bankruptcy/receivership, plan-confirmed) — those always go straight
+    # to Sonnet regardless of any Haiku confidence, per PLAN.md Milestone
+    # 7.5.3's live quality-validation finding: Haiku's self-reported
+    # confidence is not a reliable enough signal for that category.
+    ai_haiku_confidence_threshold: float = 0.75
+    # Below this Layer-1 rule confidence (the *strongest* candidate in the
+    # bundle), no AI call is made at all — the bundle is genuinely too weak
+    # a signal to spend anything reviewing. Layer 1's real calibrated rules
+    # today all sit at >= 0.5, so this is a deliberately conservative floor
+    # that is a no-op against current rule data, not a lever tuned to cut
+    # real recall — see PLAN.md Milestone 7.5.3's AI cost-control report.
+    ai_deterministic_confidence_floor: float = 0.5
+    # Hard per-run budgets. `None` = unlimited (this module's own default —
+    # a batch/backfill caller, e.g. `run_market_discovery.py`, always passes
+    # explicit values; nothing here silently caps interactive/low-volume
+    # callers like the nightly monitor unless configured to).
+    ai_max_calls_per_run: int | None = None
+    ai_max_cost_usd_per_run: float | None = None
+    ai_max_sonnet_calls_per_run: int | None = None
+    # Bounded retry on a transient provider failure (network/5xx/429) before
+    # a single routed call is treated as failed and the router falls back to
+    # escalation-or-deterministic. Deliberately small and fixed — see the
+    # CourtListener Retry-After incident this same milestone fixed for why
+    # an unbounded wait is never acceptable in this codebase again.
+    ai_call_max_attempts: int = 2
+    ai_call_retry_delay_seconds: float = 2.0
+
+    # CourtListener Retry-After ceiling (PLAN.md Milestone 7.5.3): the
+    # maximum this codebase will ever `time.sleep()` for a single retry,
+    # regardless of what a provider's `Retry-After` header requests. Beyond
+    # this, the operation is marked retryable/deferred instead of blocking.
+    courtlistener_retry_after_max_seconds: float = 60.0
+
     # Auth (disabled for first demo; architecture supports Supabase Auth JWT later)
     auth_enabled: bool = False
 

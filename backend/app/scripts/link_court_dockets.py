@@ -90,6 +90,7 @@ def main() -> int:
     http_client = build_http_client(
         user_agent="nexus-credit-intelligence-research (link_court_dockets)",
         api_token=settings.courtlistener_api_token,
+        max_retry_after_seconds=settings.courtlistener_retry_after_max_seconds,
     )
     db = SessionLocal()
 

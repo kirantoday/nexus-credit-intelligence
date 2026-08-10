@@ -79,6 +79,23 @@ def _build_user_prompt(
     )
 
 
+def _strip_markdown_code_fence(text: str) -> str:
+    """Live-caught during Milestone 7.5.3's Haiku-routing quality
+    validation: unlike Sonnet, Haiku reliably wraps its JSON response in a
+    ```json ... ``` fence despite the system prompt's explicit "no
+    markdown" instruction — every one of 7 representative real production
+    re-reviews failed to parse until this was added. Strips a single
+    leading/trailing fence (with or without a language tag) if present;
+    leaves already-bare JSON untouched."""
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    without_leading_fence = stripped.split("\n", 1)[1] if "\n" in stripped else ""
+    if without_leading_fence.rstrip().endswith("```"):
+        without_leading_fence = without_leading_fence.rstrip()[: -len("```")]
+    return without_leading_fence.strip()
+
+
 def review_evidence_candidates(
     llm: LLMProvider,
     *,
@@ -98,7 +115,7 @@ def review_evidence_candidates(
 
     try:
         response = llm.complete(request)
-        payload = json.loads(response.text)
+        payload = json.loads(_strip_markdown_code_fence(response.text))
         headline = str(payload["headline"]).strip()
         explanation = str(payload["explanation"]).strip()
         severity = EvidenceSeverity(str(payload["severity"]).lower())

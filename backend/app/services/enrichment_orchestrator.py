@@ -28,7 +28,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.ai.providers.base import LLMProvider
+from app.ai.model_router import ModelRouter
 from app.core.types import (
     ISSUER_LEVEL_ENRICHMENT_PROVIDERS,
     EnrichmentStatus,
@@ -135,10 +135,11 @@ def enrich_issuer(
     db: Session,
     issuer_id: UUID,
     clients: EnrichmentClients,
-    llm: LLMProvider | None,
+    router: ModelRouter | None,
     *,
     environment: str,
     force: bool = False,
+    discovery_run_id: UUID | None = None,
     process_issuer_filings_fn: ProcessIssuerFilingsFn = process_issuer_filings,
 ) -> dict[ProviderName, IssuerEnrichmentStatus]:
     issuer = issuer_repository.get_issuer(db, issuer_id)
@@ -165,9 +166,10 @@ def enrich_issuer(
                     issuer.cik,
                     clients.sec,
                     current,
-                    llm,
+                    router,
                     environment,
                     now=now,
+                    discovery_run_id=discovery_run_id,
                     process_issuer_filings_fn=process_issuer_filings_fn,
                 )
             elif provider is ProviderName.OPENFIGI:
@@ -180,9 +182,10 @@ def enrich_issuer(
                     issuer_id,
                     issuer.legal_name,
                     clients.courtlistener,
-                    llm,
+                    router,
                     environment,
                     now=now,
+                    discovery_run_id=discovery_run_id,
                 )
         except Exception as exc:  # noqa: BLE001 - per-provider isolation boundary
             db.rollback()
@@ -207,10 +210,11 @@ def _enrich_sec(
     cik: str | None,
     http_client: ThrottledHttpClient | None,
     current: IssuerEnrichmentStatus | None,
-    llm: LLMProvider | None,
+    router: ModelRouter | None,
     environment: str,
     *,
     now: datetime,
+    discovery_run_id: UUID | None = None,
     process_issuer_filings_fn: ProcessIssuerFilingsFn = process_issuer_filings,
 ) -> IssuerEnrichmentStatusUpdate:
     """Re-checks an issuer's SEC filings (bounded to
@@ -250,9 +254,10 @@ def _enrich_sec(
             db,
             evidence=result.evidence,
             describe_source=lambda e: describe_sec_source(db, e),
-            llm=llm,
+            router=router,
             environment=environment,
             is_backfill=True,
+            discovery_run_id=discovery_run_id,
         )
         universe_classification_service.classify_issuer(db, issuer_id, result.evidence)
     status = (
@@ -298,10 +303,11 @@ def _enrich_courtlistener(
     issuer_id: UUID,
     issuer_legal_name: str,
     http_client: ThrottledHttpClient | None,
-    llm: LLMProvider | None,
+    router: ModelRouter | None,
     environment: str,
     *,
     now: datetime,
+    discovery_run_id: UUID | None = None,
 ) -> IssuerEnrichmentStatusUpdate:
     if http_client is None:
         return IssuerEnrichmentStatusUpdate(
@@ -324,10 +330,11 @@ def _enrich_courtlistener(
     result = court_docket_service.attempt_auto_link(
         db,
         http_client,
-        llm,
+        router,
         issuer_id=issuer_id,
         issuer_legal_name=issuer_legal_name,
         environment=environment,
+        discovery_run_id=discovery_run_id,
     )
     outcome_to_status = {
         "verified_docket_match": EnrichmentStatus.COMPLETE,

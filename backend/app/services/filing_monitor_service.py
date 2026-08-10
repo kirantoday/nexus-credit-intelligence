@@ -32,7 +32,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.ai.providers.base import LLMProvider
+from app.ai.model_router import ModelRouter
 from app.core.distress_rules import match_rules
 from app.core.types import (
     MONITORED_FORM_TYPES,
@@ -247,7 +247,7 @@ def process_issuer_filings(
 def run_monitor(
     db: Session,
     http_client: ThrottledHttpClient,
-    llm: LLMProvider | None,
+    router: ModelRouter | None,
     *,
     mode: FilingMonitorRunMode,
     backfill_days: int | None = None,
@@ -344,9 +344,10 @@ def run_monitor(
                         db,
                         evidence=issuer_evidence,
                         describe_source=lambda e: describe_sec_source(db, e),
-                        llm=llm,
+                        router=router,
                         environment=environment,
                         is_backfill=(mode is FilingMonitorRunMode.BACKFILL),
+                        filing_monitor_run_id=run.id,
                     )
                 )
                 alerts_created += len(new_alerts)

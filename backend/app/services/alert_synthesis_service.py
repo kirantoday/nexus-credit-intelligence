@@ -22,9 +22,8 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.ai.evidence_review import review_evidence_candidates
 from app.ai.llm_gate import check_send_to_llm
-from app.ai.providers.base import LLMProvider
+from app.ai.model_router import ModelRouter
 from app.core.distress_rules import RuleMatch
 from app.core.types import (
     AlertStatus,
@@ -182,10 +181,18 @@ def _synthesize_one_alert(
     *,
     bundle: EvidenceBundle,
     describe_source: DescribeSourceFn,
-    llm: LLMProvider | None,
+    router: ModelRouter | None,
     environment: str,
     is_backfill: bool,
-) -> AlertEvent:
+    discovery_run_id: UUID | None = None,
+    filing_monitor_run_id: UUID | None = None,
+) -> AlertEvent | None:
+    """Returns `None` only when the AI budget was exhausted before any
+    model attempt was made for a bundle that needed one — the caller must
+    not create an alert in that case (see `ModelRouter.review_evidence`'s
+    `deferred` docstring): a future run with fresh budget can still review
+    it via the same `bundle_key` idempotency check, which a premature
+    deterministic-fallback alert would permanently foreclose."""
     issuer = issuer_repository.get_issuer(db, bundle.issuer_id)
     if issuer is None:
         raise ValueError(
@@ -195,18 +202,25 @@ def _synthesize_one_alert(
     source = describe_source(bundle.primary_evidence)
 
     review_result = None
-    if llm is not None:
+    if router is not None:
         gate_decision = check_send_to_llm(
             classification=DataClassification.PUBLIC, entitlement=None, environment=environment
         )
         if gate_decision.allowed:
             candidates = [evidence_to_candidate(e) for e in bundle.evidence]
-            review_result = review_evidence_candidates(
-                llm,
+            routed = router.review_evidence(
+                db,
+                issuer_id=bundle.issuer_id,
                 issuer_name=issuer.legal_name,
                 source_description=source.label,
                 candidates=candidates,
+                bundle_key=bundle.bundle_key,
+                discovery_run_id=discovery_run_id,
+                filing_monitor_run_id=filing_monitor_run_id,
             )
+            if routed.deferred:
+                return None
+            review_result = routed.result
 
     ai_assisted = review_result is not None
     if review_result is not None:
@@ -258,14 +272,22 @@ def synthesize_alerts_from_evidence(
     *,
     evidence: list[ResearchEvidence],
     describe_source: DescribeSourceFn,
-    llm: LLMProvider | None,
+    router: ModelRouter | None,
     environment: str,
     is_backfill: bool,
+    discovery_run_id: UUID | None = None,
+    filing_monitor_run_id: UUID | None = None,
 ) -> list[AlertEvent]:
     """Group `evidence` into bundles and create one alert per genuinely new
     bundle. Idempotent: a bundle that already produced an alert (looked up by
     `bundle_key`) is skipped, never duplicated — safe to call repeatedly
-    across retried runs (PLAN.md 24.5's retry-safety requirement).
+    across retried runs (PLAN.md 24.5's retry-safety requirement), and this
+    is also what keeps a `router` with a hard AI budget from ever re-billing
+    an already-reviewed bundle just because a backfill re-touches its issuer.
+
+    A bundle the router had to *defer* (budget exhausted before any model
+    attempt) produces no alert this call — it is not in the returned list,
+    and remains reachable by a future call once budget is available again.
     """
     created: list[AlertEvent] = []
     for bundle in group_evidence_into_bundles(evidence):
@@ -278,9 +300,12 @@ def synthesize_alerts_from_evidence(
             db,
             bundle=bundle,
             describe_source=describe_source,
-            llm=llm,
+            router=router,
             environment=environment,
             is_backfill=is_backfill,
+            discovery_run_id=discovery_run_id,
+            filing_monitor_run_id=filing_monitor_run_id,
         )
-        created.append(alert)
+        if alert is not None:
+            created.append(alert)
     return created

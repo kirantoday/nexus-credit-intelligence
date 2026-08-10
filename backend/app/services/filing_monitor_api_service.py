@@ -15,7 +15,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.ai.providers.base import LLMProvider
+from app.ai.model_router import ModelRouter
 from app.core.types import (
     AlertStatus,
     DetectionMethod,
@@ -293,17 +293,21 @@ def trigger_manual_run(
     backfill_days: int | None,
     environment: str,
     sec_user_agent: str,
-    llm: LLMProvider | None,
+    router: ModelRouter | None,
 ) -> FilingMonitorRunRow:
     """Admin/demo-only manual run trigger — the route layer is responsible
     for the non-production access gate (PLAN.md 24.8); this function just
-    runs the same pipeline the script uses."""
+    runs the same pipeline the script uses. `router` carries no budget by
+    default (`build_model_router`'s `AiCallBudget()` is unlimited) — an
+    interactive admin trigger isn't a batch/backfill job, so PLAN.md
+    Milestone 7.5.3's hard-budget requirement doesn't apply here the same
+    way; it still gets full Haiku/Sonnet routing and cost observability."""
     http_client = ThrottledHttpClient(user_agent=sec_user_agent)
     try:
         run = filing_monitor_service.run_monitor(
             db,
             http_client,
-            llm,
+            router,
             mode=mode,
             backfill_days=backfill_days,
             environment=environment,

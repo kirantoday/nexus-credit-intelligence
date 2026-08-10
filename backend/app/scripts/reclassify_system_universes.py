@@ -58,12 +58,11 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.ai.evidence_review import review_evidence_candidates
-from app.ai.factory import LLMConfigurationError, get_llm_provider
+from app.ai.factory import LLMConfigurationError, build_model_router
 from app.ai.llm_gate import check_send_to_llm
-from app.ai.providers.base import LLMProvider
+from app.ai.model_router import ModelRouter
 from app.config import get_settings
-from app.core.types import DataClassification, VerificationStatus
+from app.core.types import AiOperation, DataClassification, VerificationStatus
 from app.db.session import SessionLocal
 from app.domain.evidence_bundle import group_evidence_into_bundles
 from app.domain.research_evidence import ResearchEvidence
@@ -90,11 +89,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 
 def _backfill_issuer_is_subject(
-    db: Session, llm: LLMProvider | None, *, dry_run: bool
+    db: Session, router: ModelRouter | None, *, dry_run: bool
 ) -> Counter[str]:
-    """Phase 1. Returns counts by outcome for reporting."""
+    """Phase 1. Returns counts by outcome for reporting. Routed through
+    `ModelRouter` (PLAN.md Milestone 7.5.3) like every other evidence-review
+    call — a straightforward issuer-vs-third-party attribution question is
+    exactly the kind of simple, low-ambiguity task Haiku is meant to
+    handle, escalating to Sonnet only when Haiku's own confidence is low."""
     counts: Counter[str] = Counter()
-    if llm is None:
+    if router is None:
         print(
             "  SKIPPED: no LLM provider configured — existing definitive-category alerts "
             "with issuer_is_subject=NULL are left as-is (classify_issuer falls back to "
@@ -156,14 +159,18 @@ def _backfill_issuer_is_subject(
                     db, alert.evidence_ids
                 )
                 candidates = [evidence_to_candidate(e) for e in full_bundle_evidence]
-                result = review_evidence_candidates(
-                    llm,
+                routed = router.review_evidence(
+                    db,
+                    issuer_id=issuer_id,
                     issuer_name=issuer.legal_name,
                     source_description=alert.primary_source_label,
                     candidates=candidates,
+                    bundle_key=bundle_key,
+                    operation=AiOperation.RECLASSIFY_ISSUER_IS_SUBJECT,
                 )
+                result = routed.result
                 if result is None:
-                    counts["ai_review_failed"] += 1
+                    counts["ai_review_failed_or_deferred"] += 1
                     continue
 
                 if not dry_run:
@@ -260,10 +267,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        llm = get_llm_provider(settings)
+        router = build_model_router(settings)
         print(f"AI evidence review: enabled (LLM_PROVIDER={settings.llm_provider}).")
     except LLMConfigurationError as exc:
-        llm = None
+        router = None
         print(f"AI evidence review: disabled ({exc}).")
 
     if args.dry_run:
@@ -275,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
         db.commit()
 
         print("Phase 1: backfilling issuer_is_subject for existing definitive-evidence alerts...")
-        backfill_counts = _backfill_issuer_is_subject(db, llm, dry_run=args.dry_run)
+        backfill_counts = _backfill_issuer_is_subject(db, router, dry_run=args.dry_run)
         for outcome, count in sorted(backfill_counts.items()):
             print(f"  {outcome}: {count}")
 

@@ -406,3 +406,25 @@ class CourtDocketLinkMatchOutcome(StrEnum):
 ISSUER_LEVEL_ENRICHMENT_PROVIDERS: frozenset[ProviderName] = frozenset(
     {ProviderName.SEC_EDGAR, ProviderName.COURTLISTENER, ProviderName.OPENFIGI}
 )
+
+
+# --- Milestone 7.5.3: AI cost control, observability, model routing ---
+
+
+class AiRoute(StrEnum):
+    """The model tier `app.ai.model_router` actually used (or chose not to
+    use) for one evidence-review decision. `DETERMINISTIC` means no
+    Anthropic call was made at all — not even Haiku."""
+
+    DETERMINISTIC = "deterministic"
+    HAIKU = "haiku"
+    SONNET = "sonnet"
+
+
+class AiOperation(StrEnum):
+    """`ai_call_log.operation` — the AI task being performed, independent of
+    which model handled it. New operations are added here, never inferred
+    from a free-text string, so cost-by-operation reporting stays exact."""
+
+    EVIDENCE_REVIEW = "evidence_review"
+    RECLASSIFY_ISSUER_IS_SUBJECT = "reclassify_issuer_is_subject"

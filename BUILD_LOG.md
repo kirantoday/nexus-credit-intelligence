@@ -5421,3 +5421,310 @@ follow-up)
 `morning_brief_view` removal and migration, full test suite rewrite,
 documentation, full verification pass, deployment, and live production
 browser verification).
+
+---
+
+## 2026-08-09 — Milestone 7.5.3: Historical Discovery Coverage Repair — three live incidents, AI cost-control correction (backfill itself not yet completed)
+
+**Summary**
+
+Milestone 7.5.3 set out to re-run the 2026-01-01→2026-08-06 historical
+discovery window with TD-014's corrected SEC full-text-search `forms`
+behavior active. Three live attempts against production (all 2026-08-09)
+each ended in a real incident rather than completion, and the milestone
+is paused, by explicit user direction, before the historical backfill
+itself — this entry documents the incidents, the CourtListener fix, and
+the substantial AI cost-control/observability/routing correction built
+and tested in response. **The Jan–Aug backfill has not yet run to
+completion.**
+
+**Incident 1 — a launch-time operator error (self-resolved, no data risk)**
+
+The first launch attempt appeared as two concurrent `python.exe`
+processes under Task Manager (a git-bash `$!` PID-tracking artifact, not
+a real duplicate worker — confirmed later to be a normal parent-launcher/
+child-worker pair for this venv). Killed out of caution; verified via
+direct query that only 6 candidates were actually processed under that
+run id before termination, zero duplicate `(cik, accession_no)` pairs or
+duplicate issuer CIKs anywhere in the database. The run row was closed
+out honestly as `failed` with the real reconstructed counts (not zeros)
+in its `error_summary`, matching this project's established "never
+silently drop from the record" discipline. Relaunched cleanly.
+
+**Incident 2 — the real CourtListener `Retry-After` defect**
+
+The relaunched run hung for 39+ minutes with zero CPU movement and an
+`idle in transaction` database connection. Initially suspected — at the
+user's explicit prompt — as a Windows sleep/Modern-Standby artifact;
+investigated via Windows event logs (no `Kernel-Power` sleep/wake events,
+no reboot, sleep already disabled on the active power plan) and mitigated
+with an explicit keep-awake helper (`SetThreadExecutionState`) before
+relaunching a third time. The same stall reproduced identically with the
+machine confirmed awake throughout, ruling out the environmental
+explanation. A live `py-spy dump --pid <child> --locals` (installed
+one-off for this diagnosis) captured the exact stack: the process was
+inside `ThrottledHttpClient.get()`'s `time.sleep(self._retry_after_seconds(response))`
+call, mid-retry against CourtListener's docket search after a `429`.
+Root cause: `_retry_after_seconds` did a bare `float(header_value)` with
+no upper bound — CourtListener's `Retry-After` header, whatever value it
+actually sent, was trusted verbatim, and nothing capped the resulting
+`time.sleep()`. **Fixed** (`backend/app/providers/base/http_client.py`):
+RFC 7231-correct parsing of both valid `Retry-After` forms (delta-seconds
+and HTTP-date, via `email.utils.parsedate_to_datetime`), plus a new hard,
+configurable `max_retry_after_seconds` ceiling (`Settings.courtlistener_retry_after_max_seconds`,
+default 60s) — beyond it, `get()` raises `RetryAfterTooLongError` instead
+of sleeping. This project's existing per-issuer/per-provider isolation
+(`enrichment_orchestrator.enrich_issuer`'s try/except) already converts
+that into a `FAILED_RETRYABLE` status with a `next_retry_at`, so a
+CourtListener stall can never again block the rest of a discovery batch.
+9 regression tests added (normal/malformed/huge/HTTP-date/repeated-429),
+including a live proof that a pathological `Retry-After` value now raises
+in <1 second instead of sleeping for hours. The exact value CourtListener
+actually sent during the real incident was never captured (the process
+was killed via `py-spy`+`Stop-Process`, not instrumented mid-flight) —
+recorded as TD-020, resolved by the ceiling regardless.
+
+**Incident 3 — the user paused the milestone for AI cost control**
+
+With the CourtListener fix applied, a fourth relaunch was in progress
+(and itself hit the identical hang pattern a second time, still under
+investigation) when the user paused Milestone 7.5.3 entirely: this
+project's Anthropic spend had zero call/token/cost observability (TD-016,
+open until this entry) and used Sonnet unconditionally for every AI
+review regardless of task complexity — a historical repair over a
+~600-candidate window could legitimately generate large, unbounded, and
+completely unmonitored AI spend. The user required a full audit,
+observability, hard budgets, and complexity-based Haiku/Sonnet routing
+before any further live run.
+
+**AI call-path audit (verified from code, not assumed)**
+
+Traced every path that can reach `llm.complete()`. Exactly one function —
+`app.ai.evidence_review.review_evidence_candidates` — ever calls it.
+Exactly two real call sites existed before this correction:
+
+1. `alert_synthesis_service.synthesize_alerts_from_evidence` (via
+   `_synthesize_one_alert`) — gated by (a) `alert_repository.get_alert_by_bundle_key`
+   (an already-alerted bundle is skipped before any AI involvement — the
+   pre-existing idempotency guarantee that also protects against
+   duplicate spend on a re-run) and (b) `check_send_to_llm` (licensed-data
+   policy gate). Reached from **every** real workflow that creates
+   evidence: `market_discovery_service.run_discovery` (discovery/backfill),
+   `filing_monitor_service.run_monitor` (nightly monitor),
+   `court_docket_service.sync_one_docket` (CourtListener docket sync,
+   itself called from `attempt_auto_link` during enrichment and from the
+   standalone `sync_court_dockets.py`/`link_court_dockets.py` scripts).
+2. `app.scripts.reclassify_system_universes` — a one-off maintenance
+   script (already run once for Milestone 7.5.1) that backfills
+   `alert_event.issuer_is_subject` for pre-7.5.1 alerts, gated by
+   "already backfilled" + the same policy gate.
+
+**One real path was missed on the first audit pass and caught during
+implementation**: `POST /api/filing-monitor/runs/trigger`
+(`app/api/routes/filing_monitor.py`), an admin/demo-only, non-production-gated
+endpoint that manually triggers `filing_monitor_service.run_monitor` —
+constructed its own `LLMProvider` via `get_llm_provider` exactly like the
+CLI scripts, and needed the identical `router` rewiring. Recorded here
+honestly rather than silently absorbed into "the audit was complete."
+
+**Built: `app/ai/model_router.py` — deterministic → Haiku → Sonnet routing**
+
+- `ModelRouter.review_evidence`: (1) a deterministic floor — if every
+  candidate's own Layer-1 confidence is below `ai_deterministic_confidence_floor`
+  (default 0.5), no model is called at all; today's calibrated Layer-1
+  rules all sit at ≥0.5, so this is currently a no-op against real data,
+  not a lever tuned to cut recall — infrastructure for the future, tested
+  honestly as such. (2) Definitive/high-impact categories
+  (`universe_classification_service.definitive_evidence_types()` —
+  Chapter 11, bankruptcy/receivership, plan-confirmed) go **straight to
+  Sonnet, never through Haiku at all** — see the quality-validation
+  finding below for why. (3) Everything else: Haiku first, escalating to
+  Sonnet (bounded to exactly one attempt) only when Haiku's own call
+  fails/returns unparseable JSON, or its reported `confidence` is below
+  `ai_haiku_confidence_threshold` (default 0.75).
+- `AiCallBudget`: one mutable tracker per run — `max_calls`/`max_cost_usd`/
+  `max_sonnet_calls`, `None` = unlimited. `can_call()` is checked
+  immediately before every provider call inside `ModelRouter`, never
+  delegated to a caller, so no code path can bypass it. Once exhausted,
+  a bundle that genuinely needed AI is `deferred` (no alert created at
+  all, not a low-confidence deterministic alert masquerading as
+  reviewed) — `alert_synthesis_service._synthesize_one_alert` now returns
+  `None` in that case, and `synthesize_alerts_from_evidence` simply
+  omits it from the created list, leaving it reachable by a future run
+  with fresh budget via the same `bundle_key` idempotency check.
+  Already-completed deterministic work is never rolled back.
+- Model ids are entirely settings-driven (`Settings.ai_haiku_model_id`,
+  `ai_sonnet_model_id`) — never hardcoded in business logic.
+  `Settings.ai_routing_enabled=False` collapses to Sonnet-only (no Haiku
+  attempt ever made), still fully budgeted and logged.
+- New `ai_call_log` table (migration `0014`) — one row per real Anthropic
+  request: model, route, routing reason, issuer/bundle id, input/output
+  tokens, estimated cost (`app/ai/pricing.py`, an explicitly maintained,
+  clearly-labeled-as-estimate model-pricing table), latency, success/
+  failure, retry count, timestamp. `discovery_run_id`/`filing_monitor_run_id`
+  are both nullable FKs (mirrors ADR-018's nullable-per-provider-FK
+  pattern) — a call made outside either run context (the reclassify
+  script) leaves both null. `ai_call_log_repository.aggregate_for_discovery_run`
+  is the sole source of run-level usage reporting; nothing is duplicated
+  onto `market_discovery_run` itself.
+- `run_market_discovery.py`: new `--ai-mode {full,zero}` (zero-AI mode
+  runs the full deterministic pipeline — SEC discovery, issuer
+  resolution, filing ingestion, Layer-1 evidence extraction — with zero
+  Anthropic calls, implemented as a `ModelRouter` with both providers
+  `None`, so every AI-needing bundle is `deferred` rather than
+  downgraded), `--max-ai-calls`/`--max-ai-cost-usd`/`--max-sonnet-calls`,
+  and `--estimate-only` (a pre-run report using a sample of already-
+  persisted `research_evidence.confidence` values to estimate "bundles
+  needing no AI" vs. "bundles that would reach model review" — explicitly
+  labeled a sample from existing data, never a precise forecast of a
+  specific future live search's volume). Every run now prints full AI
+  usage (total/Haiku/Sonnet calls, tokens, cost by model/operation,
+  budget-blocked/deferred counts).
+
+**Live quality validation — two real bugs found and fixed before any
+production use**
+
+Per explicit instruction, compared representative real production
+Sonnet-reviewed alerts against the new routing behavior (7 cases: Chapter
+11 true positive, Chapter 11 third-party false positive, going concern,
+covenant/default stress, refinancing, liability-management, ambiguous
+attribution) using real Anthropic calls (~$0.036 total, logged to
+`ai_call_log` like any other real call):
+
+1. **Haiku wraps JSON in a markdown code fence** despite the system
+   prompt's explicit "no markdown" instruction — all 7 cases failed to
+   parse on the first pass. Sonnet does not exhibit this. Would have
+   made Haiku fail 100% of the time in production, silently escalating
+   every single call to Sonnet and defeating the entire cost-saving
+   purpose. **Fixed**: `app/ai/evidence_review.py` now strips a leading/
+   trailing ` ``` ` fence (with or without a language tag) before
+   `json.loads`.
+2. **Haiku confidently (0.98) misclassified the Chapter 11 third-party
+   case** — the exact EchoStar-subsidiaries-style attribution error
+   Milestone 7.5.1 was built to catch — at a confidence above even the
+   originally-planned stricter high-impact threshold, meaning a pure
+   confidence-threshold escalation policy would not have caught it.
+   **Corrected the policy**: high-impact categories now bypass Haiku
+   entirely (see above) rather than trusting any Haiku confidence value.
+   Re-validated after the fix: the same case now reaches Sonnet — but a
+   **fresh Sonnet call also returned the same (arguably wrong, or at
+   least differently-judged) answer** as the errant Haiku call, disagreeing
+   with the original stored value. This means the mismatch is not a
+   Haiku-specific reliability gap but genuine model non-determinism on a
+   legitimately hard nested-subsidiary attribution judgment call — the
+   routing correction (never trust Haiku on this category) is still the
+   right conservative default, but does not fully close the underlying
+   instability. Recorded honestly as TD-021, not overclaimed as fixed.
+
+The other 5 of 7 cases matched the original Sonnet judgment correctly
+(going concern, refinancing, liability-management, ambiguous-attribution
+— which correctly escalated to Sonnet under the new policy — and the
+Chapter 11 true positive).
+
+**Files Created**
+
+- `backend/alembic/versions/0014_ai_call_log.py`
+- `backend/app/ai/model_router.py`, `backend/app/ai/pricing.py`
+- `backend/app/domain/ai_call_log.py`, `backend/app/models/ai_call_log.py`,
+  `backend/app/repositories/ai_call_log_repository.py`
+- `backend/tests/integration/test_model_router.py` (13 tests),
+  `backend/tests/unit/test_http_client_retry_after.py` (9 tests)
+
+**Files Modified**
+
+- `backend/app/config.py` — new AI routing/budget/CourtListener-ceiling settings.
+- `backend/app/core/types.py` — `AiRoute`, `AiOperation` enums.
+- `backend/app/providers/base/http_client.py` — `RetryAfterTooLongError`,
+  RFC 7231-correct `Retry-After` parsing, `max_retry_after_seconds`.
+- `backend/app/providers/courtlistener/client.py` — threads the ceiling through.
+- `backend/app/ai/evidence_review.py` — markdown-fence stripping.
+- `backend/app/ai/providers/base.py`, `backend/app/ai/providers/anthropic_provider.py` —
+  `CompletionResponse.input_tokens`/`output_tokens`.
+- `backend/app/ai/factory.py` — `get_llm_provider(..., model=...)` override,
+  new `build_model_router`.
+- `backend/app/services/alert_synthesis_service.py`,
+  `backend/app/services/market_discovery_service.py`,
+  `backend/app/services/filing_monitor_service.py`,
+  `backend/app/services/court_docket_service.py`,
+  `backend/app/services/enrichment_orchestrator.py`,
+  `backend/app/services/filing_monitor_api_service.py`,
+  `backend/app/api/routes/filing_monitor.py` — `llm: LLMProvider | None`
+  replaced with `router: ModelRouter | None` throughout; `discovery_run_id`/
+  `filing_monitor_run_id` threaded through for `ai_call_log` attribution.
+- `backend/app/scripts/run_market_discovery.py` — full CLI rewrite (AI
+  mode, budgets, estimate, usage reporting).
+- `backend/app/scripts/run_overnight_filing_monitor.py`,
+  `backend/app/scripts/sync_court_dockets.py`,
+  `backend/app/scripts/link_court_dockets.py`,
+  `backend/app/scripts/reclassify_system_universes.py` — routed through
+  `build_model_router` instead of `get_llm_provider` directly.
+- `backend/app/repositories/research_evidence_repository.py` —
+  `sample_confidence_values` (pre-run estimate data source).
+- `backend/tests/integration/test_market_discovery_service.py` — one
+  existing test's fake `enrich_issuer_fn` updated for the new
+  `discovery_run_id` keyword (caught by a full-suite rerun, not missed).
+
+**Database Changes**
+
+Migration `0014`: new `ai_call_log` table. Applied live against the
+shared Supabase project; `alembic check` confirms zero drift.
+
+**Tests Added**
+
+22 new tests (13 `test_model_router.py`, 9 `test_http_client_retry_after.py`)
+covering: deterministic floor, Haiku-only, confident-Haiku-skips-Sonnet,
+ambiguous-Haiku-escalates, high-impact-always-Sonnet, failed-Haiku-escalates,
+call/dollar/Sonnet-call budget enforcement, zero-AI mode, `ai_call_log`
+field correctness, the reclassify operation logged distinctly,
+already-reviewed-bundle makes zero further calls, and Retry-After
+normal/malformed/huge/HTTP-date/repeated-429/ceiling-enforcement cases.
+
+**Test Results**
+
+Full backend suite: 418 passed (396 → 418, +22), including one real
+regression caught by the full rerun (a pre-existing test's fake
+`enrich_issuer_fn` needed the new `discovery_run_id` keyword — fixed).
+`ruff check` / `black --check` / `mypy app` (159 source files) — clean.
+`alembic check` — zero drift. Backend boots (24 routes, unchanged — this
+correction is entirely backend, no frontend files touched).
+
+**Problems Encountered**
+
+Documented in full above (the launch-time PID artifact, the CourtListener
+`Retry-After` stall, the two real bugs caught by live quality validation).
+A meta-observation: three of this session's real findings — the
+CourtListener stall's true cause, the Haiku markdown-fence bug, and the
+Sonnet-also-disagrees subsidiary-attribution case — were each invisible
+to static analysis, a passing test suite, or an initial design review,
+and were only surfaced by actually running the real thing (a live
+`py-spy` stack capture; a real Haiku API call; a real Sonnet API call)
+and checking its output against ground truth rather than trusting the
+design's own reasoning. Consistent with this project's recurring
+discipline, restated once more.
+
+**Remaining Work**
+
+- The 2026-01-01→2026-08-06 historical backfill itself has **not yet
+  run to completion** — this entry documents preparatory/corrective work
+  only. Awaiting explicit user approval of an AI budget before restarting.
+- TD-020 (CourtListener `Retry-After` defect): resolved by the fix; the
+  exact value CourtListener sent during the live incident was never
+  captured.
+- TD-021 (model non-determinism on nested-subsidiary attribution): open,
+  a product-policy question, not purely an engineering one.
+- FAT Brands and Inotiv (2 of the 4 originally-cited TD-014 benchmark
+  issuers) had not yet been discovered as of the last partial run;
+  Bitcoin Depot Inc. and GoHealth, Inc. were confirmed found.
+- Milestone 7.5.4/7.6/Milestone 8 explicitly not to begin.
+
+**Git Commit Hash**
+
+`(recorded in a follow-up commit)`
+
+**Approximate Time Spent**
+
+~5 hours (three live incident investigations and recoveries, CourtListener
+root-cause via `py-spy` and fix, full AI call-path audit, model-routing/
+budget/observability design and implementation across ~20 files, live
+quality validation with two real bugs found and fixed, 22 new tests,
+full verification pass, documentation).

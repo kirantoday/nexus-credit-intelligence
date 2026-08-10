@@ -44,7 +44,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.ai.providers.base import LLMProvider
+from app.ai.model_router import ModelRouter
 from app.core.distress_rules import MARKET_DISCOVERY_FULL_TEXT_QUERIES
 from app.core.issuer_resolver import IssuerResolutionResult, resolve_issuer_identity_by_cik
 from app.core.types import (
@@ -171,17 +171,18 @@ class EnrichIssuerFn(Protocol):
         db: Session,
         issuer_id: UUID,
         clients: EnrichmentClients,
-        llm: LLMProvider | None,
+        router: ModelRouter | None,
         *,
         environment: str,
         force: bool,
+        discovery_run_id: UUID | None = None,
     ) -> object: ...
 
 
 def run_discovery(
     db: Session,
     http_client: ThrottledHttpClient,
-    llm: LLMProvider | None,
+    router: ModelRouter | None,
     *,
     mode: FilingMonitorRunMode,
     window_start: date | None = None,
@@ -381,9 +382,10 @@ def run_discovery(
                                         db,
                                         evidence=processing_result.evidence,
                                         describe_source=lambda e: describe_sec_source(db, e),
-                                        llm=llm,
+                                        router=router,
                                         environment=environment,
                                         is_backfill=(mode is FilingMonitorRunMode.BACKFILL),
+                                        discovery_run_id=run.id,
                                     )
                                 )
                                 alerts_created += len(new_alerts)
@@ -436,9 +438,10 @@ def run_discovery(
                                     db,
                                     issuer_id,
                                     enrichment_clients,
-                                    llm,
+                                    router,
                                     environment=environment,
                                     force=False,
+                                    discovery_run_id=run.id,
                                 )
                         except Exception as exc:  # noqa: BLE001 - per-issuer isolation
                             db.rollback()

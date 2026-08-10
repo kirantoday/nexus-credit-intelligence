@@ -32,7 +32,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from app.ai.factory import LLMConfigurationError, get_llm_provider
+from app.ai.factory import LLMConfigurationError, build_model_router
 from app.config import get_settings
 from app.db.session import SessionLocal
 from app.providers.courtlistener.client import build_http_client
@@ -62,10 +62,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        llm = get_llm_provider(settings)
+        router = build_model_router(settings)
         print(f"AI evidence review: enabled (LLM_PROVIDER={settings.llm_provider}).")
     except LLMConfigurationError as exc:
-        llm = None
+        router = None
         print(
             f"AI evidence review: disabled ({exc}). Running deterministic-only — this is a "
             "supported, fully operational mode, not a degraded one."
@@ -74,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     http_client = build_http_client(
         user_agent="nexus-credit-intelligence-research (sync_court_dockets)",
         api_token=settings.courtlistener_api_token,
+        max_retry_after_seconds=settings.courtlistener_retry_after_max_seconds,
     )
     db = SessionLocal()
 
@@ -89,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
                 result = court_docket_service.sync_one_docket(
                     db,
                     http_client,
-                    llm,
+                    router,
                     docket=docket,
                     environment=settings.environment,
                     is_backfill=args.backfill,

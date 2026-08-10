@@ -34,6 +34,10 @@ class CompletionResponse:
     text: str
     model: str
     stop_reason: str | None = None
+    # `None` for a provider/response shape that doesn't report usage — a
+    # caller must not treat that as zero tokens (see app.ai.pricing).
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 class LLMProvider(Protocol):

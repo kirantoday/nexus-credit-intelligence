@@ -263,10 +263,11 @@ def test_resolved_issuer_automatically_enters_enrichment_pipeline(db_session: Se
         db: Session,
         called_issuer_id: UUID,
         clients: object,
-        llm: object,
+        router: object,
         *,
         environment: str,
         force: bool,
+        discovery_run_id: UUID | None = None,
     ) -> dict[str, str]:
         enrich_calls.append(called_issuer_id)
         return {}
