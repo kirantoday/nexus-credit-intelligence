@@ -1,21 +1,27 @@
 import type { ReactElement, ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import { CreditUniversePage } from "./CreditUniversePage";
 import * as creditUniverseApi from "../api/creditUniverse";
 import type { CreditUniversePage as CreditUniversePageResponse } from "../api/creditUniverse";
 import * as marketContextApi from "../api/marketContext";
+import * as researchUniverseApi from "../api/researchUniverse";
+import type {
+  ResearchUniverseIssuersResponse,
+  ResearchUniverseSummary,
+} from "../api/researchUniverse";
 
-function renderWithProviders(ui: ReactElement): void {
+function renderWithProviders(ui: ReactElement, initialEntries: string[] = ["/"]): void {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   function Wrapper({ children }: { children: ReactNode }) {
     return (
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter>{children}</MemoryRouter>
+        <MemoryRouter initialEntries={initialEntries}>{children}</MemoryRouter>
       </QueryClientProvider>
     );
   }
@@ -107,5 +113,118 @@ describe("CreditUniversePage", () => {
     await waitFor(() => {
       expect(screen.getByText(/Could not load the Credit Universe/)).toBeInTheDocument();
     });
+  });
+
+  // PLAN.md Milestone 7.5.3 CFO-demo fix: Research Universe membership is
+  // issuer-level, Credit Universe is security-level — a universe with real
+  // issuer members that simply have no securities loaded must show an
+  // honest explanation with links to those issuers, never the generic
+  // "No securities in the Credit Universe yet" message (which reads as a
+  // bug, not a legitimate data state).
+  it("shows an honest explanation with issuer links when a universe's members have no securities", async () => {
+    const universeSummary: ResearchUniverseSummary = {
+      id: "universe-1",
+      slug: "consumer-retail",
+      name: "Consumer & Retail",
+      description: "Consumer and retail sector issuers.",
+      collection_type: "research_universe",
+      scope: "organization",
+      visibility: "public",
+      curation_method: "manual_curated",
+      verification_status: "verified",
+      last_verified_at: null,
+      priority: null,
+      issuer_count: 2,
+    };
+    const universeIssuers: ResearchUniverseIssuersResponse = {
+      universe: universeSummary,
+      issuers: [
+        {
+          issuer_id: "iss-carvana",
+          issuer_legal_name: "Carvana Co.",
+          issuer_ticker: "CVNA",
+          rationale: "Consumer & retail sector.",
+          rationale_as_of_date: null,
+          verification_status: "verified",
+          added_at: "2026-08-01T00:00:00Z",
+          system_seeded: false,
+        },
+        {
+          issuer_id: "iss-amc",
+          issuer_legal_name: "AMC Entertainment Holdings, Inc.",
+          issuer_ticker: "AMC",
+          rationale: "Consumer & retail sector.",
+          rationale_as_of_date: null,
+          verification_status: "verified",
+          added_at: "2026-08-01T00:00:00Z",
+          system_seeded: false,
+        },
+      ],
+    };
+    vi.spyOn(creditUniverseApi, "fetchCreditUniverse").mockResolvedValue({
+      rows: [],
+      total: 0,
+      page: 1,
+      page_size: 25,
+    });
+    vi.spyOn(marketContextApi, "fetchMarketContext").mockResolvedValue(EMPTY_MARKET_CONTEXT);
+    vi.spyOn(researchUniverseApi, "fetchResearchUniverse").mockResolvedValue(universeSummary);
+    vi.spyOn(researchUniverseApi, "fetchResearchUniverseIssuers").mockResolvedValue(
+      universeIssuers,
+    );
+
+    renderWithProviders(<CreditUniversePage />, ["/?universe=universe-1"]);
+
+    await waitFor(() => {
+      expect(screen.getByText(/2 issuers belong to/)).toBeInTheDocument();
+    });
+    expect(screen.getByText("Consumer & Retail")).toBeInTheDocument();
+    expect(screen.getByText(/Carvana Co\. \(CVNA\)/)).toBeInTheDocument();
+    expect(screen.getByText(/AMC Entertainment Holdings, Inc\. \(AMC\)/)).toBeInTheDocument();
+    // The generic empty message must not also render alongside the honest one.
+    expect(screen.queryByText("No securities in the Credit Universe yet.")).not.toBeInTheDocument();
+  });
+
+  it("clearing the universe filter chip restores the normal unfiltered Credit Universe", async () => {
+    const universeSummary: ResearchUniverseSummary = {
+      id: "universe-1",
+      slug: "chapter-11-bankruptcy",
+      name: "Chapter 11 / Bankruptcy",
+      description: "Issuers in active Chapter 11 proceedings.",
+      collection_type: "research_universe",
+      scope: "organization",
+      visibility: "public",
+      curation_method: "manual_curated",
+      verification_status: "verified",
+      last_verified_at: null,
+      priority: "critical",
+      issuer_count: 1,
+    };
+    const fetchSpy = vi
+      .spyOn(creditUniverseApi, "fetchCreditUniverse")
+      .mockResolvedValue(ONE_ROW_RESPONSE);
+    vi.spyOn(marketContextApi, "fetchMarketContext").mockResolvedValue(EMPTY_MARKET_CONTEXT);
+    vi.spyOn(researchUniverseApi, "fetchResearchUniverse").mockResolvedValue(universeSummary);
+    vi.spyOn(researchUniverseApi, "fetchResearchUniverseIssuers").mockResolvedValue({
+      universe: universeSummary,
+      issuers: [],
+    });
+
+    renderWithProviders(<CreditUniversePage />, ["/?universe=universe-1"]);
+
+    await waitFor(() => {
+      expect(screen.getByText("Universe: Chapter 11 / Bankruptcy")).toBeInTheDocument();
+    });
+    expect(fetchSpy).toHaveBeenCalledWith(expect.objectContaining({ universeId: "universe-1" }));
+
+    // MUI Chip's onDelete fires from its own delete icon (not the chip
+    // label) — MUI's built-in icons set `data-testid` to their component
+    // name automatically.
+    await userEvent.click(screen.getByTestId("CancelIcon"));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Universe: Chapter 11 / Bankruptcy")).not.toBeInTheDocument();
+    });
+    expect(fetchSpy).toHaveBeenLastCalledWith(expect.objectContaining({ universeId: undefined }));
   });
 });

@@ -21,7 +21,7 @@ import { MarketContextPanel } from "../components/MarketContextPanel";
 import { ProvenanceBadge } from "../components/ProvenanceBadge";
 import { SyntheticDataBadge } from "../components/SyntheticDataBadge";
 import { useCreditUniverse } from "../queries/useCreditUniverse";
-import { useResearchUniverse } from "../queries/useResearchUniverses";
+import { useResearchUniverse, useResearchUniverseIssuers } from "../queries/useResearchUniverses";
 import type {
   CreditUniverseRow,
   CreditUniverseSortField,
@@ -71,6 +71,14 @@ export function CreditUniversePage(): ReactElement {
   // Milestone 6.5 (PLAN.md 24.9): clicking a Research Universe opens Credit
   // Universe pre-filtered to it via this `universe` URL param.
   const universeQuery = useResearchUniverse(universeId);
+  // Milestone 7.5.3 CFO-demo fix: Research Universe membership is
+  // issuer-level, Credit Universe is security-level — a universe can have
+  // real issuer members that simply have no securities loaded yet (e.g. no
+  // OpenFIGI match). That is a legitimate state, not a bug, but the
+  // generic "No securities in the Credit Universe yet" message reads as
+  // one. Only fetched when a universe filter is active, so this costs
+  // nothing on the normal unfiltered page.
+  const universeIssuersQuery = useResearchUniverseIssuers(universeId);
 
   function updateParams(updates: Record<string, string | null>): void {
     const next = new URLSearchParams(searchParams);
@@ -317,6 +325,46 @@ export function CreditUniversePage(): ReactElement {
         </Alert>
       )}
 
+      {universeId &&
+        data &&
+        data.total === 0 &&
+        !isLoading &&
+        !isFetching &&
+        !debouncedSearch &&
+        !instrumentType &&
+        !syntheticFilter &&
+        (universeIssuersQuery.data ? (
+          universeIssuersQuery.data.issuers.length === 0 ? (
+            <Alert severity="info">
+              {universeQuery.data?.name ?? "This Research Universe"} has no issuer members yet.
+            </Alert>
+          ) : (
+            <Alert severity="info">
+              <Typography variant="body2" gutterBottom>
+                {universeIssuersQuery.data.issuers.length} issuer
+                {universeIssuersQuery.data.issuers.length === 1 ? "" : "s"} belong
+                {universeIssuersQuery.data.issuers.length === 1 ? "s" : ""} to{" "}
+                <strong>{universeQuery.data?.name ?? "this Research Universe"}</strong>, but Nexus
+                currently has no securities loaded for{" "}
+                {universeIssuersQuery.data.issuers.length === 1 ? "this issuer" : "these issuers"}.
+              </Typography>
+              <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap>
+                {universeIssuersQuery.data.issuers.map((issuer) => (
+                  <Link
+                    key={issuer.issuer_id}
+                    component={RouterLink}
+                    to={`/issuers/${issuer.issuer_id}`}
+                    underline="hover"
+                  >
+                    {issuer.issuer_legal_name}
+                    {issuer.issuer_ticker ? ` (${issuer.issuer_ticker})` : ""}
+                  </Link>
+                ))}
+              </Stack>
+            </Alert>
+          )
+        ) : null)}
+
       <Paper variant="outlined">
         <DataTable
           data={data?.rows ?? []}
@@ -337,7 +385,9 @@ export function CreditUniversePage(): ReactElement {
           emptyMessage={
             debouncedSearch || instrumentType || syntheticFilter
               ? "No securities match these filters."
-              : "No securities in the Credit Universe yet."
+              : universeId
+                ? "No securities for this Research Universe's members."
+                : "No securities in the Credit Universe yet."
           }
         />
         {data && (

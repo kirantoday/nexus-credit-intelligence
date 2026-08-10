@@ -3,7 +3,6 @@ import { Link as RouterLink, Outlet, useLocation } from "react-router";
 import {
   AppBar,
   Box,
-  Chip,
   Drawer,
   List,
   ListItemButton,
@@ -21,8 +20,12 @@ interface NavItem {
 }
 
 // Credit Universe is the landing page (ADR-008) — every other item is wired
-// up for real as its milestone lands (PLAN.md section 18); disabled items
-// stay visible so the eventual product surface is legible from day one.
+// up for real as its milestone lands (PLAN.md section 18). The roadmap list
+// itself is kept intact (nothing here is deleted, no routes/components
+// removed) — only rendering of not-yet-built items is temporarily hidden
+// from the nav for a clean demo presentation (PLAN.md Milestone 7.5.3
+// CFO-demo pass). Re-enable by removing the `.filter` below when ready to
+// show the roadmap again.
 const NAV_ITEMS: NavItem[] = [
   { label: "Credit Universe", path: "/", enabled: true },
   { label: "Research Universes", path: "/research-universes", enabled: true },
@@ -35,6 +38,8 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Alerts", path: "/alerts", enabled: false },
   { label: "Research Assistant", path: "/assistant", enabled: false },
 ];
+
+const VISIBLE_NAV_ITEMS: NavItem[] = NAV_ITEMS.filter((item) => item.enabled);
 
 export function Layout(): ReactElement {
   const location = useLocation();
@@ -58,23 +63,16 @@ export function Layout(): ReactElement {
       >
         <Toolbar />
         <List>
-          {NAV_ITEMS.map((item) =>
-            item.enabled ? (
-              <ListItemButton
-                key={item.path}
-                component={RouterLink}
-                to={item.path}
-                selected={location.pathname === item.path}
-              >
-                <ListItemText primary={item.label} />
-              </ListItemButton>
-            ) : (
-              <ListItemButton key={item.path} disabled>
-                <ListItemText primary={item.label} />
-                <Chip label="Soon" size="small" variant="outlined" />
-              </ListItemButton>
-            ),
-          )}
+          {VISIBLE_NAV_ITEMS.map((item) => (
+            <ListItemButton
+              key={item.path}
+              component={RouterLink}
+              to={item.path}
+              selected={location.pathname === item.path}
+            >
+              <ListItemText primary={item.label} />
+            </ListItemButton>
+          ))}
         </List>
       </Drawer>
       <Box component="main" sx={{ flexGrow: 1, p: 3 }}>

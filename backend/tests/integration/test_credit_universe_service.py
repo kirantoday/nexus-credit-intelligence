@@ -183,6 +183,110 @@ def test_get_credit_universe_page_filters_by_universe(db_session: Session) -> No
     assert page.rows[0].issuer_legal_name == "Universe Filter Test Issuer In"
 
 
+def test_get_credit_universe_page_universe_filter_aggregates_multiple_member_issuers(
+    db_session: Session,
+) -> None:
+    """PLAN.md Milestone 7.5.3 CFO-demo fix: a universe with several member
+    issuers must surface securities from *all* of them, not just one —
+    the earlier single-issuer test alone wouldn't catch a query that only
+    happened to work for a single membership row."""
+    provenance = provenance_repository.create_provenance(db_session, reported_public_provenance())
+    issuer_one = issuer_repository.create_issuer(
+        db_session,
+        IssuerCreate(legal_name="Universe Multi Test Issuer One", provenance_id=provenance.id),
+    )
+    issuer_two = issuer_repository.create_issuer(
+        db_session,
+        IssuerCreate(legal_name="Universe Multi Test Issuer Two", provenance_id=provenance.id),
+    )
+    for issuer in (issuer_one, issuer_two):
+        security_repository.create_security(
+            db_session,
+            SecurityCreate(
+                issuer_id=issuer.id,
+                instrument_type=InstrumentType.BOND,
+                description=f"{issuer.legal_name} — Test Bond",
+                maturity_date=date(2030, 1, 1),
+                amount_outstanding=Decimal("100000000"),
+                provenance_id=provenance.id,
+            ),
+        )
+
+    collection = collection_repository.create_collection(
+        db_session,
+        CollectionCreate(
+            slug="test-credit-universe-filter-multi",
+            name="Test Credit Universe Filter Multi",
+            description="Seeded for a credit_universe_service test.",
+            collection_type=CollectionType.RESEARCH_UNIVERSE,
+            scope=CollectionScope.ORGANIZATION,
+            visibility=CollectionVisibility.PUBLIC,
+            curation_method=CurationMethod.SYSTEM_SEEDED,
+            verification_status=VerificationStatus.VERIFIED,
+        ),
+    )
+    for issuer in (issuer_one, issuer_two):
+        collection_repository.add_membership(
+            db_session,
+            CollectionMembershipCreate(
+                collection_id=collection.id,
+                issuer_id=issuer.id,
+                rationale="Test membership.",
+                verification_status=VerificationStatus.VERIFIED,
+            ),
+        )
+
+    page = credit_universe_service.get_credit_universe_page(db_session, universe_id=collection.id)
+
+    assert page.total == 2
+    returned_names = {row.issuer_legal_name for row in page.rows}
+    assert returned_names == {"Universe Multi Test Issuer One", "Universe Multi Test Issuer Two"}
+
+
+def test_get_credit_universe_page_universe_member_with_zero_securities_returns_empty_not_error(
+    db_session: Session,
+) -> None:
+    """PLAN.md Milestone 7.5.3 CFO-demo fix: a real universe member with no
+    securities loaded is a legitimate, common state (issuer-level
+    membership vs. security-level Credit Universe data) — the query must
+    return a clean empty page, never an error, so the frontend can render
+    an honest explanation instead of a misleading generic empty state."""
+    provenance = provenance_repository.create_provenance(db_session, reported_public_provenance())
+    issuer_no_securities = issuer_repository.create_issuer(
+        db_session,
+        IssuerCreate(
+            legal_name="Universe Zero Securities Test Issuer", provenance_id=provenance.id
+        ),
+    )
+    collection = collection_repository.create_collection(
+        db_session,
+        CollectionCreate(
+            slug="test-credit-universe-filter-zero-securities",
+            name="Test Credit Universe Filter Zero Securities",
+            description="Seeded for a credit_universe_service test.",
+            collection_type=CollectionType.RESEARCH_UNIVERSE,
+            scope=CollectionScope.ORGANIZATION,
+            visibility=CollectionVisibility.PUBLIC,
+            curation_method=CurationMethod.SYSTEM_SEEDED,
+            verification_status=VerificationStatus.VERIFIED,
+        ),
+    )
+    collection_repository.add_membership(
+        db_session,
+        CollectionMembershipCreate(
+            collection_id=collection.id,
+            issuer_id=issuer_no_securities.id,
+            rationale="Test membership.",
+            verification_status=VerificationStatus.VERIFIED,
+        ),
+    )
+
+    page = credit_universe_service.get_credit_universe_page(db_session, universe_id=collection.id)
+
+    assert page.total == 0
+    assert page.rows == []
+
+
 def test_sofr_benchmarked_row_gets_a_real_benchmark_rate(db_session: Session) -> None:
     """SOFR is a real, live-synced FRED series (Milestone 5's seed script,
     see BUILD_LOG.md) — a row referencing it as `benchmark` should be
