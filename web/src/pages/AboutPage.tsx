@@ -318,6 +318,16 @@ export function AboutPage(): ReactElement {
       </Section>
 
       <Section>
+        <SectionHeading>Research Coverage</SectionHeading>
+        <Typography variant="body2" color="text.secondary">
+          The current Nexus prototype includes SEC-derived research history beginning January 1,
+          2026, with new activity incorporated through ongoing daily research cycles. Historical
+          coverage is expanded through backfill/reconciliation while daily discovery captures newly
+          available research activity.
+        </Typography>
+      </Section>
+
+      <Section>
         <SectionHeading>How Nexus Uses AI</SectionHeading>
         <Paper
           variant="outlined"
