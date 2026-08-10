@@ -1,6 +1,7 @@
 import type { ReactElement, ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { CourtDocketSection } from "./CourtDocketSection";
 import * as courtDocketApi from "../api/courtDocket";
@@ -74,22 +75,29 @@ describe("CourtDocketSection", () => {
     expect(screen.getByText("No court docket on file for this issuer.")).toBeInTheDocument();
   });
 
-  it("renders the docket header with case name, court, and chapter", async () => {
-    vi.spyOn(courtDocketApi, "fetchCourtDocketDetail").mockResolvedValue(BASE_DETAIL);
+  it("renders the docket case summary by default, without fetching entries", () => {
+    const fetchDetail = vi.spyOn(courtDocketApi, "fetchCourtDocketDetail");
 
     renderWithProviders(<CourtDocketSection dockets={[BASE_DOCKET]} />);
 
     expect(screen.getByText("Hughes Satellite Systems Corporation")).toBeInTheDocument();
     expect(screen.getByText(/26-90739/)).toBeInTheDocument();
     expect(screen.getByText("Chapter 11")).toBeInTheDocument();
+    expect(screen.getByText("2 docket entries on file")).toBeInTheDocument();
     const link = screen.getByText("View on CourtListener").closest("a");
     expect(link).toHaveAttribute("href", "https://www.courtlistener.com/docket/73709078/");
+    // Raw entries must never be dumped on first load (PLAN.md CFO-demo
+    // polish pass) — the detail query shouldn't even fire until asked.
+    expect(screen.queryByText("Chapter 11 Voluntary Petition Filed.")).not.toBeInTheDocument();
+    expect(fetchDetail).not.toHaveBeenCalled();
   });
 
-  it("renders docket entries sorted with the most recent first", async () => {
+  it("fetches and reveals docket entries, sorted with the most recent first, only after expanding", async () => {
+    const user = userEvent.setup();
     vi.spyOn(courtDocketApi, "fetchCourtDocketDetail").mockResolvedValue(BASE_DETAIL);
 
     renderWithProviders(<CourtDocketSection dockets={[BASE_DOCKET]} />);
+    await user.click(screen.getByRole("button", { name: "View docket entries" }));
 
     await waitFor(() => {
       expect(screen.getByText("Motion for Joint Administration.")).toBeInTheDocument();
@@ -97,14 +105,20 @@ describe("CourtDocketSection", () => {
     expect(screen.getByText("Chapter 11 Voluntary Petition Filed.")).toBeInTheDocument();
     expect(screen.getByText("Available")).toBeInTheDocument();
     expect(screen.getByText("Not on RECAP")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Hide docket entries" }));
+
+    expect(screen.queryByText("Chapter 11 Voluntary Petition Filed.")).not.toBeInTheDocument();
   });
 
-  it("shows an error message when entries fail to load", async () => {
+  it("shows an error message when entries fail to load after expanding", async () => {
+    const user = userEvent.setup();
     vi.spyOn(courtDocketApi, "fetchCourtDocketDetail").mockRejectedValue(
       new Error("Network unreachable"),
     );
 
     renderWithProviders(<CourtDocketSection dockets={[BASE_DOCKET]} />);
+    await user.click(screen.getByRole("button", { name: "View docket entries" }));
 
     await waitFor(() => {
       expect(screen.getByText("Could not load docket entries.")).toBeInTheDocument();

@@ -20,12 +20,14 @@ from app.core.types import (
 from app.domain.collection import CollectionCreate, CollectionMembershipCreate
 from app.domain.financial_fact import FinancialFactCreate
 from app.domain.issuer import IssuerCreate
+from app.domain.sec_filing import SecFilingCreate
 from app.domain.security import SecurityCreate
 from app.repositories import (
     collection_repository,
     financial_fact_repository,
     issuer_repository,
     provenance_repository,
+    sec_filing_repository,
     security_repository,
 )
 from app.services import issuer_service
@@ -72,6 +74,46 @@ def _seed_issuer_with_a_security_and_a_filing(db: Session, *, legal_name: str) -
         ),
     )
     return issuer.id
+
+
+def test_get_issuer_detail_includes_sec_filings_even_without_financial_facts(
+    db_session: Session,
+) -> None:
+    """A real SEC filing on file must show up in `sec_filings` even when no
+    `financial_fact` (XBRL data point) has ever been extracted from it —
+    the CFO-demo polish pass's fix for the contradiction where the Distress
+    Timeline showed SEC-evidence-backed events while this section claimed
+    'No filings on file for this issuer yet.'"""
+    issuer_provenance = provenance_repository.create_provenance(
+        db_session, reported_public_provenance()
+    )
+    issuer = issuer_repository.create_issuer(
+        db_session,
+        IssuerCreate(legal_name="Issuer Service Test Co Zeta", provenance_id=issuer_provenance.id),
+    )
+    filing_provenance = provenance_repository.create_provenance(
+        db_session, reported_public_provenance(source_record_id="zeta-10q")
+    )
+    sec_filing_repository.create_filing(
+        db_session,
+        SecFilingCreate(
+            issuer_id=issuer.id,
+            accession_no="0000000000-26-000001",
+            form_type="10-Q",
+            filing_date=date(2026, 7, 29),
+            primary_document_url="https://www.sec.gov/Archives/example.htm",
+            provenance_id=filing_provenance.id,
+        ),
+    )
+
+    detail = issuer_service.get_issuer_detail(db_session, issuer.id)
+
+    assert detail is not None
+    assert len(detail.financial_facts) == 0
+    assert len(detail.sec_filings) == 1
+    assert detail.sec_filings[0].form_type == "10-Q"
+    assert detail.sec_filings[0].accession_no == "0000000000-26-000001"
+    assert detail.sec_filings[0].primary_document_url == "https://www.sec.gov/Archives/example.htm"
 
 
 def test_get_issuer_detail_returns_none_for_missing_issuer(db_session: Session) -> None:

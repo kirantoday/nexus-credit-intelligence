@@ -27,6 +27,7 @@ from app.repositories import (
     financial_fact_repository,
     issuer_repository,
     provenance_repository,
+    sec_filing_repository,
     security_repository,
 )
 from app.schemas.issuer import (
@@ -34,6 +35,7 @@ from app.schemas.issuer import (
     IssuerDataSource,
     IssuerDetail,
     IssuerFinancialFactRow,
+    IssuerSecFilingRow,
     IssuerSecurityRow,
 )
 from app.services import court_docket_api_service, research_universe_service
@@ -59,6 +61,7 @@ def get_issuer_detail(db: Session, issuer_id: UUID) -> IssuerDetail | None:
     context = PolicyContext(environment=get_settings().environment)
 
     securities = security_repository.list_securities_by_issuer(db, issuer_id)
+    filings = sec_filing_repository.list_filings_by_issuer(db, issuer_id)
     financial_facts = financial_fact_repository.list_financial_facts_by_issuer(db, issuer_id)
     positions = capital_structure_repository.list_positions_by_issuer(db, issuer_id)
 
@@ -124,6 +127,30 @@ def get_issuer_detail(db: Session, issuer_id: UUID) -> IssuerDetail | None:
                 provider=provider,
                 source_url=provenance.source_url,
                 as_of_date=provenance.as_of_date,
+            )
+        )
+
+    sec_filing_rows: list[IssuerSecFilingRow] = []
+    for filing in filings:
+        provenance = provenance_repository.get_provenance(db, filing.provenance_id)
+        if not _allowed(provenance, context):
+            continue
+        assert provenance is not None
+        _track_source(provenance)
+        provider = ProviderName(provenance.provider)
+        sec_filing_rows.append(
+            IssuerSecFilingRow(
+                filing_id=filing.id,
+                form_type=filing.form_type,
+                filing_date=filing.filing_date,
+                accession_no=filing.accession_no,
+                is_amendment=filing.is_amendment,
+                primary_document_url=filing.primary_document_url,
+                provider=provider,
+                classification=DataClassification(provenance.classification),
+                as_of_date=provenance.as_of_date,
+                retrieved_at=provenance.retrieved_at,
+                freshness=compute_freshness(provenance.retrieved_at, provider),
             )
         )
 
@@ -208,6 +235,7 @@ def get_issuer_detail(db: Session, issuer_id: UUID) -> IssuerDetail | None:
         is_synthetic=issuer.is_synthetic,
         synthetic_reason=issuer.synthetic_reason,
         securities=security_rows,
+        sec_filings=sec_filing_rows,
         financial_facts=financial_fact_rows,
         data_sources=data_sources,
         recent_activity=activity[:_RECENT_ACTIVITY_LIMIT],

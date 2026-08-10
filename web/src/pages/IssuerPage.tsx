@@ -18,7 +18,8 @@ import {
   Typography,
 } from "@mui/material";
 import { ApiError } from "../api/client";
-import type { IssuerActivityCategory } from "../api/issuer";
+import type { IssuerActivityCategory, IssuerActivityItem } from "../api/issuer";
+import type { IssuerUniverseMembership } from "../api/researchUniverse";
 import { CapitalStructureStack } from "../components/CapitalStructureStack";
 import { CourtDocketSection } from "../components/CourtDocketSection";
 import { DistressTimeline } from "../components/DistressTimeline";
@@ -34,6 +35,119 @@ const ACTIVITY_CATEGORY_LABEL: Record<IssuerActivityCategory, string> = {
   security_identified: "Security identified",
   capital_structure_update: "Capital structure",
 };
+
+const PROVIDER_DISPLAY_LABEL: Record<string, string> = {
+  openfigi: "OpenFIGI",
+  sec_edgar: "SEC EDGAR",
+  courtlistener: "CourtListener",
+};
+
+interface DisplayActivityRow {
+  key: string;
+  occurred_on: string;
+  category: IssuerActivityCategory;
+  headline: string;
+  source_url: string | null;
+  count: number;
+  /** Only set (and only rendered) when every grouped item shares one provider. */
+  uniformProvider: string | null;
+}
+
+/**
+ * `security_identified` rows are the one category where "occurred_on" is
+ * genuinely a Nexus/data-coverage date (when OpenFIGI matched an
+ * instrument), not an issuer credit event — a batch of five securities
+ * matched the same day reads as five separate rows otherwise, which
+ * overstates how much actually "changed." Collapses same-day
+ * `security_identified` rows into one grouped row; every other category
+ * (real filing/capital-structure dates) renders individually, unchanged.
+ */
+function groupRecentActivity(items: IssuerActivityItem[]): DisplayActivityRow[] {
+  const rows: DisplayActivityRow[] = [];
+  const groupIndexByKey = new Map<string, number>();
+
+  for (const item of items) {
+    if (item.category !== "security_identified") {
+      rows.push({
+        key: `${item.category}-${item.occurred_on}-${rows.length}`,
+        occurred_on: item.occurred_on,
+        category: item.category,
+        headline: item.headline,
+        source_url: item.source_url,
+        count: 1,
+        uniformProvider: item.provider,
+      });
+      continue;
+    }
+
+    const key = `security_identified-${item.occurred_on}`;
+    const existingIndex = groupIndexByKey.get(key);
+    if (existingIndex !== undefined) {
+      const existing = rows[existingIndex];
+      if (existing) {
+        existing.count += 1;
+        if (existing.uniformProvider !== item.provider) existing.uniformProvider = null;
+      }
+      continue;
+    }
+    groupIndexByKey.set(key, rows.length);
+    rows.push({
+      key,
+      occurred_on: item.occurred_on,
+      category: item.category,
+      headline: item.headline,
+      source_url: null,
+      count: 1,
+      uniformProvider: item.provider,
+    });
+  }
+
+  return rows;
+}
+
+function groupedActivityHeadline(row: DisplayActivityRow): string {
+  if (row.count <= 1) return row.headline;
+  const providerLabel = row.uniformProvider
+    ? (PROVIDER_DISPLAY_LABEL[row.uniformProvider] ?? row.uniformProvider)
+    : null;
+  return providerLabel
+    ? `${row.count} securities identified through ${providerLabel}`
+    : `${row.count} securities identified`;
+}
+
+function displayUniverseName(name: string): string {
+  return name.replace(/^System-Detected: /, "");
+}
+
+/**
+ * Splits an issuer's Research Universe memberships into what a CFO should
+ * see as "current" vs. "suggested" — the underlying data/status is never
+ * altered, only which bucket each membership renders in (PLAN.md CFO-demo
+ * polish pass).
+ *
+ * A `partial` (system-suggested, unconfirmed) membership is always
+ * "suggested," never "current" — reusing Milestone 7.5.1's verification
+ * semantics rather than re-deriving them. A `verified` manually-curated
+ * membership is always "current." A `verified` System-Detected: * one is
+ * only shown as "current" (name prefix stripped) when this issuer has no
+ * manually-curated verified membership at all — when curated coverage
+ * exists, the system-detected duplicate of the same underlying
+ * classification would just repeat it under an internal name.
+ */
+function splitUniverseMemberships(memberships: IssuerUniverseMembership[]): {
+  current: IssuerUniverseMembership[];
+  suggested: IssuerUniverseMembership[];
+} {
+  const verifiedCurated = memberships.filter(
+    (m) => m.verification_status === "verified" && m.curation_method === "manual_curated",
+  );
+  const verifiedSystemDetected = memberships.filter(
+    (m) => m.verification_status === "verified" && m.curation_method === "system_seeded",
+  );
+  const current = verifiedCurated.length > 0 ? verifiedCurated : verifiedSystemDetected;
+  const suggested = memberships.filter((m) => m.verification_status === "partial");
+  return { current, suggested };
+}
 
 function SectionHeading({ children }: { children: string }): ReactElement {
   return (
@@ -104,7 +218,7 @@ export function IssuerPage(): ReactElement {
         {timelineQuery.data && <DistressTimeline timeline={timelineQuery.data} />}
       </Paper>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
+      <Paper id="securities-section" variant="outlined" sx={{ p: 2 }}>
         <SectionHeading>
           What debt exists, where does it sit, and what's secured or unsecured?
         </SectionHeading>
@@ -176,50 +290,50 @@ export function IssuerPage(): ReactElement {
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <SectionHeading>What filings support this?</SectionHeading>
-        {issuer.financial_facts.length === 0 ? (
+        {issuer.sec_filings.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
-            No filings on file for this issuer yet.
+            No SEC filings on file for this issuer yet.
           </Typography>
         ) : (
           <TableContainer>
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell>Concept</TableCell>
-                  <TableCell align="right">Value</TableCell>
                   <TableCell>Filing</TableCell>
+                  <TableCell>Accession No.</TableCell>
                   <TableCell>Filed</TableCell>
                   <TableCell>Source</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {issuer.financial_facts.map((fact) => (
-                  <TableRow key={fact.financial_fact_id} hover>
+                {issuer.sec_filings.map((filing) => (
+                  <TableRow key={filing.filing_id} hover>
                     <TableCell>
-                      <Typography variant="body2">{fact.concept}</Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        FY{fact.fiscal_year} {fact.fiscal_period}
-                      </Typography>
-                    </TableCell>
-                    <TableCell align="right">
-                      {Number(fact.value).toLocaleString()} {fact.unit}
-                    </TableCell>
-                    <TableCell>
-                      {fact.source_url ? (
-                        <Link href={fact.source_url} target="_blank" rel="noopener noreferrer">
-                          {fact.form_type} ({fact.accession_no})
+                      {filing.primary_document_url ? (
+                        <Link
+                          href={filing.primary_document_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {filing.form_type}
+                          {filing.is_amendment ? " (amended)" : ""}
                         </Link>
                       ) : (
-                        `${fact.form_type} (${fact.accession_no})`
+                        `${filing.form_type}${filing.is_amendment ? " (amended)" : ""}`
                       )}
                     </TableCell>
-                    <TableCell>{formatDate(fact.filing_date)}</TableCell>
+                    <TableCell>
+                      <Typography variant="body2" fontFamily="monospace">
+                        {filing.accession_no}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>{formatDate(filing.filing_date)}</TableCell>
                     <TableCell>
                       <ProvenanceBadge
-                        provider={fact.provider}
-                        asOfDate={fact.as_of_date}
-                        retrievedAt={fact.retrieved_at}
-                        freshness={fact.freshness}
+                        provider={filing.provider}
+                        asOfDate={filing.as_of_date}
+                        retrievedAt={filing.retrieved_at}
+                        freshness={filing.freshness}
                       />
                     </TableCell>
                   </TableRow>
@@ -231,34 +345,39 @@ export function IssuerPage(): ReactElement {
       </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
-        <SectionHeading>What changed recently?</SectionHeading>
+        <SectionHeading>Recent data updates</SectionHeading>
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
+          When Nexus's own data coverage changed for this issuer — not necessarily when these events
+          happened to the issuer itself. See the Distress Timeline above for material credit
+          developments and their real event dates.
+        </Typography>
         {issuer.recent_activity.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
-            No recorded activity for this issuer yet.
+            No recorded data updates for this issuer yet.
           </Typography>
         ) : (
           <Stack spacing={1}>
-            {issuer.recent_activity.map((item, index) => (
-              <Stack
-                key={`${item.category}-${index}`}
-                direction="row"
-                spacing={1.5}
-                alignItems="baseline"
-              >
+            {groupRecentActivity(issuer.recent_activity).map((row) => (
+              <Stack key={row.key} direction="row" spacing={1.5} alignItems="baseline">
                 <Typography variant="caption" color="text.secondary" sx={{ minWidth: 90 }}>
-                  {formatDate(item.occurred_on)}
+                  {formatDate(row.occurred_on)}
                 </Typography>
                 <Chip
-                  label={ACTIVITY_CATEGORY_LABEL[item.category]}
+                  label={ACTIVITY_CATEGORY_LABEL[row.category]}
                   size="small"
                   variant="outlined"
                 />
-                {item.source_url ? (
-                  <Link href={item.source_url} target="_blank" rel="noopener noreferrer">
-                    <Typography variant="body2">{item.headline}</Typography>
+                {row.source_url ? (
+                  <Link href={row.source_url} target="_blank" rel="noopener noreferrer">
+                    <Typography variant="body2">{groupedActivityHeadline(row)}</Typography>
                   </Link>
                 ) : (
-                  <Typography variant="body2">{item.headline}</Typography>
+                  <Typography variant="body2">{groupedActivityHeadline(row)}</Typography>
+                )}
+                {row.count > 1 && (
+                  <Link href="#securities-section" underline="hover">
+                    <Typography variant="caption">View securities</Typography>
+                  </Link>
                 )}
               </Stack>
             ))}
@@ -295,37 +414,70 @@ export function IssuerPage(): ReactElement {
           current distress, bankruptcy, rating, or refinancing risk. See the sections above for
           that, sourced from dated evidence.
         </Typography>
-        {issuer.universe_memberships.length === 0 ? (
-          <Typography variant="body2" color="text.secondary">
-            Not currently a member of any Research Universe.
-          </Typography>
-        ) : (
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-            {issuer.universe_memberships.map((membership) => {
-              const isSuggested = membership.verification_status === "partial";
-              const tooltipPrefix = isSuggested
-                ? "System-suggested, pending analyst confirmation — "
-                : "";
-              return (
-                <Tooltip
-                  key={membership.collection_id}
-                  title={`${tooltipPrefix}${membership.rationale}${membership.rationale_as_of_date ? ` (as of ${formatDate(membership.rationale_as_of_date)})` : ""}`}
-                >
-                  <Chip
-                    component={RouterLink}
-                    to={`/?universe=${membership.collection_id}`}
-                    clickable
-                    label={isSuggested ? `${membership.name} (suggested)` : membership.name}
-                    size="small"
-                    variant={isSuggested ? "outlined" : "filled"}
-                    color={membership.collection_type === "benchmark" ? "info" : "default"}
-                    sx={isSuggested ? { borderStyle: "dashed" } : undefined}
-                  />
-                </Tooltip>
-              );
-            })}
-          </Stack>
-        )}
+        {(() => {
+          const { current, suggested } = splitUniverseMemberships(issuer.universe_memberships);
+          if (current.length === 0 && suggested.length === 0) {
+            return (
+              <Typography variant="body2" color="text.secondary">
+                Not currently a member of any Research Universe.
+              </Typography>
+            );
+          }
+          return (
+            <Stack spacing={2}>
+              {current.length > 0 && (
+                <Box>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Current Research Universes
+                  </Typography>
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                    {current.map((membership) => (
+                      <Tooltip
+                        key={membership.collection_id}
+                        title={`${membership.rationale}${membership.rationale_as_of_date ? ` (as of ${formatDate(membership.rationale_as_of_date)})` : ""}`}
+                      >
+                        <Chip
+                          component={RouterLink}
+                          to={`/?universe=${membership.collection_id}`}
+                          clickable
+                          label={displayUniverseName(membership.name)}
+                          size="small"
+                          variant="filled"
+                          color={membership.collection_type === "benchmark" ? "info" : "default"}
+                        />
+                      </Tooltip>
+                    ))}
+                  </Stack>
+                </Box>
+              )}
+              {suggested.length > 0 && (
+                <Box>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Nexus suggested coverage
+                  </Typography>
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                    {suggested.map((membership) => (
+                      <Tooltip
+                        key={membership.collection_id}
+                        title={`System-suggested, pending analyst confirmation — ${membership.rationale}${membership.rationale_as_of_date ? ` (as of ${formatDate(membership.rationale_as_of_date)})` : ""}`}
+                      >
+                        <Chip
+                          component={RouterLink}
+                          to={`/?universe=${membership.collection_id}`}
+                          clickable
+                          label={`${displayUniverseName(membership.name)} (suggested)`}
+                          size="small"
+                          variant="outlined"
+                          sx={{ borderStyle: "dashed" }}
+                        />
+                      </Tooltip>
+                    ))}
+                  </Stack>
+                </Box>
+              )}
+            </Stack>
+          );
+        })()}
       </Paper>
 
       <Box>

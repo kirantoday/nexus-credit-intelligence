@@ -62,8 +62,32 @@ class IssuerSecurityRow(BaseModel):
     freshness: FreshnessTier
 
 
+class IssuerSecFilingRow(BaseModel):
+    """What filings support this — one row per `sec_filing` actually on
+    file for this issuer. Distinct from `financial_facts` below: a filing
+    can be on file (and back Distress Timeline evidence) long before any
+    XBRL data point has been extracted from it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    filing_id: UUID
+    form_type: str
+    filing_date: date
+    accession_no: str
+    is_amendment: bool
+    primary_document_url: str | None
+    provider: ProviderName
+    classification: DataClassification
+    as_of_date: date
+    retrieved_at: datetime
+    freshness: FreshnessTier
+
+
 class IssuerFinancialFactRow(BaseModel):
-    """What filings support this — one row per `financial_fact`."""
+    """Extracted financial data points — one row per `financial_fact`
+    (XBRL-datapoint-level), distinct from `sec_filings` above (the filing
+    itself). Most issuers have filings on file with no extracted data
+    points yet; this list is commonly empty even when `sec_filings` is not."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -124,6 +148,7 @@ class IssuerDetail(BaseModel):
     is_synthetic: bool
     synthetic_reason: str | None
     securities: list[IssuerSecurityRow]
+    sec_filings: list[IssuerSecFilingRow]
     financial_facts: list[IssuerFinancialFactRow]
     data_sources: list[IssuerDataSource]
     recent_activity: list[IssuerActivityItem]

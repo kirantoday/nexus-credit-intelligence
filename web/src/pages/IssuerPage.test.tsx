@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { IssuerPage } from "./IssuerPage";
@@ -42,6 +43,7 @@ const BASE_ISSUER: IssuerDetail = {
   is_synthetic: true,
   synthetic_reason: "SYNTHETIC_DEMO_DATA",
   securities: [],
+  sec_filings: [],
   financial_facts: [],
   data_sources: [
     { provider: "synthetic", record_count: 9, latest_retrieved_at: "2026-08-06T12:00:00Z" },
@@ -234,6 +236,10 @@ describe("IssuerPage", () => {
       expect(screen.getByText("Cobalt Ridge Holding Company, Inc.")).toBeInTheDocument();
     });
     expect(screen.getByText(/23-90602/)).toBeInTheDocument();
+    expect(screen.queryByText("Chapter 11 Voluntary Petition Filed.")).not.toBeInTheDocument();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "View docket entries" }));
+
     await waitFor(() => {
       expect(screen.getByText("Chapter 11 Voluntary Petition Filed.")).toBeInTheDocument();
     });
@@ -272,13 +278,58 @@ describe("IssuerPage", () => {
     renderIssuerPage();
 
     await waitFor(() => {
-      expect(screen.getByText("System-Detected: Chapter 11")).toBeInTheDocument();
+      expect(screen.getByText("Current Research Universes")).toBeInTheDocument();
     });
-    // Verified membership: shown by its plain name, no "(suggested)" suffix.
-    expect(screen.queryByText("System-Detected: Chapter 11 (suggested)")).not.toBeInTheDocument();
-    // Partial (system-suggested) membership: visibly marked, not rendered
-    // identically to a verified one (PLAN.md Milestone 7.5.1 section 4).
-    expect(screen.getByText("System-Detected: Going Concern (suggested)")).toBeInTheDocument();
+    // Verified membership: shown under "Current", internal prefix stripped,
+    // no "(suggested)" suffix.
+    expect(screen.getByText("Chapter 11")).toBeInTheDocument();
+    expect(screen.queryByText("System-Detected: Chapter 11")).not.toBeInTheDocument();
+    expect(screen.queryByText("Chapter 11 (suggested)")).not.toBeInTheDocument();
+    // Partial (system-suggested) membership: under "Nexus suggested
+    // coverage", visibly marked, never rendered as confirmed (PLAN.md
+    // Milestone 7.5.1 section 4).
+    expect(screen.getByText("Nexus suggested coverage")).toBeInTheDocument();
+    expect(screen.getByText("Going Concern (suggested)")).toBeInTheDocument();
+  });
+
+  it("prefers a manually-curated verified membership over its System-Detected duplicate", async () => {
+    vi.spyOn(issuerApi, "fetchIssuerDetail").mockResolvedValue({
+      ...BASE_ISSUER,
+      universe_memberships: [
+        {
+          collection_id: "col-curated",
+          slug: "chapter-11-bankruptcy",
+          name: "Chapter 11 / Bankruptcy",
+          collection_type: "research_universe",
+          curation_method: "manual_curated",
+          rationale: "Curated rationale.",
+          rationale_as_of_date: "2026-08-01",
+          verification_status: "verified",
+        },
+        {
+          collection_id: "col-system",
+          slug: "system-chapter-11",
+          name: "System-Detected: Chapter 11",
+          collection_type: "research_universe",
+          curation_method: "system_seeded",
+          rationale: "System rationale.",
+          rationale_as_of_date: "2026-08-01",
+          verification_status: "verified",
+        },
+      ],
+    });
+    vi.spyOn(capitalStructureApi, "fetchCapitalStructure").mockResolvedValue(
+      EMPTY_CAPITAL_STRUCTURE,
+    );
+
+    renderIssuerPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Chapter 11 / Bankruptcy")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("System-Detected: Chapter 11")).not.toBeInTheDocument();
+    expect(screen.queryByText("Chapter 11")).not.toBeInTheDocument();
+    expect(screen.queryByText("Nexus suggested coverage")).not.toBeInTheDocument();
   });
 
   it("shows a not-found message for a 404 response", async () => {
@@ -349,5 +400,107 @@ describe("IssuerPage", () => {
         ),
       ).toBeInTheDocument();
     });
+  });
+
+  it("renders SEC filings on file and never shows the contradictory 'no filings' message when they exist", async () => {
+    vi.spyOn(issuerApi, "fetchIssuerDetail").mockResolvedValue({
+      ...BASE_ISSUER,
+      sec_filings: [
+        {
+          filing_id: "filing-1",
+          form_type: "10-Q",
+          filing_date: "2026-07-29",
+          accession_no: "0000028823-26-000033",
+          is_amendment: false,
+          primary_document_url: "https://www.sec.gov/Archives/example.htm",
+          provider: "sec_edgar",
+          classification: "public",
+          as_of_date: "2026-07-29",
+          retrieved_at: "2026-08-06T12:00:00Z",
+          freshness: "live",
+        },
+      ],
+    });
+    vi.spyOn(capitalStructureApi, "fetchCapitalStructure").mockResolvedValue(
+      EMPTY_CAPITAL_STRUCTURE,
+    );
+
+    renderIssuerPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("10-Q")).toBeInTheDocument();
+    });
+    expect(screen.getByText("0000028823-26-000033")).toBeInTheDocument();
+    expect(
+      screen.queryByText("No SEC filings on file for this issuer yet."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows an honest empty message when there are no SEC filings on file", async () => {
+    vi.spyOn(issuerApi, "fetchIssuerDetail").mockResolvedValue(BASE_ISSUER);
+    vi.spyOn(capitalStructureApi, "fetchCapitalStructure").mockResolvedValue(
+      EMPTY_CAPITAL_STRUCTURE,
+    );
+
+    renderIssuerPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("No SEC filings on file for this issuer yet.")).toBeInTheDocument();
+    });
+  });
+
+  it("labels recent updates as data updates rather than issuer developments, and groups same-day security identifications", async () => {
+    vi.spyOn(issuerApi, "fetchIssuerDetail").mockResolvedValue({
+      ...BASE_ISSUER,
+      recent_activity: [
+        {
+          occurred_on: "2026-08-09",
+          category: "security_identified",
+          headline: "Security identified: Issuer Co — Bond A",
+          provider: "openfigi",
+          source_url: null,
+          as_of_date: "2026-08-09",
+        },
+        {
+          occurred_on: "2026-08-09",
+          category: "security_identified",
+          headline: "Security identified: Issuer Co — Bond B",
+          provider: "openfigi",
+          source_url: null,
+          as_of_date: "2026-08-09",
+        },
+        {
+          occurred_on: "2026-08-09",
+          category: "security_identified",
+          headline: "Security identified: Issuer Co — Bond C",
+          provider: "openfigi",
+          source_url: null,
+          as_of_date: "2026-08-09",
+        },
+        {
+          occurred_on: "2026-07-29",
+          category: "filing",
+          headline: "10-Q filed",
+          provider: "sec_edgar",
+          source_url: null,
+          as_of_date: "2026-07-29",
+        },
+      ],
+    });
+    vi.spyOn(capitalStructureApi, "fetchCapitalStructure").mockResolvedValue(
+      EMPTY_CAPITAL_STRUCTURE,
+    );
+
+    renderIssuerPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Recent data updates")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("What changed recently?")).not.toBeInTheDocument();
+    // Three same-day security_identified rows collapse into one grouped row.
+    expect(screen.getByText("3 securities identified through OpenFIGI")).toBeInTheDocument();
+    expect(screen.queryByText("Security identified: Issuer Co — Bond A")).not.toBeInTheDocument();
+    // A different category on a different day still renders individually.
+    expect(screen.getByText("10-Q filed")).toBeInTheDocument();
   });
 });

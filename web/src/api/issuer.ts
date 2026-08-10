@@ -41,6 +41,26 @@ export interface IssuerSecurityRow {
 
 export type FormType = "10-K" | "10-Q" | "8-K" | "6-K" | "20-F";
 
+/**
+ * One `sec_filing` actually on file for this issuer (backend/app/schemas/issuer.py).
+ * Distinct from `IssuerFinancialFactRow` below: a filing can be on file
+ * (and back Distress Timeline evidence) long before any XBRL data point
+ * has been extracted from it.
+ */
+export interface IssuerSecFilingRow {
+  filing_id: string;
+  form_type: string;
+  filing_date: string;
+  accession_no: string;
+  is_amendment: boolean;
+  primary_document_url: string | null;
+  provider: ProviderName;
+  classification: DataClassification;
+  as_of_date: string;
+  retrieved_at: string;
+  freshness: FreshnessTier;
+}
+
 export interface IssuerFinancialFactRow {
   financial_fact_id: string;
   concept: string;
@@ -87,6 +107,7 @@ export interface IssuerDetail {
   is_synthetic: boolean;
   synthetic_reason: string | null;
   securities: IssuerSecurityRow[];
+  sec_filings: IssuerSecFilingRow[];
   financial_facts: IssuerFinancialFactRow[];
   data_sources: IssuerDataSource[];
   recent_activity: IssuerActivityItem[];

@@ -1,8 +1,10 @@
-import type { ReactElement } from "react";
+import { type ReactElement, useState } from "react";
 import {
   Box,
+  Button,
   Chip,
   CircularProgress,
+  Collapse,
   Link,
   Stack,
   Table,
@@ -24,9 +26,16 @@ const _RECENT_ENTRY_LIMIT = 10;
  * happened in court?" (PLAN.md Product Philosophy). Never fetches or
  * displays sealed material; a docket entry's own `document_available`
  * already reflects that (PLAN.md section 22).
+ *
+ * The case summary (parties, court, chapter, filing date, entry count) is
+ * always visible — a CFO-level first read. Raw docket entries are real,
+ * often-operational RECAP data (many with no description on file) that
+ * would otherwise dump a wall of rows on first load, so they're fetched
+ * and rendered only once the analyst asks to see them.
  */
 function DocketCard({ docket }: { docket: CourtDocketRow }): ReactElement {
-  const detailQuery = useCourtDocketDetail(docket.id);
+  const [expanded, setExpanded] = useState(false);
+  const detailQuery = useCourtDocketDetail(expanded ? docket.id : undefined);
   const entries = detailQuery.data?.entries ?? [];
   const recentEntries = [...entries]
     .sort((a, b) => (b.entry_date ?? "").localeCompare(a.entry_date ?? ""))
@@ -52,60 +61,70 @@ function DocketCard({ docket }: { docket: CourtDocketRow }): ReactElement {
         </Stack>
       </Stack>
 
-      {detailQuery.isLoading && (
-        <Box sx={{ py: 2, textAlign: "center" }}>
-          <CircularProgress size={20} />
-        </Box>
-      )}
-      {detailQuery.isError && (
-        <Typography variant="caption" color="error">
-          Could not load docket entries.
+      <Stack direction="row" spacing={2} alignItems="center" sx={{ mt: 1.5 }}>
+        <Typography variant="caption" color="text.secondary">
+          {docket.entry_count} docket entr{docket.entry_count === 1 ? "y" : "ies"} on file
         </Typography>
-      )}
-      {!detailQuery.isLoading && !detailQuery.isError && (
-        <>
-          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1.5 }}>
-            {docket.entry_count} docket entr{docket.entry_count === 1 ? "y" : "ies"} on file
-            {docket.entry_count > recentEntries.length
-              ? ` — showing ${recentEntries.length} most recent`
-              : ""}
+        <Button size="small" onClick={() => setExpanded((e) => !e)}>
+          {expanded ? "Hide docket entries" : "View docket entries"}
+        </Button>
+      </Stack>
+
+      <Collapse in={expanded} unmountOnExit>
+        {detailQuery.isLoading && (
+          <Box sx={{ py: 2, textAlign: "center" }}>
+            <CircularProgress size={20} />
+          </Box>
+        )}
+        {detailQuery.isError && (
+          <Typography variant="caption" color="error">
+            Could not load docket entries.
           </Typography>
-          <TableContainer sx={{ mt: 1 }}>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Filed</TableCell>
-                  <TableCell>Entry</TableCell>
-                  <TableCell>Description</TableCell>
-                  <TableCell>Document</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {recentEntries.map((entry) => (
-                  <TableRow key={entry.id} hover>
-                    <TableCell sx={{ whiteSpace: "nowrap" }}>
-                      {formatDate(entry.entry_date)}
-                    </TableCell>
-                    <TableCell>{entry.entry_number ?? "—"}</TableCell>
-                    <TableCell>
-                      <Typography variant="body2" sx={{ maxWidth: 480 }}>
-                        {entry.description}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      {entry.document_available ? (
-                        <Chip label="Available" size="small" color="success" variant="outlined" />
-                      ) : (
-                        <Chip label="Not on RECAP" size="small" variant="outlined" />
-                      )}
-                    </TableCell>
+        )}
+        {!detailQuery.isLoading && !detailQuery.isError && (
+          <>
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1.5 }}>
+              {docket.entry_count > recentEntries.length
+                ? `Showing ${recentEntries.length} most recent`
+                : "All docket entries"}
+            </Typography>
+            <TableContainer sx={{ mt: 1 }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Filed</TableCell>
+                    <TableCell>Entry</TableCell>
+                    <TableCell>Description</TableCell>
+                    <TableCell>Document</TableCell>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </>
-      )}
+                </TableHead>
+                <TableBody>
+                  {recentEntries.map((entry) => (
+                    <TableRow key={entry.id} hover>
+                      <TableCell sx={{ whiteSpace: "nowrap" }}>
+                        {formatDate(entry.entry_date)}
+                      </TableCell>
+                      <TableCell>{entry.entry_number ?? "—"}</TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ maxWidth: 480 }}>
+                          {entry.description}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        {entry.document_available ? (
+                          <Chip label="Available" size="small" color="success" variant="outlined" />
+                        ) : (
+                          <Chip label="Not on RECAP" size="small" variant="outlined" />
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </>
+        )}
+      </Collapse>
     </Box>
   );
 }
