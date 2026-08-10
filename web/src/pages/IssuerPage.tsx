@@ -21,10 +21,12 @@ import { ApiError } from "../api/client";
 import type { IssuerActivityCategory } from "../api/issuer";
 import { CapitalStructureStack } from "../components/CapitalStructureStack";
 import { CourtDocketSection } from "../components/CourtDocketSection";
+import { DistressTimeline } from "../components/DistressTimeline";
 import { ProvenanceBadge } from "../components/ProvenanceBadge";
 import { SyntheticDataBadge } from "../components/SyntheticDataBadge";
 import { useCapitalStructure } from "../queries/useCapitalStructure";
 import { useIssuerDetail } from "../queries/useIssuerDetail";
+import { useIssuerTimeline } from "../queries/useIssuerTimeline";
 import { formatCompactCurrency, formatDate } from "../lib/format";
 
 const ACTIVITY_CATEGORY_LABEL: Record<IssuerActivityCategory, string> = {
@@ -45,6 +47,7 @@ export function IssuerPage(): ReactElement {
   const { issuerId } = useParams<{ issuerId: string }>();
   const issuerQuery = useIssuerDetail(issuerId);
   const capitalStructureQuery = useCapitalStructure(issuerId);
+  const timelineQuery = useIssuerTimeline(issuerId);
 
   if (issuerQuery.isLoading) {
     return (
@@ -87,6 +90,19 @@ export function IssuerPage(): ReactElement {
           {issuer.sic && <Chip label={`SIC ${issuer.sic}`} size="small" variant="outlined" />}
         </Stack>
       </Box>
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <SectionHeading>Distress Timeline</SectionHeading>
+        {timelineQuery.isLoading && (
+          <Typography variant="body2" color="text.secondary">
+            Loading timeline…
+          </Typography>
+        )}
+        {timelineQuery.isError && (
+          <Alert severity="error">Could not load the distress timeline.</Alert>
+        )}
+        {timelineQuery.data && <DistressTimeline timeline={timelineQuery.data} />}
+      </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <SectionHeading>

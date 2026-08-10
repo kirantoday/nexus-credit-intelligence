@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router";
@@ -7,10 +7,12 @@ import { IssuerPage } from "./IssuerPage";
 import * as capitalStructureApi from "../api/capitalStructure";
 import * as courtDocketApi from "../api/courtDocket";
 import * as issuerApi from "../api/issuer";
+import * as issuerTimelineApi from "../api/issuerTimeline";
 import { ApiError } from "../api/client";
 import type { IssuerDetail } from "../api/issuer";
 import type { CapitalStructureResponse } from "../api/capitalStructure";
 import type { CourtDocketDetail, CourtDocketRow } from "../api/courtDocket";
+import type { IssuerTimeline } from "../api/issuerTimeline";
 
 function renderIssuerPage(issuerId = "iss-1"): void {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -54,6 +56,20 @@ const EMPTY_CAPITAL_STRUCTURE: CapitalStructureResponse = {
   issuer_legal_name: "Cobalt Ridge Energy Corp",
   positions: [],
 };
+
+const EMPTY_TIMELINE: IssuerTimeline = {
+  issuer_id: "iss-1",
+  events: [],
+  total_events: 0,
+  date_range_start: null,
+  date_range_end: null,
+  current_status: [],
+  most_recent_event_title: null,
+};
+
+beforeEach(() => {
+  vi.spyOn(issuerTimelineApi, "fetchIssuerTimeline").mockResolvedValue(EMPTY_TIMELINE);
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -232,6 +248,7 @@ describe("IssuerPage", () => {
           slug: "system-chapter-11",
           name: "System-Detected: Chapter 11",
           collection_type: "research_universe",
+          curation_method: "system_seeded",
           rationale: "Verified test rationale.",
           rationale_as_of_date: "2026-08-01",
           verification_status: "verified",
@@ -241,6 +258,7 @@ describe("IssuerPage", () => {
           slug: "system-going-concern",
           name: "System-Detected: Going Concern",
           collection_type: "research_universe",
+          curation_method: "system_seeded",
           rationale: "Suggested test rationale.",
           rationale_as_of_date: "2026-08-01",
           verification_status: "partial",
@@ -275,6 +293,61 @@ describe("IssuerPage", () => {
 
     await waitFor(() => {
       expect(screen.getByText("This issuer doesn't exist.")).toBeInTheDocument();
+    });
+  });
+
+  it("renders the Distress Timeline section with events from the timeline API", async () => {
+    vi.spyOn(issuerApi, "fetchIssuerDetail").mockResolvedValue(BASE_ISSUER);
+    vi.spyOn(capitalStructureApi, "fetchCapitalStructure").mockResolvedValue(
+      EMPTY_CAPITAL_STRUCTURE,
+    );
+    vi.spyOn(issuerTimelineApi, "fetchIssuerTimeline").mockResolvedValue({
+      issuer_id: "iss-1",
+      events: [
+        {
+          event_date: "2026-05-26",
+          event_type: "bankruptcy_or_receivership",
+          title: "Bankruptcy Or Receivership",
+          short_summary: "Voluntary Chapter 11 petition filed.",
+          why_it_matters: "Confirms the issuer is now in active bankruptcy proceedings.",
+          severity: "high",
+          confidence: 0.98,
+          primary_source: { provider: "sec_edgar", label: "8-K filed 2026-05-26", url: null },
+          supporting_sources: [],
+          is_historical_discovery: false,
+          evidence_count: 1,
+        },
+      ],
+      total_events: 1,
+      date_range_start: "2026-05-26",
+      date_range_end: "2026-05-26",
+      current_status: ["Chapter 11 / Bankruptcy"],
+      most_recent_event_title: "Bankruptcy Or Receivership",
+    });
+
+    renderIssuerPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Distress Timeline")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Voluntary Chapter 11 petition filed.")).toBeInTheDocument();
+    expect(screen.getByText(/Chapter 11 \/ Bankruptcy/)).toBeInTheDocument();
+  });
+
+  it("shows the honest empty-timeline message when the issuer has no qualifying events", async () => {
+    vi.spyOn(issuerApi, "fetchIssuerDetail").mockResolvedValue(BASE_ISSUER);
+    vi.spyOn(capitalStructureApi, "fetchCapitalStructure").mockResolvedValue(
+      EMPTY_CAPITAL_STRUCTURE,
+    );
+
+    renderIssuerPage();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "Nexus has not identified enough material credit events to build a distress timeline for this issuer yet.",
+        ),
+      ).toBeInTheDocument();
     });
   });
 });

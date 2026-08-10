@@ -89,6 +89,7 @@ class IssuerUniverseMembership(BaseModel):
     slug: str
     name: str
     collection_type: CollectionType
+    curation_method: CurationMethod
     rationale: str
     rationale_as_of_date: date | None
     verification_status: VerificationStatus

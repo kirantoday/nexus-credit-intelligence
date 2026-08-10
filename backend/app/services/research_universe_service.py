@@ -95,6 +95,7 @@ def get_issuer_universe_memberships(db: Session, issuer_id: UUID) -> list[Issuer
                 slug=collection.slug,
                 name=collection.name,
                 collection_type=collection.collection_type,
+                curation_method=collection.curation_method,
                 rationale=membership.rationale,
                 rationale_as_of_date=membership.rationale_as_of_date,
                 verification_status=membership.verification_status,

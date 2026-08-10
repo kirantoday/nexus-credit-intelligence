@@ -15,6 +15,7 @@ from app.api.routes.credit_universe import router as credit_universe_router
 from app.api.routes.filing_monitor import router as filing_monitor_router
 from app.api.routes.health import router as health_router
 from app.api.routes.issuer import router as issuer_router
+from app.api.routes.issuer_timeline import router as issuer_timeline_router
 from app.api.routes.market_context import router as market_context_router
 from app.api.routes.morning_brief import router as morning_brief_router
 from app.api.routes.research_evidence import router as research_evidence_router
@@ -56,3 +57,4 @@ app.include_router(research_evidence_router)
 app.include_router(alerts_router)
 app.include_router(morning_brief_router)
 app.include_router(court_dockets_router)
+app.include_router(issuer_timeline_router)

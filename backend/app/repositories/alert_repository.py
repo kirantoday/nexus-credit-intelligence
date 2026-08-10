@@ -142,6 +142,17 @@ def list_alerts(
     return [_to_domain(row) for row in rows], total
 
 
+def list_alerts_by_issuer(db: Session, issuer_id: UUID) -> list[AlertEvent]:
+    """Every alert for one issuer, unpaginated — bounded by one issuer's
+    alert volume (never the whole table), same pattern as
+    `research_evidence_repository.list_evidence_by_issuer_and_types`. Backs
+    the Issuer Distress Timeline (PLAN.md Milestone 7.5.4), which needs the
+    complete history to collapse and order, not a page of it."""
+    stmt = select(AlertEventModel).where(AlertEventModel.issuer_id == issuer_id)
+    rows = db.execute(stmt).scalars().all()
+    return [_to_domain(row) for row in rows]
+
+
 def count_alerts_by_severity(
     db: Session,
     *,

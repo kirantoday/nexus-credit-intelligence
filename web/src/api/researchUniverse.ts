@@ -64,6 +64,7 @@ export interface IssuerUniverseMembership {
   slug: string;
   name: string;
   collection_type: CollectionType;
+  curation_method: CurationMethod;
   rationale: string;
   rationale_as_of_date: string | null;
   verification_status: VerificationStatus;
