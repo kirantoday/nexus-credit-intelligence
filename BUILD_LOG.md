@@ -5719,7 +5719,7 @@ discipline, restated once more.
 
 **Git Commit Hash**
 
-`(recorded in a follow-up commit)`
+`bc7afd0`
 
 **Approximate Time Spent**
 
