@@ -26,6 +26,17 @@ function SourceLink({ source }: { source: TimelineSource }): ReactElement {
   );
 }
 
+function SourceBadge({ provider }: { provider: string }): ReactElement {
+  return (
+    <Chip
+      label={sourceLabel(provider)}
+      size="small"
+      variant="outlined"
+      sx={{ color: "text.secondary", borderColor: "divider" }}
+    />
+  );
+}
+
 function TimelineEventCard({
   event,
   isLast,
@@ -40,20 +51,21 @@ function TimelineEventCard({
 
   return (
     <Stack direction="row" spacing={2}>
-      <Stack alignItems="center" sx={{ width: 12, flexShrink: 0 }}>
+      <Stack alignItems="center" sx={{ width: 14, flexShrink: 0 }}>
         <Box
           sx={{
-            width: 12,
-            height: 12,
+            width: 14,
+            height: 14,
             borderRadius: "50%",
             bgcolor: `${severityColor(event.severity)}.main`,
+            boxShadow: (t) => `0 0 0 3px ${t.palette.background.paper}`,
             mt: 0.5,
           }}
         />
         {!isLast && <Box sx={{ width: 2, flexGrow: 1, bgcolor: "divider", mt: 0.5 }} />}
       </Stack>
-      <Box sx={{ flex: 1, pb: 3, minWidth: 0 }}>
-        <Typography variant="caption" color="text.secondary">
+      <Box sx={{ flex: 1, pb: 3.5, minWidth: 0 }}>
+        <Typography variant="body2" fontWeight={700} color="text.primary">
           {formatDate(event.event_date)}
         </Typography>
         <Stack
@@ -85,9 +97,7 @@ function TimelineEventCard({
           sx={{ mt: 1 }}
         >
           {distinctSourceProviders.map((provider) => (
-            <Typography key={provider} variant="caption" color="text.secondary">
-              {sourceLabel(provider)}
-            </Typography>
+            <SourceBadge key={provider} provider={provider} />
           ))}
           {event.confidence !== null && (
             <Typography variant="caption" color="text.secondary">
@@ -100,12 +110,25 @@ function TimelineEventCard({
         </Stack>
 
         <Collapse in={expanded} unmountOnExit>
-          <Box sx={{ mt: 1, pl: 1.5, borderLeft: 2, borderColor: "divider" }}>
-            <Typography variant="body2" color="text.secondary">
+          <Box
+            sx={{
+              mt: 1,
+              p: 1.5,
+              pl: 2,
+              borderLeft: 3,
+              borderColor: `${severityColor(event.severity)}.main`,
+              bgcolor: "background.default",
+              borderRadius: 1,
+            }}
+          >
+            <Typography variant="caption" fontWeight={600} color="text.secondary" display="block">
+              Why it matters
+            </Typography>
+            <Typography variant="body2" sx={{ mt: 0.5 }}>
               {event.why_it_matters}
             </Typography>
             <Stack spacing={0.5} sx={{ mt: 1.5 }}>
-              <Typography variant="caption" fontWeight={600}>
+              <Typography variant="caption" fontWeight={600} color="text.secondary">
                 Sources ({event.evidence_count})
               </Typography>
               <SourceLink source={event.primary_source} />

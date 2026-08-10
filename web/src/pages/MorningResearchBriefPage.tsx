@@ -250,8 +250,17 @@ export function MorningResearchBriefPage(): ReactElement {
           </Stack>
 
           {historicalIntelligence.length > 0 && (
-            <Box>
-              <Typography variant="h6" color="text.secondary" gutterBottom sx={{ mt: 2 }}>
+            <Box
+              sx={{
+                mt: 2,
+                p: 2,
+                bgcolor: "background.default",
+                border: 1,
+                borderColor: "divider",
+                borderRadius: 1,
+              }}
+            >
+              <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                 Newly Discovered Historical Intelligence
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>

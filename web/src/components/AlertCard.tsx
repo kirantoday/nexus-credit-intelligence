@@ -15,6 +15,7 @@ import type { AlertRow } from "../api/filingMonitor";
 import { useAlertEvidence } from "../queries/useAlerts";
 import { SeverityBadge } from "./SeverityBadge";
 import { formatDate, formatDateTime } from "../lib/format";
+import { SUGGESTED_ACCENT_COLOR } from "../theme";
 
 interface AlertCardProps {
   alert: AlertRow;
@@ -46,7 +47,11 @@ export function AlertCard({ alert, onAcknowledge, onDismiss }: AlertCardProps): 
                 label={alert.ai_assisted ? "AI-assisted" : "Deterministic"}
                 size="small"
                 variant="outlined"
-                color={alert.ai_assisted ? "secondary" : "default"}
+                sx={
+                  alert.ai_assisted
+                    ? { color: SUGGESTED_ACCENT_COLOR, borderColor: SUGGESTED_ACCENT_COLOR }
+                    : undefined
+                }
               />
               {alert.is_backfill && <Chip label="Historical" size="small" color="default" />}
               <Chip label={alert.status} size="small" variant="outlined" />

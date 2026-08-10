@@ -47,7 +47,12 @@ function MetricCard({
   return (
     <Box>
       <Stack direction="row" alignItems="center">
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          fontWeight={600}
+          sx={{ letterSpacing: 0.3 }}
+        >
           {label}
         </Typography>
         <InfoGlyph description={METRIC_DESCRIPTION[label]} />
@@ -80,7 +85,13 @@ function MetricCard({
 // don't need the whole content area, and stretching to fill it read as
 // visually unfinished. Caps at 560px on desktop, falls back to full width
 // on narrow screens where a fixed max-width would just force wrapping.
-const PANEL_SX = { p: 1.5, width: { xs: "100%", sm: 560 }, maxWidth: "100%" } as const;
+const PANEL_SX = {
+  p: 1.5,
+  width: { xs: "100%", sm: 560 },
+  maxWidth: "100%",
+  borderTop: 3,
+  borderTopColor: "primary.main",
+} as const;
 
 /**
  * "What macroeconomic environment surrounds this credit?" (Milestone 5) —
@@ -112,7 +123,13 @@ export function MarketContextPanel(): ReactElement {
 
   return (
     <Paper variant="outlined" sx={PANEL_SX}>
-      <Typography variant="overline" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
+      <Typography
+        variant="overline"
+        color="text.secondary"
+        display="block"
+        fontWeight={600}
+        sx={{ mb: 0.5 }}
+      >
         Market Context
       </Typography>
       <Stack direction={{ xs: "column", sm: "row" }} spacing={4}>

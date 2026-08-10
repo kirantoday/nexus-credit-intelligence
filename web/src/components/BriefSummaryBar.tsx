@@ -3,10 +3,26 @@ import { Box, Paper, Stack, Typography } from "@mui/material";
 import type { MorningBriefSummary } from "../api/filingMonitor";
 import { formatDate, formatDateTime } from "../lib/format";
 
-function Stat({ label, value }: { label: string; value: string | number }): ReactElement {
+function Stat({
+  label,
+  value,
+  color,
+  emphasize,
+}: {
+  label: string;
+  value: string | number;
+  color?: "error.main" | "warning.main" | "info.main";
+  emphasize?: boolean;
+}): ReactElement {
   return (
     <Box sx={{ minWidth: 120 }}>
-      <Typography variant="h5">{value}</Typography>
+      <Typography
+        variant={emphasize ? "h4" : "h5"}
+        fontWeight={emphasize ? 700 : 600}
+        color={emphasize ? "primary.main" : (color ?? "text.primary")}
+      >
+        {value}
+      </Typography>
       <Typography variant="caption" color="text.secondary">
         {label}
       </Typography>
@@ -36,10 +52,14 @@ export function BriefSummaryBar({ summary }: { summary: MorningBriefSummary }): 
         </Typography>
       </Stack>
       <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
-        <Stat label="Issuers with developments" value={summary.issuers_with_developments} />
-        <Stat label="High severity" value={summary.severity_counts.high} />
-        <Stat label="Medium severity" value={summary.severity_counts.medium} />
-        <Stat label="Low severity" value={summary.severity_counts.low} />
+        <Stat
+          label="Issuers with developments"
+          value={summary.issuers_with_developments}
+          emphasize
+        />
+        <Stat label="High severity" value={summary.severity_counts.high} color="error.main" />
+        <Stat label="Medium severity" value={summary.severity_counts.medium} color="warning.main" />
+        <Stat label="Low severity" value={summary.severity_counts.low} color="info.main" />
         {summary.historical_intelligence_issuer_count > 0 && (
           <Stat
             label="Issuers with historical intelligence"

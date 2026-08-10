@@ -39,7 +39,8 @@ describe("UniverseCard", () => {
     renderWithRouter(<UniverseCard universe={BASE_UNIVERSE} />);
 
     expect(screen.getByText("Distressed Core")).toBeInTheDocument();
-    expect(screen.getByText("5 issuers")).toBeInTheDocument();
+    expect(screen.getByText("5")).toBeInTheDocument();
+    expect(screen.getByText("issuers")).toBeInTheDocument();
     expect(screen.getByText("critical")).toBeInTheDocument();
     expect(screen.getByText("verified")).toBeInTheDocument();
     expect(screen.getByText(/Last verified/)).toBeInTheDocument();
@@ -68,7 +69,8 @@ describe("UniverseCard", () => {
   it("uses singular 'issuer' when the count is exactly one", () => {
     renderWithRouter(<UniverseCard universe={{ ...BASE_UNIVERSE, issuer_count: 1 }} />);
 
-    expect(screen.getByText("1 issuer")).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument();
+    expect(screen.getByText("issuer")).toBeInTheDocument();
   });
 
   it("navigates to Credit Universe filtered by this universe when clicked", async () => {

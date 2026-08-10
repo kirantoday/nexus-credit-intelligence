@@ -54,7 +54,9 @@ function DocketCard({ docket }: { docket: CourtDocketRow }): ReactElement {
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} alignItems="center">
-          {docket.chapter && <Chip label={`Chapter ${docket.chapter}`} size="small" />}
+          {docket.chapter && (
+            <Chip label={`Chapter ${docket.chapter}`} size="small" color="error" />
+          )}
           <Link href={docket.courtlistener_url} target="_blank" rel="noopener noreferrer">
             <Typography variant="caption">View on CourtListener</Typography>
           </Link>
@@ -65,7 +67,7 @@ function DocketCard({ docket }: { docket: CourtDocketRow }): ReactElement {
         <Typography variant="caption" color="text.secondary">
           {docket.entry_count} docket entr{docket.entry_count === 1 ? "y" : "ies"} on file
         </Typography>
-        <Button size="small" onClick={() => setExpanded((e) => !e)}>
+        <Button size="small" variant="outlined" onClick={() => setExpanded((e) => !e)}>
           {expanded ? "Hide docket entries" : "View docket entries"}
         </Button>
       </Stack>

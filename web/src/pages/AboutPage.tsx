@@ -1,6 +1,16 @@
 import type { ReactElement, ReactNode } from "react";
 import { Link as RouterLink } from "react-router";
-import { Box, Card, CardContent, Chip, Divider, Link, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Card,
+  CardContent,
+  Chip,
+  Divider,
+  Link,
+  Paper,
+  Stack,
+  Typography,
+} from "@mui/material";
 
 function SectionHeading({ children }: { children: string }): ReactElement {
   return (
@@ -212,8 +222,17 @@ function RoadmapColumn({
   items: string[];
   color: "success" | "warning" | "default";
 }): ReactElement {
+  const borderColor = color === "default" ? "divider" : `${color}.main`;
   return (
-    <Box sx={{ flex: 1, minWidth: 220 }}>
+    <Box
+      sx={{
+        flex: 1,
+        minWidth: 220,
+        pt: 1.5,
+        borderTop: 3,
+        borderTopColor: borderColor,
+      }}
+    >
       <Chip label={label} size="small" color={color} sx={{ mb: 1 }} />
       <Stack component="ul" aria-label={`${label} items`} spacing={0.5} sx={{ pl: 2.5, m: 0 }}>
         {items.map((item) => (
@@ -278,10 +297,18 @@ export function AboutPage(): ReactElement {
         <SectionHeading>Data Sources</SectionHeading>
         <Stack spacing={1.5}>
           {DATA_SOURCES.map((source) => (
-            <Stack key={source.name} direction={{ xs: "column", sm: "row" }} spacing={1}>
-              <Typography variant="body2" fontWeight={600} sx={{ minWidth: 180 }}>
-                {source.name}
-              </Typography>
+            <Stack
+              key={source.name}
+              direction={{ xs: "column", sm: "row" }}
+              spacing={1.5}
+              alignItems={{ sm: "center" }}
+            >
+              <Chip
+                label={source.name}
+                size="small"
+                variant="outlined"
+                sx={{ minWidth: 160, justifyContent: "flex-start" }}
+              />
               <Typography variant="body2" color="text.secondary">
                 {source.role}
               </Typography>
@@ -292,40 +319,61 @@ export function AboutPage(): ReactElement {
 
       <Section>
         <SectionHeading>How Nexus Uses AI</SectionHeading>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          Nexus does not send everything to a language model. Most evidence is filtered by
-          deterministic rules first; AI is reserved for the cases that genuinely need semantic
-          judgment, such as:
-        </Typography>
-        <Stack component="ul" spacing={0.5} sx={{ pl: 2.5, m: 0, mb: 2 }}>
-          {AI_TASKS.map((task) => (
-            <Typography key={task} component="li" variant="body2" color="text.secondary">
-              {task}
-            </Typography>
-          ))}
-        </Stack>
-        <Typography variant="subtitle2" gutterBottom>
-          Model routing
-        </Typography>
-        <Stack component="ol" spacing={0.5} sx={{ pl: 2.5, m: 0 }}>
-          {AI_ROUTING_STEPS.map((step) => (
-            <Typography key={step} component="li" variant="body2" color="text.secondary">
-              {step}
-            </Typography>
-          ))}
-        </Stack>
-        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 2 }}>
-          AI in Nexus assists research interpretation. It does not make investment decisions,
-          execute trades, or guarantee accuracy — every AI-assisted conclusion remains linked to its
-          underlying evidence for analyst review.
-        </Typography>
+        <Paper
+          variant="outlined"
+          sx={{
+            p: 2,
+            bgcolor: "#EEF3F8",
+            borderLeft: 3,
+            borderLeftColor: "info.main",
+          }}
+        >
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+            Nexus does not send everything to a language model. Most evidence is filtered by
+            deterministic rules first; AI is reserved for the cases that genuinely need semantic
+            judgment, such as:
+          </Typography>
+          <Stack component="ul" spacing={0.5} sx={{ pl: 2.5, m: 0, mb: 2 }}>
+            {AI_TASKS.map((task) => (
+              <Typography key={task} component="li" variant="body2" color="text.secondary">
+                {task}
+              </Typography>
+            ))}
+          </Stack>
+          <Typography variant="subtitle2" gutterBottom>
+            Model routing
+          </Typography>
+          <Stack component="ol" spacing={0.5} sx={{ pl: 2.5, m: 0 }}>
+            {AI_ROUTING_STEPS.map((step) => (
+              <Typography key={step} component="li" variant="body2" color="text.secondary">
+                {step}
+              </Typography>
+            ))}
+          </Stack>
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 2 }}>
+            AI in Nexus assists research interpretation. It does not make investment decisions,
+            execute trades, or guarantee accuracy — every AI-assisted conclusion remains linked to
+            its underlying evidence for analyst review.
+          </Typography>
+        </Paper>
       </Section>
 
       <Section>
         <SectionHeading>AI Governance &amp; Cost Control</SectionHeading>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, fontStyle: "italic" }}>
-          AI is treated as a governed research tool, not an unlimited background expense.
-        </Typography>
+        <Box
+          sx={{
+            mb: 1.5,
+            px: 2,
+            py: 1,
+            borderLeft: 3,
+            borderLeftColor: "primary.main",
+            bgcolor: "background.default",
+          }}
+        >
+          <Typography variant="body2" fontStyle="italic">
+            AI is treated as a governed research tool, not an unlimited background expense.
+          </Typography>
+        </Box>
         <Stack component="ul" spacing={0.5} sx={{ pl: 2.5, m: 0 }}>
           {GOVERNANCE_POINTS.map((point) => (
             <Typography key={point} component="li" variant="body2" color="text.secondary">

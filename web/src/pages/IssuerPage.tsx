@@ -28,7 +28,9 @@ import { SyntheticDataBadge } from "../components/SyntheticDataBadge";
 import { useCapitalStructure } from "../queries/useCapitalStructure";
 import { useIssuerDetail } from "../queries/useIssuerDetail";
 import { useIssuerTimeline } from "../queries/useIssuerTimeline";
+import { categoryAccentColor } from "../lib/categoryColor";
 import { formatCompactCurrency, formatDate } from "../lib/format";
+import { SUGGESTED_ACCENT_COLOR } from "../theme";
 
 const ACTIVITY_CATEGORY_LABEL: Record<IssuerActivityCategory, string> = {
   filing: "Filing",
@@ -157,6 +159,18 @@ function SectionHeading({ children }: { children: string }): ReactElement {
   );
 }
 
+/** A visually secondary/system-metadata section heading (Recent data
+ * updates, where information came from) — smaller and muted relative to
+ * primary research sections (Distress Timeline, filings, court), so a
+ * reader's eye naturally settles on the material content first. */
+function SecondaryHeading({ children }: { children: string }): ReactElement {
+  return (
+    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+      {children}
+    </Typography>
+  );
+}
+
 export function IssuerPage(): ReactElement {
   const { issuerId } = useParams<{ issuerId: string }>();
   const issuerQuery = useIssuerDetail(issuerId);
@@ -205,7 +219,7 @@ export function IssuerPage(): ReactElement {
         </Stack>
       </Box>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
+      <Paper variant="outlined" sx={{ p: 2, borderTop: 3, borderTopColor: "primary.main" }}>
         <SectionHeading>Distress Timeline</SectionHeading>
         {timelineQuery.isLoading && (
           <Typography variant="body2" color="text.secondary">
@@ -345,7 +359,12 @@ export function IssuerPage(): ReactElement {
       </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
-        <SectionHeading>Recent data updates</SectionHeading>
+        <SectionHeading>What happened in court?</SectionHeading>
+        <CourtDocketSection dockets={issuer.court_dockets} />
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: 2, bgcolor: "background.default" }}>
+        <SecondaryHeading>Recent data updates</SecondaryHeading>
         <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
           When Nexus's own data coverage changed for this issuer — not necessarily when these events
           happened to the issuer itself. See the Distress Timeline above for material credit
@@ -385,13 +404,8 @@ export function IssuerPage(): ReactElement {
         )}
       </Paper>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <SectionHeading>What happened in court?</SectionHeading>
-        <CourtDocketSection dockets={issuer.court_dockets} />
-      </Paper>
-
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <SectionHeading>Where did this information come from?</SectionHeading>
+      <Paper variant="outlined" sx={{ p: 2, bgcolor: "background.default" }}>
+        <SecondaryHeading>Where did this information come from?</SecondaryHeading>
         <Stack direction="row" spacing={2} flexWrap="wrap">
           {issuer.data_sources.map((source) => (
             <Box key={source.provider}>
@@ -407,8 +421,8 @@ export function IssuerPage(): ReactElement {
         </Stack>
       </Paper>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <SectionHeading>Which Research Universes is this issuer in?</SectionHeading>
+      <Paper variant="outlined" sx={{ p: 2, bgcolor: "background.default" }}>
+        <SecondaryHeading>Which Research Universes is this issuer in?</SecondaryHeading>
         <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
           Curated coverage decisions, each with a dated rationale — never itself an assertion of
           current distress, bankruptcy, rating, or refinancing risk. See the sections above for
@@ -443,7 +457,11 @@ export function IssuerPage(): ReactElement {
                           label={displayUniverseName(membership.name)}
                           size="small"
                           variant="filled"
-                          color={membership.collection_type === "benchmark" ? "info" : "default"}
+                          color={
+                            membership.collection_type === "benchmark"
+                              ? "info"
+                              : categoryAccentColor(membership.name)
+                          }
                         />
                       </Tooltip>
                     ))}
@@ -468,7 +486,11 @@ export function IssuerPage(): ReactElement {
                           label={`${displayUniverseName(membership.name)} (suggested)`}
                           size="small"
                           variant="outlined"
-                          sx={{ borderStyle: "dashed" }}
+                          sx={{
+                            borderStyle: "dashed",
+                            color: SUGGESTED_ACCENT_COLOR,
+                            borderColor: SUGGESTED_ACCENT_COLOR,
+                          }}
                         />
                       </Tooltip>
                     ))}

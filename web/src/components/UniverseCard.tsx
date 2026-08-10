@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 import { useNavigate } from "react-router";
 import { Box, Card, CardActionArea, CardContent, Chip, Stack, Typography } from "@mui/material";
 import type { ResearchUniverseSummary } from "../api/researchUniverse";
+import { categoryAccentColor } from "../lib/categoryColor";
 import { formatDate } from "../lib/format";
 
 const PRIORITY_COLOR: Record<string, "error" | "warning" | "info" | "default"> = {
@@ -9,6 +10,12 @@ const PRIORITY_COLOR: Record<string, "error" | "warning" | "info" | "default"> =
   high: "warning",
   medium: "info",
   low: "default",
+};
+
+const VERIFICATION_COLOR: Record<string, "success" | "default"> = {
+  verified: "success",
+  partial: "default",
+  unverified: "default",
 };
 
 /**
@@ -19,30 +26,46 @@ const PRIORITY_COLOR: Record<string, "error" | "warning" | "info" | "default"> =
  */
 export function UniverseCard({ universe }: { universe: ResearchUniverseSummary }): ReactElement {
   const navigate = useNavigate();
+  const accent =
+    universe.collection_type === "benchmark" ? "info" : categoryAccentColor(universe.name);
 
   return (
     <Card
       variant="outlined"
       sx={{
-        borderColor: universe.collection_type === "benchmark" ? "info.main" : undefined,
+        borderLeft: 4,
+        borderLeftColor: `${accent}.main`,
+        height: "100%",
       }}
     >
-      <CardActionArea onClick={() => navigate(`/?universe=${universe.id}`)}>
+      <CardActionArea onClick={() => navigate(`/?universe=${universe.id}`)} sx={{ height: "100%" }}>
         <CardContent>
-          <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-            <Typography variant="h6">{universe.name}</Typography>
-            {universe.collection_type === "benchmark" && (
-              <Chip label="Benchmark" size="small" color="info" variant="outlined" />
-            )}
+          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+            <Box>
+              <Typography variant="h6">{universe.name}</Typography>
+              {universe.collection_type === "benchmark" && (
+                <Chip
+                  label="Benchmark"
+                  size="small"
+                  color="info"
+                  variant="outlined"
+                  sx={{ mt: 0.5 }}
+                />
+              )}
+            </Box>
+            <Box sx={{ textAlign: "right", flexShrink: 0 }}>
+              <Typography variant="h5" fontWeight={700} color="primary.main" lineHeight={1.1}>
+                {universe.issuer_count}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                issuer{universe.issuer_count === 1 ? "" : "s"}
+              </Typography>
+            </Box>
           </Stack>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 1.5 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1, mb: 1.5 }}>
             {universe.description}
           </Typography>
           <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-            <Chip
-              label={`${universe.issuer_count} issuer${universe.issuer_count === 1 ? "" : "s"}`}
-              size="small"
-            />
             {universe.priority && (
               <Chip
                 label={universe.priority}
@@ -51,7 +74,16 @@ export function UniverseCard({ universe }: { universe: ResearchUniverseSummary }
                 variant="outlined"
               />
             )}
-            <Chip label={universe.verification_status} size="small" variant="outlined" />
+            <Chip
+              label={universe.verification_status}
+              size="small"
+              color={VERIFICATION_COLOR[universe.verification_status] ?? "default"}
+              variant={
+                VERIFICATION_COLOR[universe.verification_status] === "success"
+                  ? "filled"
+                  : "outlined"
+              }
+            />
           </Stack>
           <Box sx={{ mt: 1 }}>
             <Typography variant="caption" color="text.secondary">
