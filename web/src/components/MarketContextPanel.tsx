@@ -60,12 +60,13 @@ function MetricCard({
         <>
           <Typography variant="h6" fontWeight={600}>
             {formatPercent(observation.value)}
+            {showBasisPoints && (
+              <Typography component="span" variant="body2" color="text.secondary">
+                {" "}
+                · {formatBasisPoints(observation.value)}
+              </Typography>
+            )}
           </Typography>
-          {showBasisPoints && (
-            <Typography variant="caption" color="text.secondary" display="block">
-              {formatBasisPoints(observation.value)}
-            </Typography>
-          )}
           <Typography variant="caption" color="text.secondary" display="block">
             As of {formatDate(observation.as_of_date)}
           </Typography>
@@ -74,6 +75,12 @@ function MetricCard({
     </Box>
   );
 }
+
+// A compact, intentional card rather than a full-width strip: two metrics
+// don't need the whole content area, and stretching to fill it read as
+// visually unfinished. Caps at 560px on desktop, falls back to full width
+// on narrow screens where a fixed max-width would just force wrapping.
+const PANEL_SX = { p: 1.5, width: { xs: "100%", sm: 560 }, maxWidth: "100%" } as const;
 
 /**
  * "What macroeconomic environment surrounds this credit?" (Milestone 5) —
@@ -87,7 +94,7 @@ export function MarketContextPanel(): ReactElement {
 
   if (isLoading) {
     return (
-      <Paper variant="outlined" sx={{ p: 1.5 }}>
+      <Paper variant="outlined" sx={PANEL_SX}>
         <Skeleton width={320} />
       </Paper>
     );
@@ -95,7 +102,7 @@ export function MarketContextPanel(): ReactElement {
 
   if (isError || !data) {
     return (
-      <Paper variant="outlined" sx={{ p: 1.5 }}>
+      <Paper variant="outlined" sx={PANEL_SX}>
         <Typography variant="body2" color="text.secondary">
           Market context unavailable.
         </Typography>
@@ -104,11 +111,11 @@ export function MarketContextPanel(): ReactElement {
   }
 
   return (
-    <Paper variant="outlined" sx={{ p: 1.5 }}>
+    <Paper variant="outlined" sx={PANEL_SX}>
       <Typography variant="overline" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
         Market Context
       </Typography>
-      <Stack direction={{ xs: "column", sm: "row" }} spacing={3}>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={4}>
         <MetricCard label="SOFR" observation={data.sofr} />
         <MetricCard label="HY OAS" observation={data.high_yield_oas} showBasisPoints />
       </Stack>

@@ -60,10 +60,10 @@ describe("MarketContextPanel", () => {
     renderWithProviders(<MarketContextPanel />);
 
     await waitFor(() => {
-      expect(screen.getByText("273 bps")).toBeInTheDocument();
+      expect(screen.getByText(/273 bps/)).toBeInTheDocument();
     });
     // SOFR is a rate, not a spread -- it must never get a bps conversion.
-    expect(screen.queryByText("364 bps")).not.toBeInTheDocument();
+    expect(screen.queryByText(/364 bps/)).not.toBeInTheDocument();
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
