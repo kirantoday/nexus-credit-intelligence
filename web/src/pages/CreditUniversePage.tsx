@@ -10,8 +10,6 @@ import {
   Paper,
   Stack,
   TextField,
-  ToggleButton,
-  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -19,7 +17,6 @@ import TablePagination from "@mui/material/TablePagination";
 import { DataTable } from "../components/DataTable";
 import { MarketContextPanel } from "../components/MarketContextPanel";
 import { ProvenanceBadge } from "../components/ProvenanceBadge";
-import { SyntheticDataBadge } from "../components/SyntheticDataBadge";
 import { useCreditUniverse } from "../queries/useCreditUniverse";
 import { useResearchUniverse, useResearchUniverseIssuers } from "../queries/useResearchUniverses";
 import type {
@@ -56,7 +53,6 @@ export function CreditUniversePage(): ReactElement {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const instrumentType = (searchParams.get("type") as InstrumentType | null) ?? undefined;
-  const syntheticFilter = searchParams.get("synthetic") as "all" | "real" | "synthetic" | null;
   const universeId = searchParams.get("universe") ?? undefined;
   const page = Number(searchParams.get("page") ?? "1");
   const pageSize = Number(searchParams.get("pageSize") ?? "25");
@@ -64,9 +60,6 @@ export function CreditUniversePage(): ReactElement {
   const sortBy: CreditUniverseSortField =
     sortByParam && isSortField(sortByParam) ? sortByParam : "legal_name";
   const sortDir = (searchParams.get("sortDir") as SortDirection | null) ?? "asc";
-
-  const isSynthetic =
-    syntheticFilter === "real" ? false : syntheticFilter === "synthetic" ? true : undefined;
 
   // Milestone 6.5 (PLAN.md 24.9): clicking a Research Universe opens Credit
   // Universe pre-filtered to it via this `universe` URL param.
@@ -113,7 +106,6 @@ export function CreditUniversePage(): ReactElement {
   const { data, isLoading, isFetching, isError, error } = useCreditUniverse({
     search: debouncedSearch || undefined,
     instrumentType,
-    isSynthetic,
     universeId,
     sortBy,
     sortDir,
@@ -238,18 +230,12 @@ export function CreditUniversePage(): ReactElement {
         enableSorting: false,
         accessorFn: (row) => row.provider,
         cell: ({ row }) => (
-          <Stack direction="row" spacing={1} alignItems="center">
-            <ProvenanceBadge
-              provider={row.original.provider}
-              asOfDate={row.original.as_of_date}
-              retrievedAt={row.original.retrieved_at}
-              freshness={row.original.freshness}
-            />
-            <SyntheticDataBadge
-              isSynthetic={row.original.is_synthetic}
-              reason={row.original.synthetic_reason}
-            />
-          </Stack>
+          <ProvenanceBadge
+            provider={row.original.provider}
+            asOfDate={row.original.as_of_date}
+            retrievedAt={row.original.retrieved_at}
+            freshness={row.original.freshness}
+          />
         ),
       },
     ],
@@ -263,8 +249,8 @@ export function CreditUniversePage(): ReactElement {
           Credit Universe
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          Every bond and loan Nexus currently tracks — real issuer data sourced from SEC EDGAR,
-          synthetic loan positions clearly labeled. Every value carries provenance.
+          Every bond and loan Nexus currently tracks — real issuer and instrument data with source
+          provenance.
         </Typography>
       </Box>
 
@@ -302,19 +288,6 @@ export function CreditUniversePage(): ReactElement {
             <MenuItem value="loan">Loan</MenuItem>
             <MenuItem value="equity">Equity</MenuItem>
           </TextField>
-          <ToggleButtonGroup
-            size="small"
-            exclusive
-            value={syntheticFilter ?? "all"}
-            onChange={(_e, value) => {
-              if (value !== null)
-                updateParams({ synthetic: value === "all" ? null : value, page: "1" });
-            }}
-          >
-            <ToggleButton value="all">All data</ToggleButton>
-            <ToggleButton value="real">Real only</ToggleButton>
-            <ToggleButton value="synthetic">Synthetic only</ToggleButton>
-          </ToggleButtonGroup>
         </Stack>
       </Paper>
 
@@ -332,7 +305,6 @@ export function CreditUniversePage(): ReactElement {
         !isFetching &&
         !debouncedSearch &&
         !instrumentType &&
-        !syntheticFilter &&
         (universeIssuersQuery.data ? (
           universeIssuersQuery.data.issuers.length === 0 ? (
             <Alert severity="info">
@@ -383,7 +355,7 @@ export function CreditUniversePage(): ReactElement {
           isLoading={isLoading || isFetching}
           isError={isError}
           emptyMessage={
-            debouncedSearch || instrumentType || syntheticFilter
+            debouncedSearch || instrumentType
               ? "No securities match these filters."
               : universeId
                 ? "No securities for this Research Universe's members."

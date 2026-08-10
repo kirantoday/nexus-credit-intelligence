@@ -89,7 +89,6 @@ export type SortDirection = "asc" | "desc";
 
 export interface CreditUniverseQuery {
   instrumentType?: InstrumentType;
-  isSynthetic?: boolean;
   search?: string;
   /** Milestone 6.5 (PLAN.md 24.9) — filters to issuers that are members of
    * this Research Universe/Watchlist/Benchmark collection. */
@@ -103,7 +102,6 @@ export interface CreditUniverseQuery {
 export async function fetchCreditUniverse(query: CreditUniverseQuery): Promise<CreditUniversePage> {
   const params = new URLSearchParams();
   if (query.instrumentType) params.set("instrument_type", query.instrumentType);
-  if (query.isSynthetic !== undefined) params.set("is_synthetic", String(query.isSynthetic));
   if (query.search) params.set("search", query.search);
   if (query.universeId) params.set("universe_id", query.universeId);
   if (query.sortBy) params.set("sort_by", query.sortBy);

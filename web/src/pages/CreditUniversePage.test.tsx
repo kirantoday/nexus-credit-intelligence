@@ -86,6 +86,29 @@ describe("CreditUniversePage", () => {
     expect(screen.getByText("$71.3B")).toBeInTheDocument();
   });
 
+  // PLAN.md Milestone 7.5.3 CFO-demo cleanup: Credit Universe is real-data
+  // only now — there is no user-facing synthetic mode.
+  it("does not render synthetic filter controls or synthetic badges", async () => {
+    vi.spyOn(creditUniverseApi, "fetchCreditUniverse").mockResolvedValue(ONE_ROW_RESPONSE);
+    vi.spyOn(marketContextApi, "fetchMarketContext").mockResolvedValue(EMPTY_MARKET_CONTEXT);
+
+    renderWithProviders(<CreditUniversePage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Apple Inc.")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("All data")).not.toBeInTheDocument();
+    expect(screen.queryByText("Real only")).not.toBeInTheDocument();
+    expect(screen.queryByText("Synthetic only")).not.toBeInTheDocument();
+    expect(screen.queryByText(/synthetic/i)).not.toBeInTheDocument();
+    // The description no longer mentions synthetic positions.
+    expect(
+      screen.getByText(
+        "Every bond and loan Nexus currently tracks — real issuer and instrument data with source provenance.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("shows the empty state when the API returns no rows", async () => {
     vi.spyOn(creditUniverseApi, "fetchCreditUniverse").mockResolvedValue({
       rows: [],

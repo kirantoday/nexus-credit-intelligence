@@ -4,8 +4,10 @@ the live nexus schema.
 Mirrors `test_leveraged_loan_generator.py`'s idempotency-testing style:
 these deliberately don't assert `issuer_created` to a fixed True/False,
 since whether *this* call creates Cobalt Ridge Energy Corp or finds it
-already seeded depends on prior runs (including the real, permanently
-committed seed run — see BUILD_LOG.md), not on anything this test controls.
+already seeded depends on prior runs within the same test transaction, not
+on anything permanently committed to production — the Milestone 7.5.3
+CFO-demo cleanup removed all synthetic-only demo issuers from production,
+so this generator is exercised purely via its own idempotent seeding.
 What's actually being proven is data correctness and idempotency.
 """
 
@@ -27,6 +29,7 @@ from app.synthetic.capital_structure_generator import (
     SYNTHETIC_REASON,
     seed_capital_structure_demo,
 )
+from app.synthetic.leveraged_loan_generator import seed_synthetic_loans
 
 
 def test_seed_cobalt_ridge_creates_eight_layers_in_rank_order(db_session: Session) -> None:
@@ -134,15 +137,22 @@ def test_seed_capital_structure_demo_is_idempotent_within_a_run(db_session: Sess
 
 
 def test_seed_reported_layers_for_existing_loan_issuers(db_session: Session) -> None:
-    """Milestone 4's leveraged-loan issuers (already permanently committed —
-    see BUILD_LOG.md) each get a reported capital_structure_position per
-    loan tranche, with no recovery scenario asserted."""
+    """Milestone 4's leveraged-loan issuers (seeded here via the idempotent
+    `seed_synthetic_loans` generator — no longer permanently committed to
+    production since the Milestone 7.5.3 CFO-demo cleanup removed all
+    synthetic-only demo issuers) each get a reported capital_structure_position
+    per loan tranche, with no recovery scenario asserted."""
+    # seed_capital_structure_demo's _seed_reported_layers_for_loan_issuers
+    # step only adds capital-structure rows on top of already-seeded loan
+    # issuers/securities — it never creates them — so the loan issuers must
+    # be seeded first.
+    seed_synthetic_loans(db_session)
     seed_capital_structure_demo(db_session)
 
     ridgeline = issuer_repository.get_issuer_by_legal_name(
         db_session, "Ridgeline Industrial Holdings LLC"
     )
-    assert ridgeline is not None, "Milestone 4's seed data must already be committed"
+    assert ridgeline is not None, "seed_synthetic_loans must seed Ridgeline"
 
     positions = capital_structure_repository.list_positions_by_issuer(db_session, ridgeline.id)
     assert len(positions) >= 1

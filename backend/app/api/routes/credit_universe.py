@@ -26,10 +26,6 @@ router = APIRouter(prefix="/api/credit-universe", tags=["credit-universe"])
 def get_credit_universe(
     db: Annotated[Session, Depends(get_db)],
     instrument_type: InstrumentType | None = None,
-    # Defaults to real-only (PLAN.md Milestone 7.5 section 2) — pass
-    # `is_synthetic=true` explicitly to see synthetic/demo rows, or
-    # `is_synthetic=` (empty, parses to `None`) for unfiltered.
-    is_synthetic: bool | None = False,
     search: Annotated[str | None, Query(max_length=200)] = None,
     universe_id: UUID | None = None,
     sort_by: SortField = "legal_name",
@@ -37,10 +33,17 @@ def get_credit_universe(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> CreditUniversePage:
+    # PLAN.md Milestone 7.5.3 CFO-demo cleanup: Credit Universe is the
+    # canonical, real-data-only research product — `is_synthetic` is
+    # deliberately not an exposed query parameter here (unlike
+    # `credit_universe_service`/`security_repository`, which still accept
+    # it generically for a future admin/scenario/Research Workspace
+    # caller). No caller of this public endpoint can request synthetic
+    # rows; there is no user-facing synthetic mode.
     return credit_universe_service.get_credit_universe_page(
         db,
         instrument_type=instrument_type,
-        is_synthetic=is_synthetic,
+        is_synthetic=False,
         search=search,
         universe_id=universe_id,
         sort_by=sort_by,
