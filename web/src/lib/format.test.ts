@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatBasisPoints,
   formatCompactCurrency,
   formatDate,
   formatDateTime,
@@ -44,6 +45,24 @@ describe("formatPercent", () => {
 
   it("returns a dash for null", () => {
     expect(formatPercent(null)).toBe("—");
+  });
+});
+
+describe("formatBasisPoints", () => {
+  it("converts a percent-scaled value to basis points", () => {
+    expect(formatBasisPoints("2.73")).toBe("273 bps");
+  });
+
+  it("rounds to the nearest whole basis point", () => {
+    expect(formatBasisPoints("2.735")).toBe("274 bps");
+  });
+
+  it("returns a dash for null", () => {
+    expect(formatBasisPoints(null)).toBe("—");
+  });
+
+  it("returns a dash for a non-numeric string rather than throwing", () => {
+    expect(formatBasisPoints("not-a-number")).toBe("—");
   });
 });
 

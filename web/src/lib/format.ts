@@ -24,6 +24,18 @@ export function formatPercent(value: string | null): string {
   return `${num.toFixed(2)}%`;
 }
 
+/**
+ * Converts a percent-scaled value (e.g. "2.73" meaning 2.73%) to basis
+ * points (273 bps) — a pure client-side unit conversion, never a second
+ * fetch from the source provider.
+ */
+export function formatBasisPoints(value: string | null): string {
+  if (value === null) return "—";
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "—";
+  return `${Math.round(num * 100)} bps`;
+}
+
 export function formatDate(value: string | null): string {
   if (value === null) return "—";
   const date = new Date(value);
