@@ -106,7 +106,7 @@ def get_alert_evidence(
 def acknowledge_alert(
     alert_id: UUID,
     db: Annotated[Session, Depends(get_db)],
-    acted_by: Annotated[str | None, Body()] = None,
+    acted_by: Annotated[str | None, Body(embed=True)] = None,
 ) -> AlertRow:
     try:
         return filing_monitor_api_service.acknowledge_alert(db, alert_id, acknowledged_by=acted_by)
