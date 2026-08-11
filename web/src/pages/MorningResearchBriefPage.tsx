@@ -142,7 +142,7 @@ export function MorningResearchBriefPage(): ReactElement {
             size="small"
             value={severity ?? ""}
             onChange={(e) => updateParams({ severity: e.target.value || null })}
-            sx={{ minWidth: 140 }}
+            sx={{ width: { xs: "100%", sm: 140 } }}
           >
             <MenuItem value="">All severities</MenuItem>
             <MenuItem value="high">High</MenuItem>
@@ -155,7 +155,7 @@ export function MorningResearchBriefPage(): ReactElement {
             size="small"
             value={universeId ?? ""}
             onChange={(e) => updateParams({ universe: e.target.value || null })}
-            sx={{ minWidth: 220 }}
+            sx={{ width: { xs: "100%", sm: 220 } }}
           >
             <MenuItem value="">All universes</MenuItem>
             {universesQuery.data?.universes.map((universe) => (
@@ -170,7 +170,7 @@ export function MorningResearchBriefPage(): ReactElement {
             size="small"
             value={detectionMethod ?? ""}
             onChange={(e) => updateParams({ detection: e.target.value || null })}
-            sx={{ minWidth: 160 }}
+            sx={{ width: { xs: "100%", sm: 160 } }}
           >
             <MenuItem value="">Deterministic + AI-assisted</MenuItem>
             <MenuItem value="deterministic">Deterministic only</MenuItem>
@@ -182,7 +182,7 @@ export function MorningResearchBriefPage(): ReactElement {
             size="small"
             value={status ?? ""}
             onChange={(e) => updateParams({ status: e.target.value || null })}
-            sx={{ minWidth: 160 }}
+            sx={{ width: { xs: "100%", sm: 160 } }}
           >
             <MenuItem value="">All statuses</MenuItem>
             <MenuItem value="new">New</MenuItem>
@@ -190,7 +190,7 @@ export function MorningResearchBriefPage(): ReactElement {
             <MenuItem value="dismissed">Dismissed</MenuItem>
           </TextField>
           <FormControlLabel
-            sx={{ ml: { sm: "auto" } }}
+            sx={{ ml: { sm: "auto" }, mr: 0 }}
             control={
               <Switch
                 checked={showHistory}

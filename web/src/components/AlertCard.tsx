@@ -114,7 +114,7 @@ export function AlertCard({ alert, onAcknowledge, onDismiss }: AlertCardProps): 
           </Typography>
         </Stack>
 
-        <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
           <Button size="small" onClick={() => setExpanded((e) => !e)}>
             {expanded ? "Hide evidence" : "Why was this flagged?"}
           </Button>

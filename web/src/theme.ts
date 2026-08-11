@@ -64,7 +64,14 @@ export const theme = createTheme({
   components: {
     MuiCssBaseline: {
       styleOverrides: {
-        body: { backgroundColor: PAGE_BACKGROUND },
+        // `overflowX: hidden` on the page root is a defensive backstop, not
+        // the primary fix for any specific component — every genuinely wide
+        // element (tables, the timeline) already contains its own scroll
+        // via `overflow-x: auto` on a bounded container, so this only ever
+        // guards against something unexpectedly exceeding the viewport
+        // width, without breaking normal vertical scrolling anywhere.
+        html: { overflowX: "hidden" },
+        body: { backgroundColor: PAGE_BACKGROUND, overflowX: "hidden" },
       },
     },
     MuiAppBar: {
@@ -141,6 +148,28 @@ export const theme = createTheme({
           backgroundColor: NAVY_DARK,
           fontSize: "0.75rem",
         },
+      },
+    },
+    // At phone widths the default single-row, no-wrap toolbar ("Rows per
+    // page: 25 ▾  1-25 of 340  ‹ ›") is wider than a 375px viewport can
+    // fit — letting it wrap and hiding the verbose "Rows per page" label
+    // text below `sm` (the select itself stays, so the control is still
+    // fully usable) keeps this free of pagination-caused horizontal
+    // overflow without touching page code. Desktop (`sm` and up) is
+    // untouched — the label stays exactly as before.
+    MuiTablePagination: {
+      styleOverrides: {
+        toolbar: ({ theme: t }) => ({
+          flexWrap: "wrap",
+          rowGap: 4,
+          [t.breakpoints.down("sm")]: { paddingLeft: 8 },
+        }),
+        selectLabel: ({ theme: t }) => ({
+          [t.breakpoints.down("sm")]: { display: "none" },
+        }),
+        displayedRows: ({ theme: t }) => ({
+          [t.breakpoints.down("sm")]: { marginLeft: "auto" },
+        }),
       },
     },
   },

@@ -2,7 +2,10 @@ import { type ReactElement, useMemo, useState } from "react";
 import {
   Alert,
   Box,
+  Card,
+  CardContent,
   Chip,
+  Divider,
   Paper,
   Stack,
   Table,
@@ -20,6 +23,7 @@ import type { CapitalStructurePositionRow } from "../api/capitalStructure";
 import { ProvenanceBadge } from "./ProvenanceBadge";
 import { SyntheticDataBadge } from "./SyntheticDataBadge";
 import { formatCompactCurrency, formatDate, formatPercent } from "../lib/format";
+import { useIsMobile } from "../lib/useIsMobile";
 
 const INSTRUMENT_TYPE_LABEL: Record<CapitalStructurePositionRow["instrument_type"], string> = {
   revolver: "Revolver",
@@ -33,6 +37,88 @@ const INSTRUMENT_TYPE_LABEL: Record<CapitalStructurePositionRow["instrument_type
 };
 
 type SortMode = "priority" | "maturity";
+
+/** Mobile equivalent of one capital-structure-stack table row — same
+ * fields, layer/priority-order position first since that's the whole
+ * point of this view. */
+function MobilePositionCard({ position }: { position: CapitalStructurePositionRow }): ReactElement {
+  return (
+    <Card variant="outlined">
+      <CardContent sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}>
+        <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+          <Box>
+            <Typography variant="body2" fontWeight={600}>
+              {position.layer_name}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {INSTRUMENT_TYPE_LABEL[position.instrument_type]}
+              {position.seniority ? ` · ${position.seniority.replace(/_/g, " ")}` : ""}
+            </Typography>
+          </Box>
+          <Chip
+            label={position.secured ? "Secured" : "Unsecured"}
+            size="small"
+            color={position.secured ? "success" : "default"}
+            variant="outlined"
+          />
+        </Stack>
+        <Divider sx={{ my: 1 }} />
+        <Stack spacing={0.5}>
+          <Stack direction="row" justifyContent="space-between">
+            <Typography variant="caption" color="text.secondary">
+              Amount Outstanding
+            </Typography>
+            <Typography variant="body2">
+              {formatCompactCurrency(position.amount_outstanding)}
+            </Typography>
+          </Stack>
+          <Stack direction="row" justifyContent="space-between">
+            <Typography variant="caption" color="text.secondary">
+              Maturity
+            </Typography>
+            <Typography variant="body2">{formatDate(position.maturity_date)}</Typography>
+          </Stack>
+          {position.enterprise_value_coverage !== null && (
+            <Stack direction="row" justifyContent="space-between">
+              <Typography variant="caption" color="text.secondary">
+                EV Coverage
+              </Typography>
+              <Tooltip title={position.recovery_scenario ?? ""}>
+                <Typography variant="body2">
+                  {Number(position.enterprise_value_coverage).toFixed(2)}x
+                </Typography>
+              </Tooltip>
+            </Stack>
+          )}
+          {position.illustrative_recovery !== null && (
+            <Stack direction="row" justifyContent="space-between">
+              <Typography variant="caption" color="text.secondary">
+                Illustrative Recovery
+              </Typography>
+              <Tooltip title={position.recovery_scenario ?? ""}>
+                <Typography variant="body2">
+                  {formatPercent(position.illustrative_recovery)}
+                </Typography>
+              </Tooltip>
+            </Stack>
+          )}
+        </Stack>
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+          <ProvenanceBadge
+            provider={position.provider}
+            asOfDate={position.as_of_date}
+            retrievedAt={position.retrieved_at}
+            freshness={position.freshness}
+          />
+          <SyntheticDataBadge
+            isSynthetic={position.is_synthetic}
+            reason={position.synthetic_reason}
+          />
+        </Stack>
+      </CardContent>
+    </Card>
+  );
+}
 
 /**
  * "What debt exists, which instrument sits where, what's secured vs.
@@ -57,6 +143,7 @@ export function CapitalStructureStack({
   isError: boolean;
 }): ReactElement {
   const [sortMode, setSortMode] = useState<SortMode>("priority");
+  const isMobile = useIsMobile();
 
   const rows = useMemo(() => {
     if (sortMode === "priority") return positions;
@@ -100,80 +187,88 @@ export function CapitalStructureStack({
         <ToggleButton value="maturity">Maturity order</ToggleButton>
       </ToggleButtonGroup>
 
-      <TableContainer component={Paper} variant="outlined">
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell>Layer</TableCell>
-              <TableCell>Secured</TableCell>
-              <TableCell align="right">Amount Outstanding</TableCell>
-              <TableCell>Maturity</TableCell>
-              <TableCell align="right">EV Coverage</TableCell>
-              <TableCell align="right">Illustrative Recovery</TableCell>
-              <TableCell>Source</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {rows.map((position) => (
-              <TableRow key={position.position_id} hover>
-                <TableCell>
-                  <Typography variant="body2" fontWeight={600}>
-                    {position.layer_name}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {INSTRUMENT_TYPE_LABEL[position.instrument_type]}
-                    {position.seniority ? ` · ${position.seniority.replace(/_/g, " ")}` : ""}
-                  </Typography>
-                </TableCell>
-                <TableCell>
-                  <Chip
-                    label={position.secured ? "Secured" : "Unsecured"}
-                    size="small"
-                    color={position.secured ? "success" : "default"}
-                    variant="outlined"
-                  />
-                </TableCell>
-                <TableCell align="right">
-                  {formatCompactCurrency(position.amount_outstanding)}
-                </TableCell>
-                <TableCell>{formatDate(position.maturity_date)}</TableCell>
-                <TableCell align="right">
-                  {position.enterprise_value_coverage === null ? (
-                    "—"
-                  ) : (
-                    <Tooltip title={position.recovery_scenario ?? ""}>
-                      <span>{Number(position.enterprise_value_coverage).toFixed(2)}x</span>
-                    </Tooltip>
-                  )}
-                </TableCell>
-                <TableCell align="right">
-                  {position.illustrative_recovery === null ? (
-                    "—"
-                  ) : (
-                    <Tooltip title={position.recovery_scenario ?? ""}>
-                      <span>{formatPercent(position.illustrative_recovery)}</span>
-                    </Tooltip>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <Stack direction="row" spacing={1} alignItems="center">
-                    <ProvenanceBadge
-                      provider={position.provider}
-                      asOfDate={position.as_of_date}
-                      retrievedAt={position.retrieved_at}
-                      freshness={position.freshness}
-                    />
-                    <SyntheticDataBadge
-                      isSynthetic={position.is_synthetic}
-                      reason={position.synthetic_reason}
-                    />
-                  </Stack>
-                </TableCell>
+      {isMobile ? (
+        <Stack spacing={1.5}>
+          {rows.map((position) => (
+            <MobilePositionCard key={position.position_id} position={position} />
+          ))}
+        </Stack>
+      ) : (
+        <TableContainer component={Paper} variant="outlined">
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Layer</TableCell>
+                <TableCell>Secured</TableCell>
+                <TableCell align="right">Amount Outstanding</TableCell>
+                <TableCell>Maturity</TableCell>
+                <TableCell align="right">EV Coverage</TableCell>
+                <TableCell align="right">Illustrative Recovery</TableCell>
+                <TableCell>Source</TableCell>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
+            </TableHead>
+            <TableBody>
+              {rows.map((position) => (
+                <TableRow key={position.position_id} hover>
+                  <TableCell>
+                    <Typography variant="body2" fontWeight={600}>
+                      {position.layer_name}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {INSTRUMENT_TYPE_LABEL[position.instrument_type]}
+                      {position.seniority ? ` · ${position.seniority.replace(/_/g, " ")}` : ""}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Chip
+                      label={position.secured ? "Secured" : "Unsecured"}
+                      size="small"
+                      color={position.secured ? "success" : "default"}
+                      variant="outlined"
+                    />
+                  </TableCell>
+                  <TableCell align="right">
+                    {formatCompactCurrency(position.amount_outstanding)}
+                  </TableCell>
+                  <TableCell>{formatDate(position.maturity_date)}</TableCell>
+                  <TableCell align="right">
+                    {position.enterprise_value_coverage === null ? (
+                      "—"
+                    ) : (
+                      <Tooltip title={position.recovery_scenario ?? ""}>
+                        <span>{Number(position.enterprise_value_coverage).toFixed(2)}x</span>
+                      </Tooltip>
+                    )}
+                  </TableCell>
+                  <TableCell align="right">
+                    {position.illustrative_recovery === null ? (
+                      "—"
+                    ) : (
+                      <Tooltip title={position.recovery_scenario ?? ""}>
+                        <span>{formatPercent(position.illustrative_recovery)}</span>
+                      </Tooltip>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <ProvenanceBadge
+                        provider={position.provider}
+                        asOfDate={position.as_of_date}
+                        retrievedAt={position.retrieved_at}
+                        freshness={position.freshness}
+                      />
+                      <SyntheticDataBadge
+                        isSynthetic={position.is_synthetic}
+                        reason={position.synthetic_reason}
+                      />
+                    </Stack>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
 
       {rows.some(
         (p) => p.enterprise_value_coverage !== null || p.illustrative_recovery !== null,

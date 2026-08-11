@@ -50,7 +50,7 @@ function TimelineEventCard({
   );
 
   return (
-    <Stack direction="row" spacing={2}>
+    <Stack direction="row" spacing={{ xs: 1, sm: 2 }}>
       <Stack alignItems="center" sx={{ width: 14, flexShrink: 0 }}>
         <Box
           sx={{

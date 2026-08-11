@@ -1,15 +1,18 @@
-import type { ReactElement } from "react";
+import { type ReactElement, useState } from "react";
 import { Link as RouterLink, Outlet, useLocation } from "react-router";
 import {
   AppBar,
   Box,
   Drawer,
+  IconButton,
   List,
   ListItemButton,
   ListItemText,
   Toolbar,
   Typography,
 } from "@mui/material";
+import MenuIcon from "@mui/icons-material/Menu";
+import { useIsMobile } from "../lib/useIsMobile";
 
 const DRAWER_WIDTH = 260;
 
@@ -44,39 +47,58 @@ const VISIBLE_NAV_ITEMS: NavItem[] = NAV_ITEMS.filter((item) => item.enabled);
 
 export function Layout(): ReactElement {
   const location = useLocation();
+  const isMobile = useIsMobile();
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  const navList = (
+    <List>
+      {VISIBLE_NAV_ITEMS.map((item) => (
+        <ListItemButton
+          key={item.path}
+          component={RouterLink}
+          to={item.path}
+          selected={location.pathname === item.path}
+          onClick={() => setMobileOpen(false)}
+        >
+          <ListItemText primary={item.label} />
+        </ListItemButton>
+      ))}
+    </List>
+  );
 
   return (
     <Box sx={{ display: "flex" }}>
       <AppBar position="fixed" sx={{ zIndex: (muiTheme) => muiTheme.zIndex.drawer + 1 }}>
         <Toolbar>
+          <IconButton
+            color="inherit"
+            aria-label="Open navigation menu"
+            edge="start"
+            onClick={() => setMobileOpen(true)}
+            sx={{ mr: 2, display: { md: "none" } }}
+          >
+            <MenuIcon />
+          </IconButton>
           <Typography variant="h6" noWrap component="div">
             Nexus Credit Intelligence
           </Typography>
         </Toolbar>
       </AppBar>
       <Drawer
-        variant="permanent"
+        variant={isMobile ? "temporary" : "permanent"}
+        open={isMobile ? mobileOpen : true}
+        onClose={() => setMobileOpen(false)}
+        ModalProps={{ keepMounted: true }}
         sx={{
-          width: DRAWER_WIDTH,
-          flexShrink: 0,
+          width: { md: DRAWER_WIDTH },
+          flexShrink: { md: 0 },
           ["& .MuiDrawer-paper"]: { width: DRAWER_WIDTH, boxSizing: "border-box" },
         }}
       >
         <Toolbar />
-        <List>
-          {VISIBLE_NAV_ITEMS.map((item) => (
-            <ListItemButton
-              key={item.path}
-              component={RouterLink}
-              to={item.path}
-              selected={location.pathname === item.path}
-            >
-              <ListItemText primary={item.label} />
-            </ListItemButton>
-          ))}
-        </List>
+        {navList}
       </Drawer>
-      <Box component="main" sx={{ flexGrow: 1, p: 3 }}>
+      <Box component="main" sx={{ flexGrow: 1, p: { xs: 2, sm: 3 }, minWidth: 0 }}>
         <Toolbar />
         <Outlet />
       </Box>

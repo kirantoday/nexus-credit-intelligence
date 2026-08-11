@@ -4,7 +4,10 @@ import type { ColumnDef, SortingState } from "@tanstack/react-table";
 import {
   Alert,
   Box,
+  Card,
+  CardContent,
   Chip,
+  Divider,
   Link,
   MenuItem,
   Paper,
@@ -48,6 +51,101 @@ const SENIORITY_LABEL: Record<string, string> = {
   preferred: "Preferred",
   common: "Common",
 };
+
+function couponOrSpread(row: CreditUniverseRow): string {
+  if (row.coupon !== null) return formatPercent(row.coupon);
+  if (row.spread !== null) return `${row.benchmark ?? ""}+${formatPercent(row.spread)}`.trim();
+  return "—";
+}
+
+/**
+ * Mobile equivalent of the desktop table's row — same fields, highest-value
+ * first (issuer, then instrument), never fewer fields than the desktop
+ * table shows (PLAN.md CFO-demo mobile-polish pass §2: "Do not remove data
+ * merely to make the layout fit").
+ */
+function MobileSecurityCard({ row }: { row: CreditUniverseRow }): ReactElement {
+  return (
+    <Card variant="outlined">
+      <CardContent sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}>
+        <Link
+          component={RouterLink}
+          to={`/issuers/${row.issuer_id}`}
+          underline="hover"
+          color="inherit"
+        >
+          <Typography variant="body2" fontWeight={700}>
+            {row.issuer_legal_name}
+          </Typography>
+        </Link>
+        {row.issuer_ticker && (
+          <Typography variant="caption" color="text.secondary" display="block">
+            {row.issuer_ticker}
+          </Typography>
+        )}
+        <Typography variant="body2" sx={{ mt: 0.5 }}>
+          {row.description}
+        </Typography>
+
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="center"
+          flexWrap="wrap"
+          useFlexGap
+          sx={{ mt: 1 }}
+        >
+          <Chip
+            label={row.instrument_type}
+            size="small"
+            color={row.instrument_type === "bond" ? "primary" : "secondary"}
+            variant="outlined"
+          />
+          {row.seniority && (
+            <Typography variant="caption" color="text.secondary">
+              {SENIORITY_LABEL[row.seniority] ?? row.seniority}
+            </Typography>
+          )}
+          <Typography variant="caption" color="text.secondary">
+            {row.secured === null ? "—" : row.secured ? "Secured" : "Unsecured"}
+          </Typography>
+        </Stack>
+
+        <Divider sx={{ my: 1 }} />
+
+        <Stack spacing={0.5}>
+          <Stack direction="row" justifyContent="space-between">
+            <Typography variant="caption" color="text.secondary">
+              Maturity
+            </Typography>
+            <Typography variant="body2">{formatDate(row.maturity_date)}</Typography>
+          </Stack>
+          <Stack direction="row" justifyContent="space-between">
+            <Typography variant="caption" color="text.secondary">
+              Amount Outstanding
+            </Typography>
+            <Typography variant="body2">{formatCompactCurrency(row.amount_outstanding)}</Typography>
+          </Stack>
+          <Stack direction="row" justifyContent="space-between">
+            <Typography variant="caption" color="text.secondary">
+              Coupon / Spread
+            </Typography>
+            <Typography variant="body2">{couponOrSpread(row)}</Typography>
+          </Stack>
+        </Stack>
+
+        <Stack direction="row" justifyContent="flex-end" sx={{ mt: 1 }}>
+          <ProvenanceBadge
+            provider={row.provider}
+            asOfDate={row.as_of_date}
+            retrievedAt={row.retrieved_at}
+            freshness={row.freshness}
+          />
+        </Stack>
+      </CardContent>
+    </Card>
+  );
+}
 
 export function CreditUniversePage(): ReactElement {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -273,7 +371,7 @@ export function CreditUniversePage(): ReactElement {
             size="small"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            sx={{ minWidth: 280 }}
+            sx={{ width: { xs: "100%", sm: 280 } }}
           />
           <TextField
             label="Instrument type"
@@ -281,7 +379,7 @@ export function CreditUniversePage(): ReactElement {
             size="small"
             value={instrumentType ?? ""}
             onChange={(e) => updateParams({ type: e.target.value || null, page: "1" })}
-            sx={{ minWidth: 160 }}
+            sx={{ width: { xs: "100%", sm: 160 } }}
           >
             <MenuItem value="">All types</MenuItem>
             <MenuItem value="bond">Bond</MenuItem>
@@ -341,6 +439,7 @@ export function CreditUniversePage(): ReactElement {
         <DataTable
           data={data?.rows ?? []}
           columns={columns}
+          renderMobileCard={(row) => <MobileSecurityCard row={row} />}
           sorting={sorting}
           onSortingChange={(updater) => {
             const next = typeof updater === "function" ? updater(sorting) : updater;

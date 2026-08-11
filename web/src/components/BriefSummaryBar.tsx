@@ -15,7 +15,7 @@ function Stat({
   emphasize?: boolean;
 }): ReactElement {
   return (
-    <Box sx={{ minWidth: 120 }}>
+    <Box>
       <Typography
         variant={emphasize ? "h4" : "h5"}
         fontWeight={emphasize ? 700 : 600}
@@ -51,7 +51,17 @@ export function BriefSummaryBar({ summary }: { summary: MorningBriefSummary }): 
           Data as of {formatDateTime(summary.as_of)}
         </Typography>
       </Stack>
-      <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: {
+            xs: "repeat(2, 1fr)",
+            sm: "repeat(auto-fit, minmax(140px, 1fr))",
+          },
+          columnGap: 3,
+          rowGap: 2,
+        }}
+      >
         <Stat
           label="Issuers with developments"
           value={summary.issuers_with_developments}
@@ -66,7 +76,7 @@ export function BriefSummaryBar({ summary }: { summary: MorningBriefSummary }): 
             value={summary.historical_intelligence_issuer_count}
           />
         )}
-      </Stack>
+      </Box>
       {summary.no_material_changes && (
         <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
           No material research developments in the latest research cycle.

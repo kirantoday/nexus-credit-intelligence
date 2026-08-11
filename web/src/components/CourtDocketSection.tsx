@@ -2,9 +2,12 @@ import { type ReactElement, useState } from "react";
 import {
   Box,
   Button,
+  Card,
+  CardContent,
   Chip,
   CircularProgress,
   Collapse,
+  Divider,
   Link,
   Stack,
   Table,
@@ -15,11 +18,36 @@ import {
   TableRow,
   Typography,
 } from "@mui/material";
-import type { CourtDocketRow } from "../api/courtDocket";
+import type { CourtDocketEntryRow, CourtDocketRow } from "../api/courtDocket";
 import { useCourtDocketDetail } from "../queries/useCourtDockets";
 import { formatDate } from "../lib/format";
+import { useIsMobile } from "../lib/useIsMobile";
 
 const _RECENT_ENTRY_LIMIT = 10;
+
+/** Mobile equivalent of one docket-entries table row — same fields,
+ * date/entry number first since that's how an analyst scans a docket. */
+function MobileDocketEntryCard({ entry }: { entry: CourtDocketEntryRow }): ReactElement {
+  return (
+    <Card variant="outlined">
+      <CardContent sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}>
+        <Stack direction="row" justifyContent="space-between" alignItems="center">
+          <Typography variant="body2" fontWeight={600}>
+            {formatDate(entry.entry_date)}
+            {entry.entry_number !== null ? ` · Entry ${entry.entry_number}` : ""}
+          </Typography>
+          {entry.document_available ? (
+            <Chip label="Available" size="small" color="success" variant="outlined" />
+          ) : (
+            <Chip label="Not on RECAP" size="small" variant="outlined" />
+          )}
+        </Stack>
+        <Divider sx={{ my: 1 }} />
+        <Typography variant="body2">{entry.description}</Typography>
+      </CardContent>
+    </Card>
+  );
+}
 
 /**
  * One real, linked CourtListener docket embedded in Issuer Detail — "What
@@ -36,6 +64,7 @@ const _RECENT_ENTRY_LIMIT = 10;
 function DocketCard({ docket }: { docket: CourtDocketRow }): ReactElement {
   const [expanded, setExpanded] = useState(false);
   const detailQuery = useCourtDocketDetail(expanded ? docket.id : undefined);
+  const isMobile = useIsMobile();
   const entries = detailQuery.data?.entries ?? [];
   const recentEntries = [...entries]
     .sort((a, b) => (b.entry_date ?? "").localeCompare(a.entry_date ?? ""))
@@ -53,7 +82,7 @@ function DocketCard({ docket }: { docket: CourtDocketRow }): ReactElement {
             {docket.date_filed ? ` · filed ${formatDate(docket.date_filed)}` : ""}
           </Typography>
         </Box>
-        <Stack direction="row" spacing={1} alignItems="center">
+        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
           {docket.chapter && (
             <Chip label={`Chapter ${docket.chapter}`} size="small" color="error" />
           )}
@@ -63,7 +92,14 @@ function DocketCard({ docket }: { docket: CourtDocketRow }): ReactElement {
         </Stack>
       </Stack>
 
-      <Stack direction="row" spacing={2} alignItems="center" sx={{ mt: 1.5 }}>
+      <Stack
+        direction="row"
+        spacing={2}
+        alignItems="center"
+        flexWrap="wrap"
+        useFlexGap
+        sx={{ mt: 1.5 }}
+      >
         <Typography variant="caption" color="text.secondary">
           {docket.entry_count} docket entr{docket.entry_count === 1 ? "y" : "ies"} on file
         </Typography>
@@ -90,40 +126,53 @@ function DocketCard({ docket }: { docket: CourtDocketRow }): ReactElement {
                 ? `Showing ${recentEntries.length} most recent`
                 : "All docket entries"}
             </Typography>
-            <TableContainer sx={{ mt: 1 }}>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Filed</TableCell>
-                    <TableCell>Entry</TableCell>
-                    <TableCell>Description</TableCell>
-                    <TableCell>Document</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {recentEntries.map((entry) => (
-                    <TableRow key={entry.id} hover>
-                      <TableCell sx={{ whiteSpace: "nowrap" }}>
-                        {formatDate(entry.entry_date)}
-                      </TableCell>
-                      <TableCell>{entry.entry_number ?? "—"}</TableCell>
-                      <TableCell>
-                        <Typography variant="body2" sx={{ maxWidth: 480 }}>
-                          {entry.description}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        {entry.document_available ? (
-                          <Chip label="Available" size="small" color="success" variant="outlined" />
-                        ) : (
-                          <Chip label="Not on RECAP" size="small" variant="outlined" />
-                        )}
-                      </TableCell>
+            {isMobile ? (
+              <Stack spacing={1.5} sx={{ mt: 1 }}>
+                {recentEntries.map((entry) => (
+                  <MobileDocketEntryCard key={entry.id} entry={entry} />
+                ))}
+              </Stack>
+            ) : (
+              <TableContainer sx={{ mt: 1 }}>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Filed</TableCell>
+                      <TableCell>Entry</TableCell>
+                      <TableCell>Description</TableCell>
+                      <TableCell>Document</TableCell>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
+                  </TableHead>
+                  <TableBody>
+                    {recentEntries.map((entry) => (
+                      <TableRow key={entry.id} hover>
+                        <TableCell sx={{ whiteSpace: "nowrap" }}>
+                          {formatDate(entry.entry_date)}
+                        </TableCell>
+                        <TableCell>{entry.entry_number ?? "—"}</TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ maxWidth: 480 }}>
+                            {entry.description}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          {entry.document_available ? (
+                            <Chip
+                              label="Available"
+                              size="small"
+                              color="success"
+                              variant="outlined"
+                            />
+                          ) : (
+                            <Chip label="Not on RECAP" size="small" variant="outlined" />
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
           </>
         )}
       </Collapse>

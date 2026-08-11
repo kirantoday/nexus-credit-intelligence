@@ -11,3 +11,24 @@ import "@testing-library/jest-dom/vitest";
 afterEach(() => {
   cleanup();
 });
+
+// jsdom doesn't implement `window.matchMedia` at all — MUI's `useMediaQuery`
+// (the mobile-responsive hook, `useIsMobile`) would throw without this.
+// Defaults to "no match" (desktop/wide-viewport behavior), preserving every
+// existing test's assumptions unchanged; a test that specifically needs to
+// simulate a narrow viewport overrides `window.matchMedia` itself (see
+// Layout.test.tsx for the pattern).
+window.matchMedia =
+  window.matchMedia ||
+  function matchMediaMock(query: string): MediaQueryList {
+    return {
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    } as MediaQueryList;
+  };

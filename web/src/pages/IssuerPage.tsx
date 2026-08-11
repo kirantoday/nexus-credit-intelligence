@@ -3,8 +3,11 @@ import { Link as RouterLink, useParams } from "react-router";
 import {
   Alert,
   Box,
+  Card,
+  CardContent,
   Chip,
   CircularProgress,
+  Divider,
   Link,
   Paper,
   Stack,
@@ -18,7 +21,12 @@ import {
   Typography,
 } from "@mui/material";
 import { ApiError } from "../api/client";
-import type { IssuerActivityCategory, IssuerActivityItem } from "../api/issuer";
+import type {
+  IssuerActivityCategory,
+  IssuerActivityItem,
+  IssuerSecFilingRow,
+  IssuerSecurityRow,
+} from "../api/issuer";
 import type { IssuerUniverseMembership } from "../api/researchUniverse";
 import { CapitalStructureStack } from "../components/CapitalStructureStack";
 import { CourtDocketSection } from "../components/CourtDocketSection";
@@ -30,6 +38,7 @@ import { useIssuerDetail } from "../queries/useIssuerDetail";
 import { useIssuerTimeline } from "../queries/useIssuerTimeline";
 import { categoryAccentColor } from "../lib/categoryColor";
 import { formatCompactCurrency, formatDate } from "../lib/format";
+import { useIsMobile } from "../lib/useIsMobile";
 import { SUGGESTED_ACCENT_COLOR } from "../theme";
 
 const ACTIVITY_CATEGORY_LABEL: Record<IssuerActivityCategory, string> = {
@@ -171,11 +180,110 @@ function SecondaryHeading({ children }: { children: string }): ReactElement {
   );
 }
 
+/** Mobile equivalent of the "Securities on file" table row — same fields,
+ * highest-value first, never fewer than the desktop table shows. */
+function MobileSecurityCard({ security }: { security: IssuerSecurityRow }): ReactElement {
+  return (
+    <Card variant="outlined">
+      <CardContent sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}>
+        <Typography variant="body2" fontWeight={600}>
+          {security.description}
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          {security.instrument_type}
+          {security.secured !== null ? (security.secured ? " · secured" : " · unsecured") : ""}
+        </Typography>
+        <Divider sx={{ my: 1 }} />
+        <Stack spacing={0.5}>
+          <Stack direction="row" justifyContent="space-between">
+            <Typography variant="caption" color="text.secondary">
+              Identifiers
+            </Typography>
+            <Typography variant="body2">
+              {security.cusip ?? security.isin ?? security.figi ?? "—"}
+            </Typography>
+          </Stack>
+          <Stack direction="row" justifyContent="space-between">
+            <Typography variant="caption" color="text.secondary">
+              Maturity
+            </Typography>
+            <Typography variant="body2">{formatDate(security.maturity_date)}</Typography>
+          </Stack>
+          <Stack direction="row" justifyContent="space-between">
+            <Typography variant="caption" color="text.secondary">
+              Amount Outstanding
+            </Typography>
+            <Typography variant="body2">
+              {formatCompactCurrency(security.amount_outstanding)}
+            </Typography>
+          </Stack>
+        </Stack>
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+          <ProvenanceBadge
+            provider={security.provider}
+            asOfDate={security.as_of_date}
+            retrievedAt={security.retrieved_at}
+            freshness={security.freshness}
+          />
+          <SyntheticDataBadge
+            isSynthetic={security.is_synthetic}
+            reason={security.synthetic_reason}
+          />
+        </Stack>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Mobile equivalent of the "What filings support this?" table row. */
+function MobileFilingCard({ filing }: { filing: IssuerSecFilingRow }): ReactElement {
+  return (
+    <Card variant="outlined">
+      <CardContent sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}>
+        <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+          {filing.primary_document_url ? (
+            <Link href={filing.primary_document_url} target="_blank" rel="noopener noreferrer">
+              <Typography variant="body2" fontWeight={600}>
+                {filing.form_type}
+                {filing.is_amendment ? " (amended)" : ""}
+              </Typography>
+            </Link>
+          ) : (
+            <Typography variant="body2" fontWeight={600}>
+              {filing.form_type}
+              {filing.is_amendment ? " (amended)" : ""}
+            </Typography>
+          )}
+          <ProvenanceBadge
+            provider={filing.provider}
+            asOfDate={filing.as_of_date}
+            retrievedAt={filing.retrieved_at}
+            freshness={filing.freshness}
+          />
+        </Stack>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          fontFamily="monospace"
+          display="block"
+          sx={{ mt: 0.5, wordBreak: "break-all" }}
+        >
+          {filing.accession_no}
+        </Typography>
+        <Typography variant="caption" color="text.secondary" display="block">
+          Filed {formatDate(filing.filing_date)}
+        </Typography>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function IssuerPage(): ReactElement {
   const { issuerId } = useParams<{ issuerId: string }>();
   const issuerQuery = useIssuerDetail(issuerId);
   const capitalStructureQuery = useCapitalStructure(issuerId);
   const timelineQuery = useIssuerTimeline(issuerId);
+  const isMobile = useIsMobile();
 
   if (issuerQuery.isLoading) {
     return (
@@ -246,59 +354,67 @@ export function IssuerPage(): ReactElement {
       {showFlatSecurities && (
         <Paper variant="outlined" sx={{ p: 2 }}>
           <SectionHeading>Securities on file</SectionHeading>
-          <TableContainer>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Instrument</TableCell>
-                  <TableCell>Identifiers</TableCell>
-                  <TableCell>Maturity</TableCell>
-                  <TableCell align="right">Amount Outstanding</TableCell>
-                  <TableCell>Source</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {issuer.securities.map((security) => (
-                  <TableRow key={security.security_id} hover>
-                    <TableCell>
-                      <Typography variant="body2">{security.description}</Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {security.instrument_type}
-                        {security.secured !== null
-                          ? security.secured
-                            ? " · secured"
-                            : " · unsecured"
-                          : ""}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="caption">
-                        {security.cusip ?? security.isin ?? security.figi ?? "—"}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>{formatDate(security.maturity_date)}</TableCell>
-                    <TableCell align="right">
-                      {formatCompactCurrency(security.amount_outstanding)}
-                    </TableCell>
-                    <TableCell>
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <ProvenanceBadge
-                          provider={security.provider}
-                          asOfDate={security.as_of_date}
-                          retrievedAt={security.retrieved_at}
-                          freshness={security.freshness}
-                        />
-                        <SyntheticDataBadge
-                          isSynthetic={security.is_synthetic}
-                          reason={security.synthetic_reason}
-                        />
-                      </Stack>
-                    </TableCell>
+          {isMobile ? (
+            <Stack spacing={1.5}>
+              {issuer.securities.map((security) => (
+                <MobileSecurityCard key={security.security_id} security={security} />
+              ))}
+            </Stack>
+          ) : (
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Instrument</TableCell>
+                    <TableCell>Identifiers</TableCell>
+                    <TableCell>Maturity</TableCell>
+                    <TableCell align="right">Amount Outstanding</TableCell>
+                    <TableCell>Source</TableCell>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
+                </TableHead>
+                <TableBody>
+                  {issuer.securities.map((security) => (
+                    <TableRow key={security.security_id} hover>
+                      <TableCell>
+                        <Typography variant="body2">{security.description}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {security.instrument_type}
+                          {security.secured !== null
+                            ? security.secured
+                              ? " · secured"
+                              : " · unsecured"
+                            : ""}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="caption">
+                          {security.cusip ?? security.isin ?? security.figi ?? "—"}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>{formatDate(security.maturity_date)}</TableCell>
+                      <TableCell align="right">
+                        {formatCompactCurrency(security.amount_outstanding)}
+                      </TableCell>
+                      <TableCell>
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <ProvenanceBadge
+                            provider={security.provider}
+                            asOfDate={security.as_of_date}
+                            retrievedAt={security.retrieved_at}
+                            freshness={security.freshness}
+                          />
+                          <SyntheticDataBadge
+                            isSynthetic={security.is_synthetic}
+                            reason={security.synthetic_reason}
+                          />
+                        </Stack>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
         </Paper>
       )}
 
@@ -308,6 +424,12 @@ export function IssuerPage(): ReactElement {
           <Typography variant="body2" color="text.secondary">
             No SEC filings on file for this issuer yet.
           </Typography>
+        ) : isMobile ? (
+          <Stack spacing={1.5}>
+            {issuer.sec_filings.map((filing) => (
+              <MobileFilingCard key={filing.filing_id} filing={filing} />
+            ))}
+          </Stack>
         ) : (
           <TableContainer>
             <Table size="small">
@@ -377,7 +499,14 @@ export function IssuerPage(): ReactElement {
         ) : (
           <Stack spacing={1}>
             {groupRecentActivity(issuer.recent_activity).map((row) => (
-              <Stack key={row.key} direction="row" spacing={1.5} alignItems="baseline">
+              <Stack
+                key={row.key}
+                direction="row"
+                spacing={1.5}
+                alignItems="baseline"
+                flexWrap="wrap"
+                useFlexGap
+              >
                 <Typography variant="caption" color="text.secondary" sx={{ minWidth: 90 }}>
                   {formatDate(row.occurred_on)}
                 </Typography>

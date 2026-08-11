@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import {
   type ColumnDef,
   type OnChangeFn,
@@ -10,6 +10,7 @@ import {
 import {
   Box,
   CircularProgress,
+  Stack,
   Table,
   TableBody,
   TableCell,
@@ -19,6 +20,7 @@ import {
   TableSortLabel,
   Typography,
 } from "@mui/material";
+import { useIsMobile } from "../lib/useIsMobile";
 
 /**
  * A TanStack Table wrapper for dense, institutional data grids (Credit
@@ -28,6 +30,13 @@ import {
  * `onSortingChange`, it never re-sorts client-side. Pagination and filtering
  * controls live in the calling page, not here, so this stays a plain,
  * reusable table renderer rather than a full data-grid replacement.
+ *
+ * `renderMobileCard`, when provided, replaces the `<Table>` with a stacked
+ * list of cards below the `md` breakpoint (see `useIsMobile`) — a giant
+ * desktop table forcing horizontal finger-scrolling reads as unfinished on
+ * a phone, so callers with a naturally card-friendly row shape (Credit
+ * Universe securities) opt in explicitly. Desktop rendering is completely
+ * unaffected either way — this is purely additive.
  */
 export interface DataTableProps<T> {
   data: T[];
@@ -43,6 +52,7 @@ export interface DataTableProps<T> {
   errorMessage?: string;
   emptyMessage: string;
   getRowId?: (row: T) => string;
+  renderMobileCard?: (row: T) => ReactNode;
 }
 
 export function DataTable<T>({
@@ -55,7 +65,9 @@ export function DataTable<T>({
   errorMessage,
   emptyMessage,
   getRowId,
+  renderMobileCard,
 }: DataTableProps<T>): ReactElement {
+  const isMobile = useIsMobile();
   const table = useReactTable({
     data,
     columns,
@@ -76,23 +88,44 @@ export function DataTable<T>({
     );
   }
 
+  const loadingOverlay = isLoading && (
+    <Box
+      sx={{
+        position: "absolute",
+        inset: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(255, 255, 255, 0.6)",
+        zIndex: 1,
+      }}
+    >
+      <CircularProgress size={32} />
+    </Box>
+  );
+
+  if (isMobile && renderMobileCard) {
+    return (
+      <Box sx={{ position: "relative" }}>
+        {loadingOverlay}
+        {data.length === 0 && !isLoading ? (
+          <Box sx={{ py: 6, textAlign: "center" }}>
+            <Typography color="text.secondary">{emptyMessage}</Typography>
+          </Box>
+        ) : (
+          <Stack spacing={1.5} sx={{ p: 1.5 }}>
+            {table.getRowModel().rows.map((row) => (
+              <Box key={row.id}>{renderMobileCard(row.original)}</Box>
+            ))}
+          </Stack>
+        )}
+      </Box>
+    );
+  }
+
   return (
     <TableContainer sx={{ position: "relative" }}>
-      {isLoading && (
-        <Box
-          sx={{
-            position: "absolute",
-            inset: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: "rgba(255, 255, 255, 0.6)",
-            zIndex: 1,
-          }}
-        >
-          <CircularProgress size={32} />
-        </Box>
-      )}
+      {loadingOverlay}
       <Table size="small" stickyHeader>
         <TableHead>
           {table.getHeaderGroups().map((headerGroup) => (
