@@ -42,7 +42,18 @@ def _to_summary(db: Session, collection: Collection) -> ResearchUniverseSummary:
 def list_research_universes(
     db: Session, *, collection_type: CollectionType | None = None
 ) -> list[ResearchUniverseSummary]:
+    """Research Universes / Benchmarks only — this is the Research
+    Universes listing endpoint, not a generic "list every collection"
+    endpoint, so `collection_type=WATCHLIST` is never returned here even
+    when no filter is given (Milestone 8: a personal Watchlist must never
+    appear on the organization-coverage Research Universes page). A caller
+    that does pass `collection_type=WATCHLIST` explicitly gets an empty
+    list rather than a 500 — this endpoint just isn't the right one for
+    that, `GET /api/watchlists` is."""
+    if collection_type == CollectionType.WATCHLIST:
+        return []
     collections = collection_repository.list_collections(db, collection_type=collection_type)
+    collections = [c for c in collections if c.collection_type != CollectionType.WATCHLIST]
     return [_to_summary(db, c) for c in collections]
 
 

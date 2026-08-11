@@ -70,6 +70,38 @@ def test_get_research_universe_returns_none_for_unknown_id(db_session: Session) 
     assert result is None
 
 
+def test_list_research_universes_excludes_watchlists(db_session: Session) -> None:
+    """A personal Watchlist (`collection_type=watchlist`, Milestone 8) must
+    never appear on the organization-coverage Research Universes page —
+    live-caught regression during Milestone 8 production verification: the
+    unfiltered `GET /api/research-universes` call the landing page makes
+    was returning every `collection` row regardless of type."""
+    watchlist_slug = f"test-watchlist-{uuid4()}"
+    _seed_universe(db_session, slug=watchlist_slug, collection_type=CollectionType.WATCHLIST)
+
+    universes = research_universe_service.list_research_universes(db_session)
+
+    assert all(u.slug != watchlist_slug for u in universes)
+    assert all(u.collection_type != CollectionType.WATCHLIST for u in universes)
+
+
+def test_list_research_universes_with_watchlist_filter_returns_empty(
+    db_session: Session,
+) -> None:
+    """Explicitly requesting `collection_type=watchlist` through this
+    endpoint returns an empty list rather than leaking Watchlist rows —
+    `GET /api/watchlists` is the correct endpoint for that."""
+    _seed_universe(
+        db_session, slug=f"test-watchlist-{uuid4()}", collection_type=CollectionType.WATCHLIST
+    )
+
+    universes = research_universe_service.list_research_universes(
+        db_session, collection_type=CollectionType.WATCHLIST
+    )
+
+    assert universes == []
+
+
 def test_get_research_universe_issuers_includes_rationale(db_session: Session) -> None:
     slug = f"test-universe-{uuid4()}"
     universe = _seed_universe(db_session, slug=slug)
