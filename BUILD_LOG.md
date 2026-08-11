@@ -6408,7 +6408,7 @@ session against both the deployed backend and frontend:
 **Commit Hash**
 
 `9899007` (feature), `939e353` (live-caught Research Universes
-regression fix), `PENDING_ABOUT_COMMIT_HASH` (About page copy update)
+regression fix), `3f52601` (About page copy update)
 
 **Approximate Time Spent**
 
