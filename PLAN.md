@@ -2247,6 +2247,20 @@ existed):
    `universe_id` and the new `watchlist_id`, not left inconsistent between
    the two.
 
+**A third, more severe pre-existing bug was caught during production
+verification** (not during code review — only a real browser click
+surfaced it): `POST /api/alerts/{id}/acknowledge` rejected every real
+request with `422`. Its single un-embedded `Body()` parameter made
+FastAPI expect the raw body to *be* the `acted_by` string, but the
+frontend has always sent `{"acted_by": ...}` (matching `dismiss_alert`'s
+two-`Body()`-parameter shape, which auto-embeds and was unaffected) — so
+the Acknowledge button had likely never worked in production. Fixed with
+`Body(embed=True)`; a new route-level `TestClient` test suite
+(`tests/test_alerts_routes.py`) was added specifically because the
+existing service-layer integration tests call `filing_monitor_api_service`
+directly and structurally cannot catch a FastAPI request-parsing mismatch
+— only a real HTTP request through the route reproduces it.
+
 **Performance**: `filing_monitor_api_service.alert_to_row` (looped, two
 queries per alert — a real, previously-live N+1) was split into a
 single-alert `alert_to_row` (used only by the evidence-detail/

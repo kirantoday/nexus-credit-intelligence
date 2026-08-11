@@ -191,6 +191,7 @@ const AVAILABLE_TODAY = [
   "Research Universes",
   "Morning Research Brief",
   "Watchlists",
+  "Alerts (in-app analyst inbox, shared workspace)",
   "Issuer Detail",
   "Distress Timeline",
   "SEC / court / security provenance",
@@ -199,7 +200,7 @@ const AVAILABLE_TODAY = [
 ];
 
 const PLANNED_NEXT = [
-  "Alerts and user-specific monitoring",
+  "Email/SMS/Slack alert delivery and per-user notification preferences",
   "Universal search",
   "Research notes and audit events",
   "Richer capital structure data as licensed instrument-level sources become available",

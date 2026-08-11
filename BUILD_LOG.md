@@ -6544,17 +6544,66 @@ AlertCard.test.tsx` (2 new), `web/src/pages/WatchlistDetailPage.test.tsx`
 (1 new), `web/src/pages/IssuerPage.test.tsx` (1 new), `web/src/
 components/Layout.test.tsx` (updated for the enabled nav item).
 
-**Remaining Work**
+**Production verification**
 
-- Production deploy/browser verification and the full regression pass —
-  see the follow-up entry/commit for results.
-- `AboutPage.tsx`'s "Available Today vs. What's Next" copy is updated
-  only after production verification confirms the deploy is genuinely
-  live.
+Deployed via the standard Railway/Vercel auto-deploy on push to `main`.
+Live-verified via `curl` and a real Chrome browser session:
+
+- `GET /api/alerts/summary` against real production data: 3,374 new,
+  804 high-severity, 57 watchlist alerts (exactly matching
+  `GET /api/alerts?watchlist_id=<Demo Watchlist id>`'s own `total`), 0
+  acknowledged (nothing had ever been acknowledged in production before
+  this verification pass).
+- **A second real, previously-undiscovered production bug was found and
+  fixed during this verification pass**: `POST /api/alerts/{id}/acknowledge`
+  rejected every real request with `422 Unprocessable Entity`. Root cause:
+  the route declared a single un-embedded `Body()` parameter
+  (`acted_by: Annotated[str | None, Body()] = None`), which makes FastAPI
+  expect the raw request body to *be* that string directly — but the
+  frontend (unchanged since Milestone 7.5.2) has always sent
+  `{"acted_by": ...}`, matching `dismiss_alert`'s shape (which has *two*
+  `Body()` parameters and so auto-embeds correctly, and was unaffected).
+  This means the Acknowledge button had likely never worked in
+  production, in Morning Research Brief either, since nothing had
+  exercised it end-to-end via a real browser before this Alerts Center
+  verification pass. Fixed with `Body(embed=True)` (commit `3b4a531`);
+  added `backend/tests/test_alerts_routes.py`, a new route-level
+  (`TestClient`) regression test suite — the existing service-layer
+  integration tests call `filing_monitor_api_service` functions directly
+  and structurally cannot catch a FastAPI request-parsing mismatch like
+  this one, which only reproduces through the real HTTP route. Redeployed
+  and re-verified live via both `curl` (`00000000-...` nonexistent-id
+  probe: 422 → 404) and a real browser click on a real Demo Watchlist
+  alert: status chip changed `new` → `acknowledged`, the Acknowledge
+  button disappeared, and all four summary tiles updated live (New
+  3374→3373, Watchlist Alerts 57→56, Acknowledged 0→1) — including a
+  same-second, correctly-coherent drop in Morning Research Brief's own
+  "Issuers with developments" count (191→190), since both surfaces filter
+  on the same `alert.status=new` field, just with different additional
+  scoping (Morning Brief also restricts to the latest research cycle).
+- Watchlist detail: "View Alerts" button and new "new alerts" stat tile
+  render correctly (`56 new alerts` after the acknowledge above), button
+  links to `/alerts?watchlist={id}` and the filtered page correctly shows
+  only Demo Watchlist issuers' alerts with a "Demo Watchlist" bookmark
+  chip.
+- Issuer Detail (Trinseo PLC): "View Alerts" button renders next to the
+  existing "ON 1 WATCHLIST" button, links to `/alerts?issuer={id}`;
+  Distress Timeline unaffected.
+- Regression-checked: Morning Research Brief (loads, filters clean, no
+  Watchlist leakage in the universe dropdown), Watchlists landing/detail,
+  Credit Universe + Market Context (live SOFR/HY OAS unaffected), Research
+  Universes (23 real universes, no Watchlist leakage). No console errors,
+  no failed network requests observed.
+- `AboutPage.tsx`'s "Available Today vs. What's Next" copy updated to
+  move "Alerts (in-app analyst inbox, shared workspace)" into "Available
+  Today," explicitly still listing "Email/SMS/Slack alert delivery and
+  per-user notification preferences" under "Planned Next" — honest about
+  what was and wasn't built.
 
 **Commit Hash**
 
-`7c43e3d`
+`7c43e3d` (feature), `3b4a531` (live-caught `acknowledge_alert` 422 fix),
+`PENDING_ABOUT_COMMIT_HASH` (About page copy update)
 
 **Approximate Time Spent**
 

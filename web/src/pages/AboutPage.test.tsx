@@ -88,11 +88,11 @@ describe("AboutPage", () => {
 
     expect(within(available).getByText("Credit Universe")).toBeInTheDocument();
     expect(within(available).getByText("Watchlists")).toBeInTheDocument();
+    expect(within(available).getByText(/Alerts \(in-app/)).toBeInTheDocument();
     expect(within(future).getByText("An AI Research Assistant")).toBeInTheDocument();
 
     // No not-yet-built ("Soon") feature is accidentally presented as available today.
-    expect(within(planned).getByText(/Alerts/)).toBeInTheDocument();
-    expect(within(available).queryByText(/Alerts/)).not.toBeInTheDocument();
+    expect(within(planned).getByText(/notification preferences/)).toBeInTheDocument();
     expect(within(available).queryByText("Universal search")).not.toBeInTheDocument();
     expect(within(available).queryByText(/Research Assistant/)).not.toBeInTheDocument();
   });
