@@ -146,7 +146,7 @@ def _latest_daily_run(db: Session) -> DailyRunSummary | None:
     return max(candidates, key=lambda c: c[0])[1]
 
 
-def _resolve_research_cycle(db: Session) -> tuple[date, date, bool]:
+def resolve_research_cycle(db: Session) -> tuple[date, date, bool]:
     """Returns `(latest_research_day, preceding_research_day, is_fallback)`.
     `latest_research_day` is the `research_day` of the latest successful
     daily run when one exists; `preceding_research_day` is always the
@@ -339,7 +339,7 @@ _PERIOD_ALERT_FETCH_LIMIT = 2000
 _ISSUER_DISPLAY_CAP = 100
 
 
-def _is_new_development(
+def is_new_development(
     alert: AlertEvent, *, preceding_research_day: date, latest_research_day: date
 ) -> bool:
     """The 2026-08-10 correction: whether an alert belongs in
@@ -368,7 +368,7 @@ def get_morning_brief(db: Session) -> MorningBriefSummary:
     on any view/visit state. Calling this any number of times in a row
     returns identical `latest_research_day`/`preceding_research_day`
     values until a new successful daily/delta run actually completes."""
-    latest_research_day, preceding_research_day, is_fallback = _resolve_research_cycle(db)
+    latest_research_day, preceding_research_day, is_fallback = resolve_research_cycle(db)
     since = datetime.combine(latest_research_day, time(0, 0), tzinfo=_BRIEF_TIMEZONE)
     as_of = datetime.now(UTC)
 
@@ -382,7 +382,7 @@ def get_morning_brief(db: Session) -> MorningBriefSummary:
     new_alerts = []
     historical_alerts = []
     for a in alerts:
-        if _is_new_development(
+        if is_new_development(
             a,
             preceding_research_day=preceding_research_day,
             latest_research_day=latest_research_day,

@@ -100,7 +100,7 @@ milestone completes; it is not itself a log (see `BUILD_LOG.md` for that).
 | 7.5.2 | Daily Delta Run & Morning Research Brief Semantics (inserted, approved — see below) | Complete | 2026-08-09 | `ca41b13` (initial), `427b535` (2nd pass), `eafb77e` (3rd pass — see below) | Root-caused the stale "Last successful run: Aug 6" display: `get_latest_successful_run` on both run tables treated *any* successful mode — including `backfill` — as the watermark/display source. Fixed with new `get_latest_successful_daily_run`/`get_latest_daily_run` (mode `delta`/`baseline` only) driving `get_morning_brief`, plus a second real bug found live during the Aug 7 run: `since` was originally set to the latest run's `completed_at`, which excludes that very run's own output (everything a run creates is written before it finishes) — corrected to `started_at`. A real 2026-08-07→08 delta via the unmodified `market_discovery_service` (TD-014 active) discovered 246 new issuers, 39 already-known, 1207 new SEC filings, 822 new evidence rows, 356 new alerts (49 high / 65 medium / 242 low; 351 AI-assisted / 5 deterministic), 0 errors, elapsed 3509s (~58.5 min). Re-run over the identical window (as `backfill` mode, since `delta` mode self-advances its window from the watermark) produced zero new rows across every table — full idempotency proven, 38.7s. `new_court_events=0` root-caused as genuinely correct, not a bug: CourtListener enrichment only attempts a search once an issuer has docket-relevant evidence on file, and only 3 of 285 processed candidates did, all returning no matching docket. Two new Technical Debt items recorded (TD-016, TD-017) rather than expanding this milestone's scope. **Same-day correction**: the brief's definition was further corrected from "what did the last pipeline run do" to "what materially changed since this user last reviewed the brief" — see the Next Immediate Goal narrative below for the full change (new user-relative `period_start` via `morning_brief_view`, mode/pipeline counters demoted to a secondary `RunDetails` block, issuer-grouped/severity-ranked `new_developments`/`historical_intelligence` split by `is_backfill`, Research Universe membership-change surfacing, TD-018 recorded for the no-per-user-auth interim posture). A genuine performance regression was found and fixed during this correction (see Problems Encountered in `BUILD_LOG.md`): the naive per-alert-query implementation timed out entirely (>50s, no response) against real production volume; batched issuer/universe lookups brought a real request down to ~1.7s. **Third pass (same day, explicit follow-up direction)**: even the user-relative `period_start` was still the wrong business definition — a page view is not a research boundary. Corrected to "what materially changed during the latest completed business-day research cycle, compared with the preceding one," derived purely from canonical successful daily-run data (`research_day`, a new field on `DailyRunSummary`) plus calendar business-day arithmetic — never from when the page was opened, refreshed, or revisited. `morning_brief_view` and `POST /api/morning-brief/view` were removed entirely (migration `0013`) since nothing else read the view log; TD-018/TD-019 closed by this removal, not by building the deferred per-user version. See the Next Immediate Goal narrative below for the full design. |
 | 7.5.3 | Historical Discovery Coverage Repair (inserted) | Zero-AI historical ingestion Complete; AI review of deferred bundles intentionally still deferred/not authorized | `bc7afd0` (AI cost control), — (zero-AI re-run itself, see `BUILD_LOG.md`) | — | Re-runs the 2026-01-01→2026-08-06 historical discovery window with TD-014's corrected SEC full-text-search `forms` behavior active. Two early live attempts (Aug 9) hit a CourtListener `Retry-After` defect that stalled the batch for 4+ hours on an uncapped `time.sleep()` — root-caused via `py-spy`, fixed (RFC 7231-correct parsing + a hard wait ceiling, TD-020). The user then paused the milestone to require AI cost control, observability, and Haiku/Sonnet model routing before any further backfill; that control layer (`app.ai.model_router`, `ai_call_log` table/migration `0014`, hard per-run budgets, zero-AI mode, pre-run cost estimation) was built and tested (35 new tests, 418/418 backend tests passing), with live quality validation fixing a Haiku markdown-fence parsing bug and confirming definitive/high-impact categories (Chapter 11, bankruptcy, plan-confirmed) always route straight to Sonnet. With that control layer in place, the user separately authorized a **zero-AI** (`--ai-mode zero`, $0 Anthropic spend) re-run of the historical window purely to measure real coverage before any paid AI review. Across 5 live attempts (2026-08-09→10), 4 crashed on genuine infrastructure issues (two more SEC-side transient `500`s hitting the same undefended top-level query-loop gap as the original Retry-After incident's sibling bug, plus two previously-undocumented stall types — a DB idle-in-transaction hang and an SEC-document-fetch hang, both killed and safely resumed via existing `(cik, accession_no)`/`rule_version` idempotency — see TD-022); the 5th attempt completed with 0 errors. Final state: 2,652 issuers (from 787), 28,170 SEC filings (from 7,243), 22,252 research evidence rows (from 6,239), 3,123 alerts (from 2,212), confirmed $0 Anthropic spend throughout (`ai_call_log` unchanged at 8 rows across all 5 attempts). AI review of the resulting deferred bundles remains separate, still-deferred work — not run by this pass, not auto-triggered by anything. Full detail in `BUILD_LOG.md`. |
 | 7.5.3-daily | Resumption of normal daily production research cycle (inserted) | Complete | — | — | See the 2026-08-10 daily-cycle `BUILD_LOG.md` entry. A side effect of the historical re-run above was discovered and corrected: `market_discovery_repository.get_latest_successful_run` (used by `delta` mode to compute its own resume watermark) does not exclude `mode=backfill` runs by design (unlike `get_latest_successful_daily_run`, which does, for Morning Brief display purposes only) — so the backfill's own completion timestamp became the resume point for the next `delta` run, which would have silently skipped Sunday 2026-08-09's SEC activity entirely (Saturday 2026-08-08 was already covered by the prior real delta). Corrected with one explicit `--mode backfill --start 2026-08-09 --end 2026-08-10` catch-up run (same pipeline, same idempotency, not counted as a Morning Brief research day since backfill mode is excluded from the daily-run boundary) followed by a normal self-computing `--mode delta` run, which idempotently found the catch-up's work already done and correctly recorded itself as the `2026-08-10` daily research day. See TD-023 for the underlying watermark-computation note (not fixed — a one-time manual correction was sufficient and lower-risk than changing shared watermark logic mid-task). A second, more consequential bug was found and fixed the same day: Morning Research Brief's `new_developments`/`historical_intelligence` split (and `RunDetails`' `new_sec_filings`/`new_court_events`/`new_research_evidence` counters) relied solely on `alert_event.is_backfill` (an ingestion-mode flag) rather than each record's real-world event/source date — so the catch-up run's 225 genuinely-current alerts were mechanically mislabeled historical. Fixed by classifying purely on `as_of_date`/`filing_date`/`entry_date` relative to the `(preceding_research_day, latest_research_day]` research-cycle boundary; `is_backfill` itself is untouched, still exposed as ingestion provenance. Verified against real production data: `issuers_with_developments` 0→191, `no_material_changes` true→false. 9 new regression tests. Full detail in `BUILD_LOG.md`. |
-| 8 | Watchlists (10 coverage + 1 benchmark) + comparison view | Not Started | — | — | Awaiting explicit approval to begin |
+| 8 | Watchlists (personal tracking lists, `collection_type=watchlist`) | Complete | 2026-08-11 | `PENDING_COMMIT_HASH` | Reused the existing `collection`/`collection_membership` schema per ADR-016 — zero migration needed. New `watchlist_service.py` (create/rename/delete Watchlist, add/remove issuer) + `GET/POST /api/watchlists`, `GET/PATCH/DELETE /api/watchlists/{id}`, `POST/DELETE .../issuers[/{issuer_id}]`. "New developments" reuses `morning_brief_service.resolve_research_cycle`/`is_new_development` verbatim — no second definition of "new." Batched repository functions (`list_alerts_by_issuers`, `count_securities_by_issuers`, `list_collections_with_membership_for_issuers`) avoid N+1 across a Watchlist's issuers. Frontend: Watchlists landing page, Watchlist detail (desktop table / mobile cards via the existing `DataTable` pattern), and one reusable `AddToWatchlistButton` wired into Issuer Detail. A real "CFO Demo Watchlist" was created via the application's own service (not a fixture) with 6 real, currently-tracked issuers spanning active Chapter 11 (Trinseo, EchoStar), post-emergence (Diebold Nixdorf), covenant/default pressure (Community Health Systems), refinancing risk (Lumen Technologies), and liability management (iHeartMedia). §14's original "ten coverage + one benchmark Watchlists" vision predates ADR-016's Research-Universes/Watchlists split and is superseded by it — see §14 and §24.1. No per-user auth exists yet (TD-002); every Watchlist is `scope=personal`/`owner_user_id=NULL` in a single shared analyst workspace, by explicit design, documented as a known limitation. 481 backend tests pass (21 new, covering Watchlist CRUD, duplicate/idempotent membership, deletion isolation, latest-development/research-cycle/severity aggregation, and the Watchlist-vs-Research-Universe "current status" boundary), 130 frontend tests pass (17 new, covering the landing page, detail page incl. mobile cards, and the reusable Add to Watchlist component). Zero Anthropic calls — Watchlists never construct AI prompts. |
 | 9 | Research notes/documents + audit events | Not Started | — | — | |
 | 10 | Alerts (rules, engine, panel/page) | Not Started | — | — | |
 | 11 | TRACE adapter/sample | Not Started | — | — | |
@@ -528,9 +528,35 @@ this milestone and is not auto-triggered by anything; it stays a
 separate, explicitly-approved-only effort, same as the historical
 backfill itself was.
 
-**Milestone 8 (Watchlists, §18 step 8) has not started**, and awaits
-explicit approval before beginning, per the same stop-and-wait rule that
-gated Milestone 7.
+**Milestone 8 (Watchlists) is complete.** Per Phase 0's required
+architecture check against ADR-016/PLAN.md before implementing: this
+milestone's original brief proposed new dedicated `watchlist`/
+`watchlist_member` tables, which would have silently contradicted
+ADR-016's already-accepted, already-partially-built decision that
+Research Universes and Watchlists share one `collection`/
+`collection_membership` table pair, discriminated by `collection_type`.
+That conflict was reported before any implementation code was written;
+the user's explicit direction was to reuse the existing schema exactly
+(`collection_type=watchlist`, `scope=personal`, `curation_method=
+user_created`, membership through the existing `collection_membership`
+table) and add only what was genuinely missing — so, as ADR-016 itself
+anticipated, **no migration was needed**. New: `update_collection`/
+`delete_collection` on `collection_repository`, three N+1-avoiding batch
+repository functions, `watchlist_service.py` (built on the same
+`resolve_research_cycle`/`is_new_development` Morning Brief already uses,
+so "new development" means the same thing everywhere), the Watchlists
+API, and the frontend (landing page, detail page, one reusable Add to
+Watchlist component wired into Issuer Detail). Issuer Detail's existing
+"Which Research Universes is this issuer in?" section was explicitly
+hardened to exclude `collection_type=watchlist` memberships, so a
+personal Watchlist never leaks into that organization-coverage section.
+A real "CFO Demo Watchlist" (6 real issuers, real alerts, real
+provenance — no synthetic data, no fixture) was created through the
+application's own `watchlist_service`, not a script bypassing it. No
+per-user authentication exists yet (TD-002) — every Watchlist is
+`scope=personal`/`owner_user_id=NULL` in a single shared analyst
+workspace; the schema already supports per-user `owner_user_id` cleanly
+once real authentication exists, requiring no further schema change.
 
 ---
 
@@ -848,10 +874,16 @@ Supabase, never on the Railway filesystem beyond transient processing.
 | `is_synthetic` | bool | |
 | `synthetic_reason` | text, nullable | |
 
-### 4.7 Watchlists (approved, unchanged — many-to-many)
+### 4.7 Watchlists (superseded by ADR-016 — see §24.1; Milestone 8 complete)
 
-- **`watchlist`** — id, slug, name, description, list_type (`coverage`|`benchmark`), created_at. Seeded with the eleven named lists in §14.
-- **`watchlist_membership`** — id, watchlist_id, issuer_id, added_at, rationale_note. Unique on `(watchlist_id, issuer_id)`.
+This section's original dedicated-table design (`watchlist`/
+`watchlist_membership`, seeded with the eleven named lists in §14) was
+**never built**. It was superseded before Milestone 8 implementation began
+by ADR-016's generalized `collection`/`collection_membership` tables
+(§24.1), which Research Universes already used — Watchlists reuse that
+same schema (`collection_type=watchlist`) rather than introducing a
+parallel one. See §24.1 for the actual, implemented design and §14 for why
+the eleven-list seed plan was not carried forward.
 
 ### 4.8 Entitlement engine (approved, unchanged)
 
@@ -1154,15 +1186,26 @@ require touching route logic, only the dependency's implementation.
 
 ---
 
-## 14. Demo watchlists (approved, unchanged — eleven named lists)
+## 14. Demo watchlists (superseded — see below; not seeded)
 
-Ten curated `watchlist` rows plus one benchmark list, each with `watchlist_membership`
-rows. Membership is many-to-many. A list is a curation decision, never a computed
-verdict — the issuer page always derives and dates actual status from real source
-records independent of which lists an issuer is on. Candidates verified in build step
-3 (real CIK, real EDGAR filing history, real CourtListener docket where implied)
-before being written into seed data; anything failing verification is swapped or
-dropped, not faked.
+**This section's eleven-named-list plan was not carried forward into
+Milestone 8.** It predates ADR-016's Research-Universes/Watchlists split
+(§24.1): by the time Watchlists was actually implemented, the 23 real,
+SEC-verified issuers this section's candidates were drawn from (Rite Aid,
+Lumen Technologies, Diebold Nixdorf, Carvana, Community Health Systems,
+Ford, Occidental, Kraft Heinz, DISH/EchoStar, etc.) were already organized
+into 23 real Research Universes covering the same functional groupings
+this table proposed (Distressed Core, Chapter 11, High Yield, Fallen
+Angels, Refinancing Risk, Healthcare, Consumer & Retail, and more) —
+seeding a second, parallel set of eleven curated lists as Watchlists would
+have duplicated that existing coverage under a different product concept,
+not added anything new. Milestone 8 instead created **one** real,
+non-seeded Watchlist (the "CFO Demo Watchlist," §8 in the Milestone Status
+table) built through the application's own Watchlist-creation workflow —
+consistent with Watchlists being personal, analyst-created tracking lists
+rather than a second organization-curated coverage taxonomy. The original
+table below is kept for historical record only; none of its rows were
+seeded.
 
 | Watchlist | Candidate issuers | Rationale |
 |---|---|---|
@@ -1421,7 +1464,10 @@ web/
 5. OpenFIGI and FRED adapters, feeding more Credit Universe columns.
 6. Issuer detail page and Capital Structure page/model.
 7. CourtListener adapter and docket view.
-8. Watchlists (ten coverage + one benchmark) and the benchmark comparison view.
+8. Watchlists — implemented as `collection_type=watchlist` rows on the
+   existing `collection`/`collection_membership` tables (ADR-016), not the
+   dedicated tables or the ten-coverage/one-benchmark/comparison-view
+   design originally sketched here — see §14 and §24.1.
 9. Research notes/documents and audit events (first audited-write path).
 10. Alerts (rule model, evaluation engine, panel/page).
 11. TRACE adapter/sample (real OAuth2 flow + legally-public sample file), feeding
@@ -1515,7 +1561,10 @@ VITE_API_BASE_URL=
     synthetic-data labeling.
 11. Issuer detail joins at least three real sources.
 12. Capital Structure page works with clear scenario labeling.
-13. Watchlists show ten coverage lists plus one separated benchmark list.
+13. Watchlists let an analyst create/rename/delete a personal tracking
+    list and add/remove real issuers, showing real latest-development
+    context per watched issuer (§24.1) — not the ten-coverage/one-benchmark
+    seed originally sketched here, superseded by ADR-016 (see §14).
 14. Research notes can be created and versioned.
 15. At least three alert types can trigger from seeded/real data.
 16. AI Research Assistant uses predefined tools and produces cited answers.
@@ -1772,11 +1821,22 @@ Two coexisting, distinct concepts:
   coverage groups. `collection_type = research_universe` (or `benchmark` for the
   one investment-grade comparison group). Built and seeded with real issuers this
   milestone.
-- **Watchlists** (§4.7, §14, Milestone 8) — personal/team-managed collections.
-  `collection_type = watchlist`. **Not implemented or expanded this milestone** —
-  the schema accommodates them (same `collection`/`collection_membership` tables),
-  but no watchlist rows are created and no watchlist CRUD UI exists yet; that
-  remains Milestone 8's scope.
+- **Watchlists** (§4.7, §14, Milestone 8 — **complete, 2026-08-11**) —
+  personal-workspace tracking collections. `collection_type = watchlist`,
+  `scope = personal`, `curation_method = user_created`. Built exactly as
+  this section anticipated: no migration, reusing `collection`/
+  `collection_membership` and the existing repository, with only the
+  genuinely-missing rename/delete/CRUD/API/frontend pieces added
+  (`watchlist_service.py`, `app/api/routes/watchlists.py`, the Watchlists
+  landing/detail pages, and the reusable `AddToWatchlistButton`).
+  `owner_user_id` stays `NULL` for every Watchlist under the current
+  no-per-user-auth posture (TD-002) — a single shared analyst workspace,
+  not per-user data; the column is already in place for real per-user
+  ownership once authentication exists, requiring no schema change then.
+  "New developments" per watched issuer reuses `morning_brief_service
+  .resolve_research_cycle`/`is_new_development` directly — the exact same
+  research-cycle boundary the Morning Research Brief uses, not a second
+  definition.
 
 Both live in one generalized `collection`/`collection_membership` table pair
 (ADR-016) rather than a dedicated `watchlist` table, distinguished by

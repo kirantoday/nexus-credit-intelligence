@@ -20,6 +20,7 @@ from app.api.routes.market_context import router as market_context_router
 from app.api.routes.morning_brief import router as morning_brief_router
 from app.api.routes.research_evidence import router as research_evidence_router
 from app.api.routes.research_universes import router as research_universes_router
+from app.api.routes.watchlists import router as watchlists_router
 from app.config import get_settings
 from app.logging_config import configure_logging
 
@@ -58,3 +59,4 @@ app.include_router(alerts_router)
 app.include_router(morning_brief_router)
 app.include_router(court_dockets_router)
 app.include_router(issuer_timeline_router)
+app.include_router(watchlists_router)

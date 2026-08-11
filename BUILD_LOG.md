@@ -6223,3 +6223,156 @@ railway status
 verification, service creation, the config-as-code precedence discovery
 and fix, secret-safe variable wiring, full read-only verification,
 documentation).
+
+## 2026-08-11 — Milestone 8: Watchlists
+
+**Summary**
+
+Analyst Watchlists — "which issuers do I personally care about, and
+what's changed?" A Phase 0 architecture check (required by this
+milestone's own brief and by CLAUDE.md's Architecture Change Policy)
+found that the incoming spec's proposed dedicated `watchlist`/
+`watchlist_member` tables would silently contradict ADR-016, an
+already-accepted decision that Research Universes and Watchlists share
+one generalized `collection`/`collection_membership` table pair,
+discriminated by `collection_type`. This was reported to the user before
+any implementation code was written. The user's explicit direction:
+reuse the existing schema exactly (`collection_type=watchlist`,
+`scope=personal`, `curation_method=user_created`, membership through the
+existing `collection_membership` table), add only what was genuinely
+missing, and prefer one real "CFO Demo Watchlist" over reviving §14's
+eleven-seeded-list plan (superseded by ADR-016's Research-Universes/
+Watchlists split, functionally covered already by the 23 real Research
+Universes built in Milestone 6.5/7.5.1).
+
+**What was genuinely missing (and built)**
+
+- Backend: `collection_repository.update_collection`/`delete_collection`
+  (rename/delete a collection, deleting its own memberships first —
+  never issuers, securities, evidence, alerts, or other collections'
+  memberships); three batch repository functions
+  (`alert_repository.list_alerts_by_issuers`,
+  `security_repository.count_securities_by_issuers`,
+  `collection_repository.list_collections_with_membership_for_issuers`)
+  so a Watchlist's per-issuer aggregation is O(1) queries per resource
+  type, not O(issuers); `research_universe_service
+  .get_issuer_universe_memberships`/`_batch` explicitly exclude
+  `collection_type=WATCHLIST` (a real regression risk caught during
+  Phase 0: without this, a personal Watchlist membership would leak into
+  Issuer Detail's "Which Research Universes is this issuer in?"
+  section); a shared `derive_current_status` helper extracted from
+  `issuer_timeline_service` so "current status" means the same thing on
+  the Distress Timeline and on Watchlist detail; `morning_brief_service
+  ._resolve_research_cycle`/`_is_new_development` renamed to public
+  (`resolve_research_cycle`/`is_new_development`) so `watchlist_service`
+  can call them directly rather than re-deriving the research-cycle
+  boundary — the exact same "new" as the Morning Research Brief, no
+  second definition; `issuer_timeline_service._qualifies` renamed to
+  public `qualifies` for the same reuse-not-copy reason (a "latest
+  development" must exclude the same dismissed/third-party alerts
+  everywhere it's computed).
+- New `watchlist_service.py` (create/rename/delete Watchlist, add/remove
+  issuer — idempotent, never a duplicate-membership error) and
+  `app/api/routes/watchlists.py`: `GET/POST /api/watchlists` (optional
+  `issuer_id` query param populates `contains_issuer` per Watchlist, for
+  the Add to Watchlist UI), `GET/PATCH/DELETE /api/watchlists/{id}`,
+  `POST /api/watchlists/{id}/issuers`,
+  `DELETE /api/watchlists/{id}/issuers/{issuer_id}`.
+- Frontend: `WatchlistsPage.tsx` (landing page — real per-Watchlist
+  counts, never fabricated demo numbers), `WatchlistDetailPage.tsx`
+  (header + issuer table with Issuer/Current status/Latest development/
+  Severity/Development date/New developments/Securities columns, mobile
+  cards via the existing `DataTable`/`useIsMobile` pattern, rename/
+  delete with a confirmation dialog explaining issuer data is never
+  affected), and one reusable `AddToWatchlistButton.tsx` — a menu of
+  every Watchlist with already-added state (checkbox), toggle add/
+  remove, and inline "create a new Watchlist and add" — wired into
+  Issuer Detail's header (the minimum integration point the spec
+  required; not added to every screen, per its own "don't clutter"
+  instruction). Watchlists enabled in primary nav, positioned after
+  Morning Research Brief.
+- Real "CFO Demo Watchlist" created via the application's own
+  `watchlist_service` (not a raw-SQL fixture) after inspecting current
+  production data: DIEBOLD NIXDORF Inc. (post-emergence monitoring,
+  2023 Ch. 11), Trinseo PLC (active Ch. 11, going-concern doubt, event
+  of default), EchoStar Corp (subsidiary Hughes Satellite Systems Ch. 11
+  filings), Community Health Systems Inc (covenant-breach risk language,
+  hospital-divestiture impairments), Lumen Technologies Inc (repeated
+  debt exchange offers, upcoming maturity wall), iHeartMedia Inc (ABL
+  facility maturity extension) — six real issuers, real alerts, real
+  provenance, no synthetic data.
+
+**Zero migration** — confirmed at every layer before writing code:
+`CollectionType.WATCHLIST`, `CollectionScope.PERSONAL`,
+`CurationMethod.USER_CREATED` already existed in `app/core/types.py`,
+the DB `ck_collection_type`/`ck_collection_curation_method` CHECK
+constraints already permitted `watchlist`/`user_created`, and
+`ix_collection_collection_type` already existed — exactly as ADR-016's
+own "Consequences" section anticipated.
+
+**No per-user authentication exists** (TD-002, unchanged) — every
+Watchlist is `scope=personal`/`owner_user_id=NULL` in a single shared
+analyst workspace. `owner_user_id` already exists on `collection` for
+real per-user ownership once authentication exists; no schema change
+will be needed then.
+
+**Verification**
+
+- Backend: 481 tests pass (21 new — Watchlist CRUD, duplicate-add
+  idempotency, delete-doesn't-delete-issuer, nonexistent watchlist/
+  issuer handling, issuer counts, latest-development calculation
+  (excludes dismissed/third-party alerts), the research-cycle
+  "new development" boundary reusing `morning_brief_service`'s own
+  helpers (deterministically pinned via the same `_seed_daily_run`
+  pattern `test_morning_brief_service.py` already established), severity
+  aggregation, and that a Watchlist membership never appears as
+  "current status"). `ruff`, `black`, `mypy` all clean.
+- Frontend: 130 tests pass (17 new — landing page incl. empty/error
+  states and Watchlist creation, detail page incl. rename/delete/remove-
+  issuer/mobile-card rendering/not-found, and the Add to Watchlist
+  component incl. already-added state and inline create-and-add).
+  `tsc --noEmit`, `eslint`, `prettier --check` all clean; production
+  build succeeds.
+- A real FK-ordering bug was found and fixed live during testing:
+  `delete_collection` deleted a collection's memberships and the
+  collection row in the same `flush()` with no ORM `relationship()`
+  linking the two mapped classes, so the unit of work had no dependency
+  information to order the deletes safely — SQLAlchemy attempted the
+  parent-row delete first and hit a live FK violation. Fixed by
+  flushing the membership deletes before deleting the parent row.
+- Live-verified via the deployed application's own service layer (not
+  raw SQL) that the CFO Demo Watchlist's real aggregation is correct:
+  6 issuers, 1 with a new development this research cycle, mixed
+  high/medium/low severities, correct per-issuer securities counts, and
+  `current_status` correctly sourced from each issuer's real verified
+  Research Universe memberships (never the Watchlist itself).
+
+**Tests Added**
+
+`backend/tests/integration/test_watchlist_service.py` (21 tests),
+`web/src/pages/WatchlistsPage.test.tsx` (4),
+`web/src/pages/WatchlistDetailPage.test.tsx` (8),
+`web/src/components/AddToWatchlistButton.test.tsx` (5),
+`web/src/components/Layout.test.tsx` (updated for the enabled nav item).
+
+**Remaining Work**
+
+- Production deploy/browser verification and the regression pass across
+  Credit Universe, Research Universes, Morning Research Brief, Diebold
+  Nixdorf/Trinseo timelines, and Market Context — see the follow-up
+  entry/commit for results.
+- `AboutPage.tsx`'s "Available Today vs. What's Next" copy is updated
+  only after production verification confirms the deploy is genuinely
+  live, per this milestone's own instruction not to claim availability
+  ahead of actual deployment.
+
+**Commit Hash**
+
+`PENDING_COMMIT_HASH`
+
+**Approximate Time Spent**
+
+~3.5 hours (Phase 0 architecture investigation and conflict report,
+backend repository/service/API implementation, frontend pages/
+components, real-data CFO Demo Watchlist creation and verification,
+full test/lint/type/build suite, documentation).

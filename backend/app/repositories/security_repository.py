@@ -118,6 +118,23 @@ def list_securities_by_issuer(db: Session, issuer_id: UUID) -> list[Security]:
     return [_to_domain(row) for row in rows]
 
 
+def count_securities_by_issuers(db: Session, issuer_ids: list[UUID]) -> dict[UUID, int]:
+    """Batch security count per issuer — one query for many issuers instead
+    of one query (or one `len(list_securities_by_issuer(...))`) per issuer.
+    Backs Watchlist detail's "securities" column (Milestone 8, PLAN.md
+    24.9). Issuers with zero securities are simply absent from the result
+    dict — callers should default missing keys to 0."""
+    if not issuer_ids:
+        return {}
+    stmt = (
+        select(SecurityModel.issuer_id, func.count())
+        .where(SecurityModel.issuer_id.in_(set(issuer_ids)))
+        .group_by(SecurityModel.issuer_id)
+    )
+    rows = db.execute(stmt).all()
+    return {issuer_id: count for issuer_id, count in rows}
+
+
 def get_security_by_figi(db: Session, figi: str) -> Security | None:
     """Idempotency check for FIGI-identified ingestion (OpenFIGI) — not a
     general-purpose lookup, mirrors `issuer_repository.get_issuer_by_legal_name`."""

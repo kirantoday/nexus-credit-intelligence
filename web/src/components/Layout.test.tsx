@@ -41,14 +41,26 @@ function renderLayout(initialPath = "/"): void {
 }
 
 describe("Layout", () => {
-  it("shows an 'About Nexus' navigation item positioned after Morning Research Brief", () => {
+  it("shows a 'Watchlists' navigation item positioned after Morning Research Brief", () => {
+    renderLayout();
+
+    const links = screen.getAllByRole("link");
+    const labels = links.map((link) => link.textContent);
+
+    expect(labels).toContain("Watchlists");
+    expect(labels.indexOf("Watchlists")).toBe(labels.indexOf("Morning Research Brief") + 1);
+
+    expect(screen.getByRole("link", { name: "Watchlists" })).toHaveAttribute("href", "/watchlists");
+  });
+
+  it("shows an 'About Nexus' navigation item positioned after Watchlists", () => {
     renderLayout();
 
     const links = screen.getAllByRole("link");
     const labels = links.map((link) => link.textContent);
 
     expect(labels).toContain("About Nexus");
-    expect(labels.indexOf("About Nexus")).toBe(labels.indexOf("Morning Research Brief") + 1);
+    expect(labels.indexOf("About Nexus")).toBe(labels.indexOf("Watchlists") + 1);
 
     expect(screen.getByRole("link", { name: "About Nexus" })).toHaveAttribute("href", "/about");
   });
@@ -56,8 +68,8 @@ describe("Layout", () => {
   it("does not show not-yet-built nav items", () => {
     renderLayout();
 
-    expect(screen.queryByText("Watchlists")).not.toBeInTheDocument();
     expect(screen.queryByText("Alerts")).not.toBeInTheDocument();
+    expect(screen.queryByText("Search")).not.toBeInTheDocument();
   });
 
   it("marks the current page's nav item as selected", () => {

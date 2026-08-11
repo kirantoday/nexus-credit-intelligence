@@ -31,7 +31,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.core.types import AlertStatus, CurationMethod, EvidenceSeverity, VerificationStatus
+from app.core.types import AlertStatus, EvidenceSeverity
 from app.domain.alert import AlertEvent
 from app.repositories import alert_repository, issuer_repository
 from app.schemas.issuer_timeline import IssuerTimeline, TimelineEvent, TimelineSource
@@ -44,7 +44,13 @@ _SEVERITY_RANK: dict[EvidenceSeverity, int] = {
 }
 
 
-def _qualifies(alert: AlertEvent) -> bool:
+def qualifies(alert: AlertEvent) -> bool:
+    """Whether an alert is safe to treat as a real distress signal about
+    the issuer — excludes analyst-dismissed alerts and ones AI review
+    determined were about a third party rather than the issuer itself
+    (PLAN.md Milestone 7.5.1's `issuer_is_subject` fix). Shared with
+    Watchlist detail (Milestone 8): the same alert must never qualify as a
+    "latest development" here and not there, or vice versa."""
     return alert.status != AlertStatus.DISMISSED and alert.issuer_is_subject is not False
 
 
@@ -95,7 +101,7 @@ def get_issuer_timeline(db: Session, issuer_id: UUID) -> IssuerTimeline | None:
     if issuer is None:
         return None
 
-    alerts = [a for a in alert_repository.list_alerts_by_issuer(db, issuer_id) if _qualifies(a)]
+    alerts = [a for a in alert_repository.list_alerts_by_issuer(db, issuer_id) if qualifies(a)]
 
     groups: dict[tuple[date, str], list[AlertEvent]] = defaultdict(list)
     for alert in alerts:
@@ -107,22 +113,8 @@ def get_issuer_timeline(db: Session, issuer_id: UUID) -> IssuerTimeline | None:
         reverse=True,
     )
 
-    # Only `verified` memberships are safe to state as current status — a
-    # `partial` (system-suggested, unconfirmed) one must never read as a
-    # settled fact (PLAN.md Milestone 7.5.1). Manually-curated names are the
-    # polished, product-facing labels used everywhere else in the app;
-    # System-Detected: * universes exist to classify issuers the curated
-    # lists haven't caught up to yet, so they're shown (prefix stripped)
-    # only when no curated membership is verified — never both, which would
-    # just be the same real status stated twice under different names.
     memberships = research_universe_service.get_issuer_universe_memberships(db, issuer_id)
-    verified = [m for m in memberships if m.verification_status == VerificationStatus.VERIFIED]
-    curated = {m.name for m in verified if m.curation_method == CurationMethod.MANUAL_CURATED}
-    current_status = (
-        sorted(curated)
-        if curated
-        else sorted({m.name.removeprefix("System-Detected: ") for m in verified})
-    )
+    current_status = research_universe_service.derive_current_status(memberships)
 
     return IssuerTimeline(
         issuer_id=issuer_id,

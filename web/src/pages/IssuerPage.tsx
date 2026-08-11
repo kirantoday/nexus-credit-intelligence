@@ -28,6 +28,7 @@ import type {
   IssuerSecurityRow,
 } from "../api/issuer";
 import type { IssuerUniverseMembership } from "../api/researchUniverse";
+import { AddToWatchlistButton } from "../components/AddToWatchlistButton";
 import { CapitalStructureStack } from "../components/CapitalStructureStack";
 import { CourtDocketSection } from "../components/CourtDocketSection";
 import { DistressTimeline } from "../components/DistressTimeline";
@@ -315,9 +316,21 @@ export function IssuerPage(): ReactElement {
   return (
     <Stack spacing={3}>
       <Box>
-        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-          <Typography variant="h4">{issuer.legal_name}</Typography>
-          <SyntheticDataBadge isSynthetic={issuer.is_synthetic} reason={issuer.synthetic_reason} />
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="center"
+          justifyContent="space-between"
+          flexWrap="wrap"
+        >
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+            <Typography variant="h4">{issuer.legal_name}</Typography>
+            <SyntheticDataBadge
+              isSynthetic={issuer.is_synthetic}
+              reason={issuer.synthetic_reason}
+            />
+          </Stack>
+          <AddToWatchlistButton issuerId={issuer.issuer_id} />
         </Stack>
         <Stack direction="row" spacing={1} sx={{ mt: 1 }} flexWrap="wrap">
           {issuer.ticker && <Chip label={`Ticker: ${issuer.ticker}`} size="small" />}

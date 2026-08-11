@@ -131,6 +131,61 @@ def update_curation_method(
     return _collection_to_domain(row)
 
 
+def update_collection(
+    db: Session,
+    collection_id: UUID,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+) -> Collection | None:
+    """Renames/redescribes a collection in place (Milestone 8: Watchlist
+    rename). Unlike `update_curation_method`, this is a general-purpose
+    field update reserved for user-editable fields only — `collection_type`,
+    `scope`, and `curation_method` are never mutated here, only set once at
+    creation. Returns `None` if the collection doesn't exist, so the caller
+    can map that to a 404 rather than raising."""
+    row = db.get(CollectionModel, collection_id)
+    if row is None:
+        return None
+    if name is not None:
+        row.name = name
+    if description is not None:
+        row.description = description
+    row.updated_at = datetime.now(UTC)
+    db.flush()
+    db.refresh(row)
+    return _collection_to_domain(row)
+
+
+def delete_collection(db: Session, collection_id: UUID) -> bool:
+    """Deletes a collection and its own `collection_membership` rows only —
+    membership rows reference `issuer_id` by FK but deleting them never
+    touches `issuer`/`security`/`research_evidence`/`alert_event` or any
+    other collection's memberships (Milestone 8: deleting a Watchlist must
+    never delete the underlying issuers or their evidence/alerts/timelines).
+    No ORM cascade is configured on the FK, so memberships are deleted
+    explicitly first, in the same flush. Returns whether a collection was
+    actually found and deleted (idempotent: `False`, not an error, if it
+    didn't exist)."""
+    row = db.get(CollectionModel, collection_id)
+    if row is None:
+        return False
+    membership_stmt = select(CollectionMembershipModel).where(
+        CollectionMembershipModel.collection_id == collection_id
+    )
+    for membership_row in db.execute(membership_stmt).scalars().all():
+        db.delete(membership_row)
+    # No ORM `relationship()` links these two mapped classes, so the unit
+    # of work has no dependency information to order these deletes safely
+    # by itself — flushing the memberships first, before deleting their
+    # parent `collection` row, avoids a FK violation regardless of
+    # whatever order SQLAlchemy would otherwise have picked.
+    db.flush()
+    db.delete(row)
+    db.flush()
+    return True
+
+
 def list_collections(
     db: Session, *, collection_type: CollectionType | None = None
 ) -> list[Collection]:
@@ -337,6 +392,35 @@ def list_collections_for_issuers(
     result: dict[UUID, list[Collection]] = defaultdict(list)
     for issuer_id, collection_row in rows:
         result[issuer_id].append(_collection_to_domain(collection_row))
+    return result
+
+
+def list_collections_with_membership_for_issuers(
+    db: Session, issuer_ids: list[UUID]
+) -> dict[UUID, list[tuple[Collection, CollectionMembership]]]:
+    """Batch form of `list_collections_for_issuer` + per-collection
+    `get_membership`, combined — one query for many issuers instead of one
+    query per issuer plus one query per (issuer, collection) pair. Backs
+    Watchlist detail's "current status" column (Milestone 8, PLAN.md 24.9),
+    which needs each watched issuer's membership `verification_status`/
+    `curation_method`, not just which collections it's in."""
+    if not issuer_ids:
+        return {}
+    stmt = (
+        select(CollectionMembershipModel, CollectionModel)
+        .join(
+            CollectionModel,
+            CollectionModel.id == CollectionMembershipModel.collection_id,
+        )
+        .where(CollectionMembershipModel.issuer_id.in_(set(issuer_ids)))
+        .order_by(CollectionModel.name.asc())
+    )
+    rows = db.execute(stmt).all()
+    result: dict[UUID, list[tuple[Collection, CollectionMembership]]] = defaultdict(list)
+    for membership_row, collection_row in rows:
+        result[membership_row.issuer_id].append(
+            (_collection_to_domain(collection_row), _membership_to_domain(membership_row))
+        )
     return result
 
 

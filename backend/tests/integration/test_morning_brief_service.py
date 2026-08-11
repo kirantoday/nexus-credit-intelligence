@@ -350,7 +350,7 @@ def test_only_a_new_later_run_advances_the_window(db_session: Session) -> None:
 # ---------------------------------------------------------------------------
 # 2026-08-10 correction: classification must follow `as_of_date` relative to
 # the research-cycle boundary, never `is_backfill` — see
-# `morning_brief_service._is_new_development`'s docstring for the real
+# `morning_brief_service.is_new_development`'s docstring for the real
 # production incident this fixes (a one-time explicit `--mode backfill
 # --start/--end` window used to correct a watermark gap ingested genuinely
 # current Aug 9-10 activity, which the old `is_backfill`-only check

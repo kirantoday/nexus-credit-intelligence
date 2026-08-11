@@ -6,6 +6,7 @@ repository conventions (function-style, domain objects only, flush-not-commit).
 
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import UTC, date, datetime
 from uuid import UUID
 
@@ -151,6 +152,22 @@ def list_alerts_by_issuer(db: Session, issuer_id: UUID) -> list[AlertEvent]:
     stmt = select(AlertEventModel).where(AlertEventModel.issuer_id == issuer_id)
     rows = db.execute(stmt).scalars().all()
     return [_to_domain(row) for row in rows]
+
+
+def list_alerts_by_issuers(db: Session, issuer_ids: list[UUID]) -> dict[UUID, list[AlertEvent]]:
+    """Batch form of `list_alerts_by_issuer` — one query for many issuers
+    instead of one query per issuer, keyed by issuer id. Backs Watchlist
+    detail's per-issuer "latest development" / "new developments" columns
+    (Milestone 8, PLAN.md 24.9), which would otherwise issue one query per
+    watched issuer."""
+    if not issuer_ids:
+        return {}
+    stmt = select(AlertEventModel).where(AlertEventModel.issuer_id.in_(set(issuer_ids)))
+    rows = db.execute(stmt).scalars().all()
+    result: dict[UUID, list[AlertEvent]] = defaultdict(list)
+    for row in rows:
+        result[row.issuer_id].append(_to_domain(row))
+    return result
 
 
 def count_alerts_by_severity(
