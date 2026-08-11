@@ -6098,3 +6098,128 @@ high_yield_oas: value=2.70  as_of_date=2026-08-07  freshness=live
 live FRED API verification, one-time production refresh, recurring-fix
 implementation in the existing nightly wrapper, 4 new tests, full
 verification, documentation).
+
+---
+
+## 2026-08-11 — Railway nightly cron services provisioned; KI-002 resolved
+
+**Context**
+
+Verified the existing `run_nightly_scheduled_discovery` wrapper matched
+its documented behavior exactly (37 relevant tests re-run, all passing,
+no defect found — see the two prior entries this same day) before any
+Railway write. Installed the Railway CLI (npm, v5.37.3), ran
+`railway setup agent -y` (skills + MCP config for Claude Code),
+completed the official browser OAuth login, then used read-only
+GraphQL queries to positively identify the target before any write:
+workspace `kirantoday's Projects`, project `wonderful-dream`
+(`3de98e8a-8dee-4af3-b931-694129774016`), environment `production`
+(`81bd460e-f353-4718-ba66-5fbc4691d47b`), existing service
+`nexus-credit-intelligence` — all matching exactly what the user had
+independently confirmed from the dashboard, plus confirmed its real
+build config (repo `kirantoday/nexus-credit-intelligence`, branch
+`main`, root directory `/backend`, Dockerfile build) before creating
+anything.
+
+**Provisioning**
+
+Created two new sibling services via `railway add --repo ... --branch
+main` + `serviceInstanceUpdate` GraphQL mutations:
+`nexus-nightly-10pm-edt` (`cronSchedule=0 2 * * *`) and
+`nexus-nightly-10pm-est` (`cronSchedule=0 3 * * *`), both
+`rootDirectory=/backend`, both `startCommand=python -m
+app.scripts.run_nightly_scheduled_discovery`.
+
+**Real defect found and fixed mid-provisioning**: the first attempt set
+`startCommand`/`cronSchedule` via the API alone, then noticed the raw
+`builder` field read back as `RAILPACK` rather than `DOCKERFILE` —
+investigated by comparing against the *existing* service's own raw
+field (also `RAILPACK`, also `railwayConfigFile: null`, yet genuinely
+builds via Dockerfile in production), which proved Railway auto-detects
+`railway.toml` by file presence at `rootDirectory` regardless of that
+field — a false alarm. But confirming this raised the real question of
+precedence, checked against Railway's own docs (not assumed): "Configuration
+defined in code will always override values from the dashboard" — meaning
+the two new cron services, sharing `backend/railway.toml` with the web
+service, would have had their `startCommand` silently overridden back
+to the web service's own `uvicorn ...` command on every deploy,
+defeating the entire purpose. Fixed with two new, minimal, dedicated
+config files (`backend/railway.nightly-edt.toml`,
+`railway.nightly-est.toml` — same `[build]` Dockerfile section, correct
+`[deploy] startCommand`/`cronSchedule` each), committed, pushed
+(`b7913e1`), then pointed each cron service's `railwayConfigFile` at
+its own file. The existing web service's `railway.toml` was never
+touched. Both cron services then built successfully via Dockerfile
+(`status: SUCCESS`), confirming the fix.
+
+**Secrets handling**: variable names were listed via `railway variable
+list --json`, piped directly into a script that printed only sorted
+keys — raw values were never rendered to any visible output. All
+required variables (`DATABASE_URL`, `DIRECT_DATABASE_URL`,
+`SEC_USER_AGENT`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`,
+`LLM_PROVIDER`, `COURTLISTENER_API_TOKEN`, `FRED_API_KEY`,
+`ENVIRONMENT`, `LOG_LEVEL`) were set on both new services as Railway
+reference variables (`${{nexus-credit-intelligence.VAR}}`, confirmed
+syntax against Railway's own docs) — live references to the existing
+service's own values, never duplicated/copied raw. Plus
+`TZ=America/New_York` and explicit `NIGHTLY_MAX_AI_COST_USD=2.00`/
+`NIGHTLY_MAX_AI_CALLS=300`/`NIGHTLY_MAX_SONNET_CALLS=75` (redundant with
+the wrapper's own code defaults, set explicitly for dashboard-visible
+auditability of the safety ceiling).
+
+**Verification**
+
+Pushing the two new config files auto-triggered a rebuild of all three
+services (standard Railway behavior for a GitHub-connected branch,
+unrelated files or not) — confirmed this built/deployed only, never
+executed the nightly script: it was 12:42 PM ET at the time (nowhere
+near the wrapper's 22:00 ET gate), and `ai_call_log`/
+`market_discovery_run` were confirmed unchanged before and after.
+`railway status` afterward correctly categorizes the two new services
+under "Cron jobs" (not "Services"), both `● Online`, `0/1 running`
+(idle, correctly not executing), with accurate next-run countdowns
+(~9-10 hours from the time of provisioning, matching that night's 10 PM
+ET). The existing web service confirmed unchanged and healthy
+(`GET /health` → 200) throughout.
+
+**Tests Added**
+
+None — no application code changed, only Railway configuration and two
+new minimal deployment config files (validated by the pre-commit hook's
+`check toml`).
+
+**Commands Executed**
+
+```
+npm install -g @railway/cli
+railway setup agent -y
+railway login
+railway api '{ ... }'            # multiple read-only verification queries
+railway add --repo kirantoday/nexus-credit-intelligence --branch main --service nexus-nightly-10pm-edt --json
+railway add --repo kirantoday/nexus-credit-intelligence --branch main --service nexus-nightly-10pm-est --json
+railway api 'mutation { serviceInstanceUpdate(...) }'   # x2, then x2 more for railwayConfigFile fix
+railway variable set --service nexus-nightly-10pm-edt --environment production --skip-deploys --json ...
+railway variable set --service nexus-nightly-10pm-est --environment production --skip-deploys --json ...
+git add backend/railway.nightly-edt.toml backend/railway.nightly-est.toml
+git commit ...   # b7913e1
+git push origin main
+railway status
+```
+
+**Remaining Work**
+
+- First real nightly execution has not happened yet — next expected at
+  the next 10:00 PM America/New_York. Per explicit instruction, not
+  triggered manually and not waited for during this task.
+- KI-002 resolved.
+
+**Commit Hash**
+
+`b7913e1` (Railway config files only — no application code changed)
+
+**Approximate Time Spent**
+
+~50 minutes (Railway CLI/agent setup, browser login, target
+verification, service creation, the config-as-code precedence discovery
+and fix, secret-safe variable wiring, full read-only verification,
+documentation).
