@@ -53,14 +53,26 @@ describe("Layout", () => {
     expect(screen.getByRole("link", { name: "Watchlists" })).toHaveAttribute("href", "/watchlists");
   });
 
-  it("shows an 'About Nexus' navigation item positioned after Watchlists", () => {
+  it("shows an 'Alerts' navigation item positioned after Watchlists", () => {
+    renderLayout();
+
+    const links = screen.getAllByRole("link");
+    const labels = links.map((link) => link.textContent);
+
+    expect(labels).toContain("Alerts");
+    expect(labels.indexOf("Alerts")).toBe(labels.indexOf("Watchlists") + 1);
+
+    expect(screen.getByRole("link", { name: "Alerts" })).toHaveAttribute("href", "/alerts");
+  });
+
+  it("shows an 'About Nexus' navigation item positioned after Alerts", () => {
     renderLayout();
 
     const links = screen.getAllByRole("link");
     const labels = links.map((link) => link.textContent);
 
     expect(labels).toContain("About Nexus");
-    expect(labels.indexOf("About Nexus")).toBe(labels.indexOf("Watchlists") + 1);
+    expect(labels.indexOf("About Nexus")).toBe(labels.indexOf("Alerts") + 1);
 
     expect(screen.getByRole("link", { name: "About Nexus" })).toHaveAttribute("href", "/about");
   });
@@ -68,7 +80,6 @@ describe("Layout", () => {
   it("does not show not-yet-built nav items", () => {
     renderLayout();
 
-    expect(screen.queryByText("Alerts")).not.toBeInTheDocument();
     expect(screen.queryByText("Search")).not.toBeInTheDocument();
   });
 

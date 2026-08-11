@@ -24,7 +24,14 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.core.types import CollectionScope, CollectionType, CurationMethod, VerificationStatus
+from app.core.types import (
+    AlertStatus,
+    CollectionScope,
+    CollectionType,
+    CurationMethod,
+    EvidenceSeverity,
+    VerificationStatus,
+)
 from app.domain.alert import AlertEvent
 from app.domain.collection import Collection, CollectionCreate, CollectionMembershipCreate
 from app.repositories import (
@@ -151,7 +158,27 @@ def _build_rows(db: Session, collection_id: UUID) -> list[WatchlistIssuerRow]:
     return rows
 
 
+def _alert_status_counts(db: Session, issuer_ids: list[UUID]) -> tuple[int, int]:
+    """Alert *workflow-status* counts for a Watchlist's issuers (Milestone
+    9) — `alert.status=new`, deliberately distinct from this module's own
+    "new development" (research-cycle) counts above. A Watchlist can
+    correctly show "0 new developments this cycle" while still having
+    unacknowledged alerts from an earlier cycle, and vice versa; conflating
+    the two would silently redefine "new" for one of the two products
+    (PLAN.md 24.11)."""
+    if not issuer_ids:
+        return 0, 0
+    new_alert_count = alert_repository.count_alerts(
+        db, status=AlertStatus.NEW, issuer_ids=issuer_ids
+    )
+    high_severity_alert_count = alert_repository.count_alerts(
+        db, status=AlertStatus.NEW, severity=EvidenceSeverity.HIGH, issuer_ids=issuer_ids
+    )
+    return new_alert_count, high_severity_alert_count
+
+
 def _to_summary(
+    db: Session,
     collection: Collection,
     rows: list[WatchlistIssuerRow],
     *,
@@ -165,6 +192,9 @@ def _to_summary(
     )
     activity_candidates: list[datetime] = [r.added_at for r in rows]
     last_activity_at = max(activity_candidates) if activity_candidates else None
+    new_alert_count, high_severity_alert_count = _alert_status_counts(
+        db, [r.issuer_id for r in rows]
+    )
     return WatchlistSummary(
         id=collection.id,
         slug=collection.slug,
@@ -173,6 +203,8 @@ def _to_summary(
         issuer_count=len(rows),
         issuers_with_new_developments=issuers_with_new,
         high_severity_count=high_severity_count,
+        new_alert_count=new_alert_count,
+        high_severity_alert_count=high_severity_alert_count,
         last_activity_at=last_activity_at,
         created_at=collection.created_at,
         updated_at=collection.updated_at,
@@ -190,7 +222,7 @@ def list_watchlists(db: Session, *, issuer_id: UUID | None = None) -> list[Watch
         contains_issuer = None
         if issuer_id is not None:
             contains_issuer = any(r.issuer_id == issuer_id for r in rows)
-        summaries.append(_to_summary(collection, rows, contains_issuer=contains_issuer))
+        summaries.append(_to_summary(db, collection, rows, contains_issuer=contains_issuer))
     summaries.sort(key=lambda s: s.name)
     return summaries
 
@@ -200,7 +232,7 @@ def get_watchlist(db: Session, watchlist_id: UUID) -> WatchlistSummary | None:
     if collection is None or collection.collection_type != CollectionType.WATCHLIST:
         return None
     rows = _build_rows(db, watchlist_id)
-    return _to_summary(collection, rows)
+    return _to_summary(db, collection, rows)
 
 
 def get_watchlist_detail(db: Session, watchlist_id: UUID) -> WatchlistDetailResponse | None:
@@ -208,7 +240,7 @@ def get_watchlist_detail(db: Session, watchlist_id: UUID) -> WatchlistDetailResp
     if collection is None or collection.collection_type != CollectionType.WATCHLIST:
         return None
     rows = _build_rows(db, watchlist_id)
-    summary = _to_summary(collection, rows)
+    summary = _to_summary(db, collection, rows)
     return WatchlistDetailResponse(watchlist=summary, issuers=rows)
 
 
@@ -226,7 +258,7 @@ def create_watchlist(db: Session, *, name: str, description: str) -> WatchlistSu
             verification_status=VerificationStatus.UNVERIFIED,
         ),
     )
-    return _to_summary(collection, [])
+    return _to_summary(db, collection, [])
 
 
 def update_watchlist(
@@ -241,7 +273,7 @@ def update_watchlist(
     if updated is None:
         return None
     rows = _build_rows(db, watchlist_id)
-    return _to_summary(updated, rows)
+    return _to_summary(db, updated, rows)
 
 
 def delete_watchlist(db: Session, watchlist_id: UUID) -> bool:
@@ -280,7 +312,7 @@ def add_issuer(
         ),
     )
     rows = _build_rows(db, watchlist_id)
-    return _to_summary(collection, rows), created
+    return _to_summary(db, collection, rows), created
 
 
 def remove_issuer(db: Session, watchlist_id: UUID, issuer_id: UUID) -> bool:

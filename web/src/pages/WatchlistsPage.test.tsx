@@ -29,6 +29,8 @@ function makeWatchlist(overrides: Partial<WatchlistSummary> = {}): WatchlistSumm
     issuer_count: 12,
     issuers_with_new_developments: 3,
     high_severity_count: 2,
+    new_alert_count: 2,
+    high_severity_alert_count: 1,
     last_activity_at: "2026-08-10T00:00:00Z",
     created_at: "2026-08-01T00:00:00Z",
     updated_at: "2026-08-10T00:00:00Z",

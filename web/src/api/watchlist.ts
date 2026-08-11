@@ -15,6 +15,13 @@ export interface WatchlistSummary {
   issuer_count: number;
   issuers_with_new_developments: number;
   high_severity_count: number;
+  /** `alert.status=new` counts (Milestone 9) — a different axis from
+   * `issuers_with_new_developments`/`high_severity_count` above, which are
+   * research-cycle "new development" counts (Milestone 8). See
+   * `AlertsPage.tsx` for the full "new alert" vs. "new development"
+   * distinction. */
+  new_alert_count: number;
+  high_severity_alert_count: number;
   last_activity_at: string | null;
   created_at: string;
   updated_at: string;

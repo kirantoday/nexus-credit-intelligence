@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.ai.model_router import ModelRouter
 from app.core.types import (
     AlertStatus,
+    CollectionType,
     DetectionMethod,
     EvidenceSeverity,
     EvidenceType,
@@ -25,7 +26,9 @@ from app.core.types import (
     ReviewStatus,
 )
 from app.domain.alert import AlertEvent
+from app.domain.collection import Collection
 from app.domain.filing_monitor_run import FilingMonitorRun
+from app.domain.issuer import Issuer
 from app.domain.research_evidence import ResearchEvidence
 from app.providers.base.http_client import ThrottledHttpClient
 from app.repositories import (
@@ -38,8 +41,11 @@ from app.repositories import (
 )
 from app.schemas.filing_monitor import (
     AlertEvidenceDetail,
+    AlertIssuerSearchResponse,
+    AlertIssuerSearchResult,
     AlertRow,
     AlertsPage,
+    AlertsSummary,
     FilingMonitorRunRow,
     ResearchEvidenceRow,
     SecFilingRow,
@@ -161,15 +167,28 @@ def list_evidence(
     return [_evidence_to_row(db, e) for e in evidence]
 
 
-def alert_to_row(db: Session, alert: AlertEvent) -> AlertRow:
-    issuer = issuer_repository.get_issuer(db, alert.issuer_id)
-    universes = collection_repository.list_collections_for_issuer(db, alert.issuer_id)
+def _split_collection_names(collections: list[Collection]) -> tuple[list[str], list[str]]:
+    """Splits an issuer's collections into Research-Universe/Benchmark
+    names vs. Watchlist names (Milestone 9) — the same distinction
+    `research_universe_service.get_issuer_universe_memberships` already
+    enforces for Issuer Detail, applied here so `AlertRow.universe_names`
+    never silently includes a personal Watchlist's name."""
+    universe_names = [c.name for c in collections if c.collection_type != CollectionType.WATCHLIST]
+    watchlist_names = [c.name for c in collections if c.collection_type == CollectionType.WATCHLIST]
+    return universe_names, watchlist_names
+
+
+def _build_alert_row(
+    alert: AlertEvent, issuer: Issuer | None, collections: list[Collection]
+) -> AlertRow:
+    universe_names, watchlist_names = _split_collection_names(collections)
     return AlertRow(
         id=alert.id,
         issuer_id=alert.issuer_id,
         issuer_legal_name=issuer.legal_name if issuer else "Unknown issuer",
         issuer_ticker=issuer.ticker if issuer else None,
-        universe_names=[c.name for c in universes],
+        universe_names=universe_names,
+        watchlist_names=watchlist_names,
         category=alert.category,
         severity=alert.severity,
         headline=alert.headline,
@@ -193,11 +212,44 @@ def alert_to_row(db: Session, alert: AlertEvent) -> AlertRow:
     )
 
 
+def alert_to_row(db: Session, alert: AlertEvent) -> AlertRow:
+    """Single-alert assembly — used by the evidence-detail/acknowledge/
+    dismiss endpoints, which each operate on exactly one alert and gain
+    nothing from batching. `list_alerts` (below) uses the batched
+    `_alerts_to_rows_batch` instead, since a page can hold up to 200
+    alerts (Milestone 9's N+1 fix — this function previously issued two
+    queries per alert when called in a loop)."""
+    issuer = issuer_repository.get_issuer(db, alert.issuer_id)
+    collections = collection_repository.list_collections_for_issuer(db, alert.issuer_id)
+    return _build_alert_row(alert, issuer, collections)
+
+
+def _alerts_to_rows_batch(db: Session, alerts: list[AlertEvent]) -> list[AlertRow]:
+    """Batched form of `alert_to_row` for a whole page of alerts — one
+    query for every alert's issuer, one query for every alert's
+    collections, instead of two queries per alert."""
+    issuer_ids = list({a.issuer_id for a in alerts})
+    issuers = issuer_repository.list_issuers_by_ids(db, issuer_ids)
+    collections_by_issuer = collection_repository.list_collections_for_issuers(db, issuer_ids)
+    return [
+        _build_alert_row(a, issuers.get(a.issuer_id), collections_by_issuer.get(a.issuer_id, []))
+        for a in alerts
+    ]
+
+
+def _resolve_membership_issuer_ids(db: Session, collection_id: UUID) -> set[UUID]:
+    return {
+        issuer.id
+        for issuer, _m in collection_repository.list_issuers_for_collection(db, collection_id)
+    }
+
+
 def list_alerts(
     db: Session,
     *,
     issuer_id: UUID | None = None,
     universe_id: UUID | None = None,
+    watchlist_id: UUID | None = None,
     severity: EvidenceSeverity | None = None,
     category: str | None = None,
     evidence_provider: str | None = None,
@@ -209,34 +261,43 @@ def list_alerts(
     page: int = 1,
     page_size: int = 50,
 ) -> AlertsPage:
-    scoped_issuer_id = issuer_id
-    if universe_id is not None:
-        # Filtering by universe means "issuer must be a member of this
-        # collection" — resolved to a concrete issuer_id set (this
-        # milestone's Research Universes are small, tens of issuers at
-        # most, so materializing the set is cheap). If both `issuer_id` and
-        # `universe_id` are given and disagree, `issuer_id` wins (the more
-        # specific filter) — matched to `alert_repository.list_alerts`'s
-        # single `issuer_id` parameter shape.
-        member_ids = {
-            issuer.id
-            for issuer, _m in collection_repository.list_issuers_for_collection(db, universe_id)
-        }
-        if issuer_id is not None and issuer_id not in member_ids:
-            return AlertsPage(alerts=[], total=0, page=page, page_size=page_size)
-        if issuer_id is None and len(member_ids) == 1:
-            scoped_issuer_id = next(iter(member_ids))
-        elif issuer_id is None and not member_ids:
-            return AlertsPage(alerts=[], total=0, page=page, page_size=page_size)
-        elif issuer_id is None:
-            # Multiple issuers in the universe: filter client-request-shape
-            # not supported by the single-issuer repository filter — fetch
-            # unfiltered-by-issuer and post-filter by membership instead.
-            scoped_issuer_id = None
+    """`universe_id`/`watchlist_id` (Milestone 9) both mean "issuer is a
+    member of this collection" — resolved to a concrete issuer-id set and
+    passed to `alert_repository.list_alerts`'s `issuer_ids` filter so
+    pagination and `total` stay correct at the SQL level regardless of how
+    many issuers the collection has. (Previously, a multi-issuer
+    `universe_id` fetched an already-paginated, unfiltered page and
+    post-filtered it in Python — silently under-reporting `total` and
+    dropping rows off a page. Fixed here, not just for the new
+    `watchlist_id` parameter, since both go through the same resolution
+    logic and leaving one correct and one buggy would be worse than fixing
+    both consistently.) If both `universe_id` and `watchlist_id` are given,
+    an issuer must belong to both (intersection). If `issuer_id` is also
+    given, it wins outright when it disagrees with the resolved set."""
+    issuer_ids: list[UUID] | None = None
+    if universe_id is not None or watchlist_id is not None:
+        member_ids: set[UUID] = set()
+        if universe_id is not None:
+            member_ids = _resolve_membership_issuer_ids(db, universe_id)
+        if watchlist_id is not None:
+            watchlist_member_ids = _resolve_membership_issuer_ids(db, watchlist_id)
+            member_ids = (
+                member_ids & watchlist_member_ids
+                if universe_id is not None
+                else watchlist_member_ids
+            )
+        if issuer_id is not None:
+            if issuer_id not in member_ids:
+                return AlertsPage(alerts=[], total=0, page=page, page_size=page_size)
+        else:
+            if not member_ids:
+                return AlertsPage(alerts=[], total=0, page=page, page_size=page_size)
+            issuer_ids = list(member_ids)
 
     alerts, total = alert_repository.list_alerts(
         db,
-        issuer_id=scoped_issuer_id,
+        issuer_id=issuer_id,
+        issuer_ids=issuer_ids,
         severity=severity,
         category=category,
         evidence_provider=evidence_provider,
@@ -249,15 +310,7 @@ def list_alerts(
         page_size=page_size,
     )
 
-    if universe_id is not None and issuer_id is None and scoped_issuer_id is None:
-        member_ids = {
-            issuer.id
-            for issuer, _m in collection_repository.list_issuers_for_collection(db, universe_id)
-        }
-        alerts = [a for a in alerts if a.issuer_id in member_ids]
-        total = len(alerts)
-
-    rows = [alert_to_row(db, a) for a in alerts]
+    rows = _alerts_to_rows_batch(db, alerts)
     return AlertsPage(alerts=rows, total=total, page=page, page_size=page_size)
 
 
@@ -284,6 +337,46 @@ def dismiss_alert(
         db, alert_id, dismissed_by=dismissed_by, dismissal_reason=dismissal_reason
     )
     return alert_to_row(db, alert)
+
+
+def get_alerts_summary(db: Session) -> AlertsSummary:
+    """Alerts Center landing-page tiles (Milestone 9, PLAN.md 24.11) —
+    four cheap COUNT queries, never a full alert fetch. Deliberately
+    distinct from `watchlist_service`'s per-Watchlist counts, which are
+    about research-cycle "new development" — this is `alert.status`
+    workflow state (PLAN.md 24.11's "new alert" vs. "new development"
+    distinction)."""
+    watchlist_issuer_ids = collection_repository.list_issuer_ids_for_collection_types(
+        db, [CollectionType.WATCHLIST]
+    )
+    return AlertsSummary(
+        new_count=alert_repository.count_alerts(db, status=AlertStatus.NEW),
+        high_severity_count=alert_repository.count_alerts(
+            db, status=AlertStatus.NEW, severity=EvidenceSeverity.HIGH
+        ),
+        watchlist_alert_count=alert_repository.count_alerts(
+            db, status=AlertStatus.NEW, issuer_ids=watchlist_issuer_ids
+        ),
+        acknowledged_count=alert_repository.count_alerts(db, status=AlertStatus.ACKNOWLEDGED),
+    )
+
+
+def search_alert_issuers(db: Session, query: str, *, limit: int = 20) -> AlertIssuerSearchResponse:
+    """Issuer-name search for the Alerts Center's issuer filter, scoped to
+    issuers that actually have at least one alert (Milestone 9) — reuses
+    `alert_repository.search_issuers_with_alerts` rather than a generic
+    issuer search, since that's the real search space for this filter."""
+    if not query.strip():
+        return AlertIssuerSearchResponse(issuers=[])
+    matches = alert_repository.search_issuers_with_alerts(db, query.strip(), limit=limit)
+    return AlertIssuerSearchResponse(
+        issuers=[
+            AlertIssuerSearchResult(
+                issuer_id=issuer_id, issuer_legal_name=name, issuer_ticker=ticker
+            )
+            for issuer_id, name, ticker in matches
+        ]
+    )
 
 
 def trigger_manual_run(

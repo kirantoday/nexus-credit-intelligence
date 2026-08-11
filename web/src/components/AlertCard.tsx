@@ -11,6 +11,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+import BookmarkOutlinedIcon from "@mui/icons-material/BookmarkOutlined";
 import type { AlertRow } from "../api/filingMonitor";
 import { useAlertEvidence } from "../queries/useAlerts";
 import { SeverityBadge } from "./SeverityBadge";
@@ -55,6 +56,7 @@ export function AlertCard({ alert, onAcknowledge, onDismiss }: AlertCardProps): 
               />
               {alert.is_backfill && <Chip label="Historical" size="small" color="default" />}
               <Chip label={alert.status} size="small" variant="outlined" />
+              <Chip label={alert.category.replace(/_/g, " ")} size="small" variant="outlined" />
             </Stack>
             <Typography variant="subtitle1" fontWeight={600} sx={{ mt: 1 }}>
               {alert.headline}
@@ -81,6 +83,16 @@ export function AlertCard({ alert, onAcknowledge, onDismiss }: AlertCardProps): 
           </Link>
           {alert.universe_names.map((name) => (
             <Chip key={name} label={name} size="small" variant="outlined" />
+          ))}
+          {alert.watchlist_names.map((name) => (
+            <Chip
+              key={name}
+              icon={<BookmarkOutlinedIcon />}
+              label={name}
+              size="small"
+              variant="filled"
+              color="primary"
+            />
           ))}
         </Stack>
 

@@ -6416,3 +6416,149 @@ regression fix), `3f52601` (About page copy update)
 backend repository/service/API implementation, frontend pages/
 components, real-data CFO Demo Watchlist creation and verification,
 full test/lint/type/build suite, documentation).
+
+## 2026-08-11 — Milestone 9: Alerts Center
+
+**Summary**
+
+Analyst Alerts Center — "what research alerts need my review, especially
+for issuers I care about?" A Phase 0 architecture check (required by this
+milestone's own brief) found that `alert_event` was already the
+canonical research-alert record (ADR-018, Milestone 6.5), with a working
+`GET /api/alerts` (list/filter/paginate), `acknowledge`/`dismiss`, and an
+evidence-detail endpoint already built and in production use by the
+Morning Research Brief. PLAN.md's original §12 sketched a separate
+`alert_rule`/`alert_engine.py` rule-evaluation system that was never
+built and is not what this milestone built either — doing so would have
+been exactly the "second competing alert system" the incoming brief
+explicitly prohibited. This milestone is additive UI/workflow over
+already-approved architecture (a new analyst-inbox page, a few genuinely
+missing filters/endpoints), not a new architectural decision — no ADR
+was written.
+
+**What was genuinely missing (and built)**
+
+- Backend: `alert_repository.list_alerts` gained an `issuer_ids: list[UUID]
+  | None` filter (alongside the existing single `issuer_id`); new
+  `count_alerts`/`search_issuers_with_alerts` functions. `AlertRow` gained
+  `watchlist_names: list[str]`. New schemas `AlertsSummary`,
+  `AlertIssuerSearchResult`/`Response`. `filing_monitor_api_service
+  .list_alerts` gained a `watchlist_id` parameter (resolved to an issuer
+  set exactly like the existing `universe_id`, via a shared
+  `_resolve_membership_issuer_ids` helper) and new `get_alerts_summary`/
+  `search_alert_issuers` functions. `WatchlistSummary` (Milestone 8)
+  gained additive `new_alert_count`/`high_severity_alert_count` fields,
+  computed via a new `watchlist_service._alert_status_counts` helper —
+  explicitly kept separate from Milestone 8's existing `alert.status`-
+  independent "new development" counts.
+- New API surface: `watchlist_id` query param on `GET /api/alerts`;
+  `GET /api/alerts/summary` (four COUNT queries: new, high-severity-new,
+  watchlist-new, acknowledged); `GET /api/alerts/issuers?q=` (issuer-name
+  search scoped to issuers with at least one alert, backing the Alerts
+  Center's issuer filter without a generic issuer-search feature).
+- New `AlertsPage.tsx` (`/alerts`, enabled nav item positioned after
+  Watchlists): four informational summary tiles, a URL-persisted filter
+  bar (Status/Severity/Watchlist/Research Universe/Detection/Issuer
+  search via a debounced MUI Autocomplete), and the existing, unmodified-
+  in-behavior `AlertCard` component (acknowledge/dismiss wiring reused
+  verbatim) rendered in a `TablePagination`-paginated list, matching
+  Credit Universe's existing pagination convention. `AlertCard` gained a
+  category chip and Watchlist-membership chips (bookmark icon, filled
+  `primary` color, visually distinct from the existing outlined Research
+  Universe chips).
+- Watchlist detail gained one additional stat tile ("new alerts") and a
+  "View Alerts" button linking to `/alerts?watchlist={id}`. Issuer Detail
+  gained a compact "View Alerts" button linking to `/alerts?issuer={id}`,
+  next to the existing Add to Watchlist button — deliberately not a
+  duplicate of alert cards inline (Issuer Detail's Distress Timeline
+  remains the research-context view; Alerts Center is the workflow
+  inbox).
+
+**"New alert" vs. "new development"** — kept as two explicitly distinct,
+never-merged concepts (documented in `AlertsPage.tsx`'s own header copy
+and PLAN.md §24.11): "new development" (Morning Brief, Watchlist's
+existing `issuers_with_new_developments`) means an alert's real-world
+`as_of_date` falls in the latest completed business-day research cycle;
+"new alert" (Alerts Center, Watchlist's new `new_alert_count`) means
+`alert.status = new` — not yet acknowledged/dismissed. Neither is
+computed from the other; both read the same `alert_event` rows through
+different lenses.
+
+**Two live-caught regressions found and fixed** (both pre-dated this
+milestone but were only reachable once real Watchlists existed, and both
+were fixed only because building the Watchlist-alert-indicator feature
+required touching the exact code paths where they lived):
+1. `AlertRow.universe_names` (and Morning Brief's identically-sourced
+   per-alert universe badges) was built from every collection an issuer
+   belonged to, unfiltered by `collection_type` — so an issuer on a
+   Watchlist would show that Watchlist's name mislabeled as a Research
+   Universe badge. Fixed by splitting into `universe_names`/
+   `watchlist_names` in both `filing_monitor_api_service` and
+   `morning_brief_service`.
+2. Filtering alerts by a multi-issuer collection (`universe_id`, and
+   would-have-been true of the new `watchlist_id` too) fetched an
+   already-paginated, unfiltered-by-issuer page and post-filtered it in
+   Python — silently under-reporting `total` and capable of dropping
+   alerts off a page for any collection with more than one issuer. Fixed
+   by resolving the issuer set before querying and filtering at the SQL
+   level via the new `issuer_ids` repository filter, applied uniformly to
+   both `universe_id` and `watchlist_id` (not left inconsistent between
+   the two).
+
+**Performance**: `filing_monitor_api_service.alert_to_row`, previously
+called in a loop for the paginated list endpoint (two queries per alert —
+issuer lookup + collection lookup — a real N+1 across up to 200
+alerts/page), was split into a single-alert `alert_to_row` (kept for the
+evidence-detail/acknowledge/dismiss endpoints, which operate on exactly
+one alert) and a new batched `_alerts_to_rows_batch` (used by the list
+endpoint) — one query for every alert's issuer, one for every alert's
+collections, regardless of page size.
+
+**Verification**
+
+- Backend: all tests pass — 481 pre-existing + 23 new (watchlist filter,
+  `universe_names`/`watchlist_names` split, multi-issuer pagination
+  correctness, issuer search incl. exclusion of alert-less issuers,
+  alerts summary counts, invalid-alert acknowledge/dismiss, dismissed-
+  alert-retained-with-evidence-intact, `new_alert_count` distinct from
+  research-cycle counts). `ruff`, `black`, `mypy` all clean. `alembic
+  check` confirms zero schema drift (no migration was needed — every
+  field the Alerts Center needed already existed on `alert_event`).
+- Frontend: 147 tests pass (25 new/extended). `tsc --noEmit`, `eslint`,
+  `prettier --check` all clean; production build succeeds.
+- Live-verified via the deployed application's own service layer that
+  the "new alert" vs. "new development" distinction holds: an alert
+  outside the current research cycle but still `status=new` correctly
+  counts toward `new_alert_count` and not `issuers_with_new_developments`.
+
+**Tests Added**
+
+`backend/tests/integration/test_filing_monitor_api_service.py` (9 new:
+watchlist filter, universe/watchlist name split, multi-issuer pagination,
+issuer search x2, alerts summary, invalid-alert acknowledge/dismiss x2,
+dismissed-alert-retained), `backend/tests/integration/
+test_watchlist_service.py` (3 new: new_alert_count distinctness,
+acknowledged/dismissed exclusion, empty-watchlist zero counts),
+`web/src/pages/AlertsPage.test.tsx` (11 new), `web/src/components/
+AlertCard.test.tsx` (2 new), `web/src/pages/WatchlistDetailPage.test.tsx`
+(1 new), `web/src/pages/IssuerPage.test.tsx` (1 new), `web/src/
+components/Layout.test.tsx` (updated for the enabled nav item).
+
+**Remaining Work**
+
+- Production deploy/browser verification and the full regression pass —
+  see the follow-up entry/commit for results.
+- `AboutPage.tsx`'s "Available Today vs. What's Next" copy is updated
+  only after production verification confirms the deploy is genuinely
+  live.
+
+**Commit Hash**
+
+`PENDING_COMMIT_HASH`
+
+**Approximate Time Spent**
+
+~3 hours (Phase 0 investigation, backend repository/service/API changes
+incl. the two live-caught regression fixes, frontend AlertsPage and
+Watchlist/Issuer Detail integration, full test/lint/type/build/alembic
+suite, documentation).

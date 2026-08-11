@@ -240,20 +240,28 @@ def _universe_changes_by_issuer(
     return result
 
 
-def _alert_to_row(alert: AlertEvent, issuer: Issuer | None, universe_names: list[str]) -> AlertRow:
+def _alert_to_row(
+    alert: AlertEvent,
+    issuer: Issuer | None,
+    universe_names: list[str],
+    watchlist_names: list[str],
+) -> AlertRow:
     """Builds an `AlertRow` from already-fetched issuer/universe data —
     unlike `filing_monitor_api_service.alert_to_row`, this issues no
     queries of its own, so it stays cheap when called once per alert
     across a whole cycle's worth of developments (PLAN.md Milestone 7.5.2
     correction: a real production request against ~350 alerts timed out
     entirely under the naive per-alert-query version, live-verified before
-    this fix)."""
+    this fix). `watchlist_names` (Milestone 9) is always disjoint from
+    `universe_names` — the caller splits them by `collection_type` before
+    either map reaches here."""
     return AlertRow(
         id=alert.id,
         issuer_id=alert.issuer_id,
         issuer_legal_name=issuer.legal_name if issuer else "Unknown issuer",
         issuer_ticker=issuer.ticker if issuer else None,
         universe_names=universe_names,
+        watchlist_names=watchlist_names,
         category=alert.category,
         severity=alert.severity,
         headline=alert.headline,
@@ -282,13 +290,14 @@ def _group_by_issuer(
     universe_changes: dict[str, list[UniverseMembershipChange]],
     issuers: dict[UUID, Issuer],
     universe_names_by_issuer: dict[UUID, list[str]],
+    watchlist_names_by_issuer: dict[UUID, list[str]],
 ) -> list[IssuerDevelopment]:
     """Groups alerts by issuer (the brief's fundamental display unit, not
     an individual alert), attaches that issuer's Research Universe
     membership changes (if any) for this cycle, and ranks severity-first,
     most-recent-second — the analyst sees the most consequential issuers
-    first. Takes pre-fetched `issuers`/`universe_names_by_issuer` maps
-    rather than querying per alert."""
+    first. Takes pre-fetched `issuers`/`universe_names_by_issuer`/
+    `watchlist_names_by_issuer` maps rather than querying per alert."""
     by_issuer: dict[str, list[AlertEvent]] = defaultdict(list)
     for alert in alerts:
         by_issuer[str(alert.issuer_id)].append(alert)
@@ -305,13 +314,16 @@ def _group_by_issuer(
             (a.severity for a in issuer_alerts), key=lambda s: _SEVERITY_RANK[s.value]
         )
         universe_names = universe_names_by_issuer.get(issuer_id, [])
+        watchlist_names = watchlist_names_by_issuer.get(issuer_id, [])
         developments.append(
             IssuerDevelopment(
                 issuer_id=issuer_id,
                 issuer_legal_name=issuer.legal_name if issuer else "Unknown issuer",
                 issuer_ticker=issuer.ticker if issuer else None,
                 max_severity=max_severity,
-                alerts=[_alert_to_row(a, issuer, universe_names) for a in sorted_alerts],
+                alerts=[
+                    _alert_to_row(a, issuer, universe_names, watchlist_names) for a in sorted_alerts
+                ],
                 universe_changes=universe_changes.get(issuer_id_str, []),
             )
         )
@@ -397,21 +409,31 @@ def get_morning_brief(db: Session) -> MorningBriefSummary:
     # before this was fixed.
     all_issuer_ids = list({a.issuer_id for a in alerts})
     issuers = issuer_repository.list_issuers_by_ids(db, all_issuer_ids)
-    universe_collections_by_issuer = collection_repository.list_collections_for_issuers(
-        db, all_issuer_ids
-    )
+    collections_by_issuer = collection_repository.list_collections_for_issuers(db, all_issuer_ids)
+    # Split by collection_type (Milestone 9 fix) — `universe_names` must
+    # never silently include a personal Watchlist's name (ADR-016: a
+    # Watchlist and a Research Universe are different concepts) now that
+    # Watchlists share the same `collection` table.
     universe_names_by_issuer = {
-        issuer_id: [c.name for c in collections]
-        for issuer_id, collections in universe_collections_by_issuer.items()
+        issuer_id: [c.name for c in collections if c.collection_type != CollectionType.WATCHLIST]
+        for issuer_id, collections in collections_by_issuer.items()
+    }
+    watchlist_names_by_issuer = {
+        issuer_id: [c.name for c in collections if c.collection_type == CollectionType.WATCHLIST]
+        for issuer_id, collections in collections_by_issuer.items()
     }
 
     universe_changes = _universe_changes_by_issuer(db, since)
 
     new_developments = _group_by_issuer(
-        new_alerts, universe_changes, issuers, universe_names_by_issuer
+        new_alerts, universe_changes, issuers, universe_names_by_issuer, watchlist_names_by_issuer
     )
     historical_intelligence = _group_by_issuer(
-        historical_alerts, universe_changes, issuers, universe_names_by_issuer
+        historical_alerts,
+        universe_changes,
+        issuers,
+        universe_names_by_issuer,
+        watchlist_names_by_issuer,
     )
 
     severity_counts = SeverityCounts(

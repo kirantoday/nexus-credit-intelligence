@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 import { Route, Routes } from "react-router";
 import { Layout } from "./components/Layout";
 import { AboutPage } from "./pages/AboutPage";
+import { AlertsPage } from "./pages/AlertsPage";
 import { CreditUniversePage } from "./pages/CreditUniversePage";
 import { IssuerPage } from "./pages/IssuerPage";
 import { MorningResearchBriefPage } from "./pages/MorningResearchBriefPage";
@@ -20,6 +21,7 @@ export function App(): ReactElement {
         <Route path="/research-brief" element={<MorningResearchBriefPage />} />
         <Route path="/watchlists" element={<WatchlistsPage />} />
         <Route path="/watchlists/:watchlistId" element={<WatchlistDetailPage />} />
+        <Route path="/alerts" element={<AlertsPage />} />
         <Route path="/about" element={<AboutPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

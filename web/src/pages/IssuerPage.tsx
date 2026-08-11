@@ -3,6 +3,7 @@ import { Link as RouterLink, useParams } from "react-router";
 import {
   Alert,
   Box,
+  Button,
   Card,
   CardContent,
   Chip,
@@ -20,6 +21,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import NotificationsNoneOutlinedIcon from "@mui/icons-material/NotificationsNoneOutlined";
 import { ApiError } from "../api/client";
 import type {
   IssuerActivityCategory,
@@ -330,7 +332,17 @@ export function IssuerPage(): ReactElement {
               reason={issuer.synthetic_reason}
             />
           </Stack>
-          <AddToWatchlistButton issuerId={issuer.issuer_id} />
+          <Stack direction="row" spacing={1}>
+            <Button
+              size="small"
+              component={RouterLink}
+              to={`/alerts?issuer=${issuer.issuer_id}`}
+              startIcon={<NotificationsNoneOutlinedIcon />}
+            >
+              View Alerts
+            </Button>
+            <AddToWatchlistButton issuerId={issuer.issuer_id} />
+          </Stack>
         </Stack>
         <Stack direction="row" spacing={1} sx={{ mt: 1 }} flexWrap="wrap">
           {issuer.ticker && <Chip label={`Ticker: ${issuer.ticker}`} size="small" />}

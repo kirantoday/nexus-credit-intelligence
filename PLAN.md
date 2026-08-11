@@ -102,7 +102,7 @@ milestone completes; it is not itself a log (see `BUILD_LOG.md` for that).
 | 7.5.3-daily | Resumption of normal daily production research cycle (inserted) | Complete | — | — | See the 2026-08-10 daily-cycle `BUILD_LOG.md` entry. A side effect of the historical re-run above was discovered and corrected: `market_discovery_repository.get_latest_successful_run` (used by `delta` mode to compute its own resume watermark) does not exclude `mode=backfill` runs by design (unlike `get_latest_successful_daily_run`, which does, for Morning Brief display purposes only) — so the backfill's own completion timestamp became the resume point for the next `delta` run, which would have silently skipped Sunday 2026-08-09's SEC activity entirely (Saturday 2026-08-08 was already covered by the prior real delta). Corrected with one explicit `--mode backfill --start 2026-08-09 --end 2026-08-10` catch-up run (same pipeline, same idempotency, not counted as a Morning Brief research day since backfill mode is excluded from the daily-run boundary) followed by a normal self-computing `--mode delta` run, which idempotently found the catch-up's work already done and correctly recorded itself as the `2026-08-10` daily research day. See TD-023 for the underlying watermark-computation note (not fixed — a one-time manual correction was sufficient and lower-risk than changing shared watermark logic mid-task). A second, more consequential bug was found and fixed the same day: Morning Research Brief's `new_developments`/`historical_intelligence` split (and `RunDetails`' `new_sec_filings`/`new_court_events`/`new_research_evidence` counters) relied solely on `alert_event.is_backfill` (an ingestion-mode flag) rather than each record's real-world event/source date — so the catch-up run's 225 genuinely-current alerts were mechanically mislabeled historical. Fixed by classifying purely on `as_of_date`/`filing_date`/`entry_date` relative to the `(preceding_research_day, latest_research_day]` research-cycle boundary; `is_backfill` itself is untouched, still exposed as ingestion provenance. Verified against real production data: `issuers_with_developments` 0→191, `no_material_changes` true→false. 9 new regression tests. Full detail in `BUILD_LOG.md`. |
 | 8 | Watchlists (personal tracking lists, `collection_type=watchlist`) | Complete | 2026-08-11 | `9899007` | Reused the existing `collection`/`collection_membership` schema per ADR-016 — zero migration needed. New `watchlist_service.py` (create/rename/delete Watchlist, add/remove issuer) + `GET/POST /api/watchlists`, `GET/PATCH/DELETE /api/watchlists/{id}`, `POST/DELETE .../issuers[/{issuer_id}]`. "New developments" reuses `morning_brief_service.resolve_research_cycle`/`is_new_development` verbatim — no second definition of "new." Batched repository functions (`list_alerts_by_issuers`, `count_securities_by_issuers`, `list_collections_with_membership_for_issuers`) avoid N+1 across a Watchlist's issuers. Frontend: Watchlists landing page, Watchlist detail (desktop table / mobile cards via the existing `DataTable` pattern), and one reusable `AddToWatchlistButton` wired into Issuer Detail. A real "CFO Demo Watchlist" was created via the application's own service (not a fixture) with 6 real, currently-tracked issuers spanning active Chapter 11 (Trinseo, EchoStar), post-emergence (Diebold Nixdorf), covenant/default pressure (Community Health Systems), refinancing risk (Lumen Technologies), and liability management (iHeartMedia). §14's original "ten coverage + one benchmark Watchlists" vision predates ADR-016's Research-Universes/Watchlists split and is superseded by it — see §14 and §24.1. No per-user auth exists yet (TD-002); every Watchlist is `scope=personal`/`owner_user_id=NULL` in a single shared analyst workspace, by explicit design, documented as a known limitation. 481 backend tests pass (21 new, covering Watchlist CRUD, duplicate/idempotent membership, deletion isolation, latest-development/research-cycle/severity aggregation, and the Watchlist-vs-Research-Universe "current status" boundary), 130 frontend tests pass (17 new, covering the landing page, detail page incl. mobile cards, and the reusable Add to Watchlist component). Zero Anthropic calls — Watchlists never construct AI prompts. |
 | 9 | Research notes/documents + audit events | Not Started | — | — | |
-| 10 | Alerts (rules, engine, panel/page) | Not Started | — | — | |
+| 10 | Alerts (Alerts Center — analyst inbox over existing `alert_event`, not a new rule engine) | Complete | 2026-08-11 | `PENDING_COMMIT_HASH` | Completed ahead of Milestone 9 (Research notes/documents) by explicit user direction — the incoming brief was explicitly numbered "Milestone 9" by the user even though this row is PLAN.md's original §18 build-order slot for Alerts; row numbers are left as originally assigned rather than renumbered, to avoid invalidating other cross-references in this document. See §24.11 for the full design: reused `alert_event`/`alerts.py`/`alert_repository.py` (already canonical since Milestone 6.5's ADR-018 pipeline, not the `alert_rule`/`alert_engine.py` design originally sketched in §12), zero migration, new `watchlist_id` filter + `/api/alerts/summary` + `/api/alerts/issuers` search, a new `AlertsPage.tsx` analyst-inbox UI, and two live-caught regressions fixed (`universe_names` leaking Watchlist names; incorrect pagination `total` for multi-issuer collection filters — both existed before this milestone but were only reachable once real Watchlists existed). Zero Anthropic calls. 23 new backend tests, 25 new/extended frontend tests. |
 | 11 | TRACE adapter/sample | Not Started | — | — | |
 | 12 | Universal Search | Not Started | — | — | |
 | 13 | AI Research Assistant + gated embeddings | Not Started | — | — | |
@@ -557,6 +557,32 @@ per-user authentication exists yet (TD-002) — every Watchlist is
 `scope=personal`/`owner_user_id=NULL` in a single shared analyst
 workspace; the schema already supports per-user `owner_user_id` cleanly
 once real authentication exists, requiring no further schema change.
+
+**The Alerts Center (§18 build-order row 10) is complete**, built ahead
+of Milestone 9 (Research notes/documents + audit events) by explicit user
+direction. Per Phase 0's required architecture check: `alert_event` was
+already the canonical research-alert record (ADR-018, Milestone 6.5) with
+a working API (list/filter/paginate/acknowledge/dismiss) before this work
+began — PLAN.md's original §12 sketch of a separate `alert_rule`/
+`alert_engine.py` rule-evaluation system was never built and is
+superseded by this section, since building it would have been exactly
+the "second competing alert system" the incoming brief explicitly
+prohibited. This was additive UI/workflow over already-approved
+architecture, not a new architectural decision, so no ADR was written.
+`AlertsPage.tsx` (`/alerts`) is a new analyst-inbox view — summary tiles,
+URL-persisted filters (including a new `watchlist_id` filter), and the
+existing `AlertCard` component in a paginated list — answering "what
+research alerts need my review, especially for issuers I care about,"
+deliberately distinct from the Morning Research Brief's "what changed in
+the latest research cycle." Building it surfaced and fixed two real,
+live-caught regressions that predated this milestone but only became
+reachable once real Watchlists existed: `AlertRow.universe_names` was
+leaking Watchlist names (fixed by splitting into `universe_names`/
+`watchlist_names`), and filtering alerts by a multi-issuer collection
+(Research Universe or Watchlist) mis-paginated (an already-paginated,
+unfiltered page was being post-filtered in Python, under-reporting
+`total` and silently dropping rows). Both fixed at the SQL level. Zero
+migration, zero Anthropic calls. See §24.11 for the full design record.
 
 ---
 
@@ -2134,3 +2160,133 @@ correctly began iterating all of them (by design — it targets every issuer
 in scope, not just one test's issuer), causing the fakes to produce/fail
 data for all 24 issuers instead of one. Fixed by making every fake
 CIK-aware.
+
+## 24.11 Alerts Center (Milestone 9 — complete, 2026-08-11)
+
+**Phase 0 finding**: PLAN.md's original §12 "Alerts (new)" sketched a
+rule-evaluation engine (`alert_rule`/`alert_engine.py`) that would check
+enabled rules against "current data" and write new `alert_event` rows —
+that engine was never built, because `alert_event` has been the real,
+canonical research-alert record since Milestone 6.5's evidence→bundle→
+alert pipeline (ADR-018), and `backend/app/api/routes/alerts.py` +
+`alert_repository.py` (list/filter/paginate, acknowledge, dismiss) already
+existed before this milestone started. Milestone 9 did not build a second
+alert-generation system — it built an analyst-inbox UI/workflow layer over
+the alerts that already exist, exactly as the incoming brief for this
+milestone explicitly required ("Do NOT create a second competing alert
+system"). §12 is accordingly superseded by this section for the actual,
+implemented Alerts design; no ADR was needed since this is a UI/workflow
+addition over already-approved architecture (ADR-018), not a new
+architectural decision.
+
+**"New alert" vs. "new development" — two distinct, deliberately
+non-merged axes**:
+- **"New development"** (Morning Research Brief, Watchlist detail's
+  `issuers_with_new_developments`/`high_severity_count`, Milestone 8) —
+  whether an alert's real-world `as_of_date` falls within the latest
+  completed business-day research cycle
+  (`morning_brief_service.resolve_research_cycle`/`is_new_development`).
+  Never changes because someone reviewed the alert.
+- **"New alert"** (Alerts Center's `new_count` tile, Watchlist detail's
+  `new_alert_count`, the `status` filter) — `alert_event.status = new`,
+  i.e. not yet acknowledged or dismissed. Never changes because a research
+  cycle advanced; only an analyst action changes it.
+
+An alert can be "new" on one axis and not the other in either direction —
+e.g. an unacknowledged alert from three research cycles ago is a "new
+alert" (needs review) but not a "new development" (not from the latest
+cycle); a same-cycle alert an analyst already acknowledged is a "new
+development" but not a "new alert." Both concepts read the same
+`alert_event` rows; neither is computed from the other.
+
+**Zero migration** — `alert_event` already had every field the Alerts
+Center needed (`status`, `severity`, `detection_method`, `issuer_id`,
+`evidence_ids`, `triggered_at`, `acknowledged_at`/`dismissed_at`,
+`bundle_key`). Two genuine, narrow gaps were filled additively:
+- `alert_repository.list_alerts` gained an `issuer_ids: list[UUID] | None`
+  filter (alongside the existing single `issuer_id`) and a new
+  `count_alerts`/`search_issuers_with_alerts` pair — no new table.
+- `AlertRow` gained `watchlist_names: list[str]`, split out from
+  `universe_names` (see the regression below); `WatchlistSummary` gained
+  `new_alert_count`/`high_severity_alert_count`, additive fields alongside
+  Milestone 8's existing `issuers_with_new_developments`/
+  `high_severity_count`.
+
+**API**: `GET /api/alerts` gained a `watchlist_id` filter (alongside the
+existing `issuer_id`/`universe_id`/`severity`/`category`/
+`evidence_provider`/`status`/`detection_method`/`date_from`/`date_to`/
+`triggered_since`/pagination). New `GET /api/alerts/summary`
+(`AlertsSummary`: `new_count`, `high_severity_count`,
+`watchlist_alert_count`, `acknowledged_count` — four COUNT queries) and
+`GET /api/alerts/issuers?q=` (issuer-name search scoped to issuers that
+actually have at least one alert, backing the Alerts Center's issuer
+filter — not a general issuer-search feature).
+
+**Two live-caught regressions fixed as part of this milestone** (both
+pre-dated Milestone 9 but only became reachable once real Watchlists
+existed):
+1. **`universe_names` leaked Watchlist names.** `AlertRow.universe_names`
+   (and Morning Brief's identically-sourced per-alert universe badges) was
+   built from every collection an issuer belonged to, unfiltered by
+   `collection_type` — so an issuer on a Watchlist would show that
+   Watchlist's name mislabeled as a "Research Universe" badge. Fixed in
+   `filing_monitor_api_service._split_collection_names` and
+   `morning_brief_service`'s per-cycle batch fetch: `universe_names` now
+   always excludes `collection_type=watchlist`; the new `watchlist_names`
+   field carries those instead.
+2. **Multi-issuer collection filters mispaginated.** `list_alerts`'s
+   `universe_id` filter (and the codebase before this fix had no
+   `watchlist_id` equivalent) resolved a collection to its issuer set,
+   then — when more than one issuer matched — fetched an already-paginated
+   page unfiltered by issuer and post-filtered it in Python. This silently
+   under-reported `total` and could drop alerts off a page for any
+   Research Universe or Watchlist with more than one issuer. Fixed by
+   resolving the issuer set before querying and passing it to
+   `alert_repository.list_alerts`'s new `issuer_ids` filter, so filtering
+   happens in SQL with correct pagination — applied uniformly to both
+   `universe_id` and the new `watchlist_id`, not left inconsistent between
+   the two.
+
+**Performance**: `filing_monitor_api_service.alert_to_row` (looped, two
+queries per alert — a real, previously-live N+1) was split into a
+single-alert `alert_to_row` (used only by the evidence-detail/
+acknowledge/dismiss endpoints, which operate on one alert) and a new
+batched `_alerts_to_rows_batch` (used by the paginated list endpoint) —
+one query for every alert's issuer, one for every alert's collections,
+regardless of page size (up to 200 alerts/page).
+
+**Frontend**: `AlertsPage.tsx` (`/alerts`, new nav item after Watchlists)
+— four summary tiles (New/High Severity/Watchlist Alerts/Acknowledged,
+informational, not clickable pseudo-filters), a URL-persisted filter bar
+(Status/Severity/Watchlist/Research Universe/Detection/Issuer search
+Autocomplete backed by `GET /api/alerts/issuers`), and the existing,
+reused `AlertCard` (unchanged acknowledge/dismiss wiring) in a paginated
+list (`TablePagination`, matching Credit Universe's existing convention).
+`AlertCard` gained a category chip and Watchlist-membership chips
+(bookmark icon, filled `primary` color — visually distinct from the
+existing outlined Research Universe chips). Watchlist detail gained one
+additional stat tile ("new alerts") and a "View Alerts" button
+(`/alerts?watchlist={id}`); Issuer Detail gained a compact "View Alerts"
+button (`/alerts?issuer={id}`) next to the existing Add to Watchlist
+button — Issuer Detail does not duplicate alert cards; the Distress
+Timeline remains its research-context view, Alerts Center is the
+workflow inbox.
+
+**AI/cost**: zero Anthropic calls anywhere in this milestone's code —
+confirmed by inspection (no `app.ai` imports anywhere in the new/changed
+files) and by design (every Alerts Center value is read from already-
+persisted `alert_event`/`collection_membership` rows).
+
+**Tests**: 23 new backend tests
+(`test_filing_monitor_api_service.py`: watchlist filter, `universe_names`/
+`watchlist_names` split, multi-issuer pagination correctness, issuer
+search incl. exclusion of alert-less issuers, alerts summary counts,
+invalid-alert acknowledge/dismiss, dismissed-alert-retained-with-evidence-
+intact; `test_watchlist_service.py`: `new_alert_count` distinct from
+research-cycle counts, exclusion of acknowledged/dismissed, empty-
+Watchlist zero counts). 25 new/extended frontend tests (`AlertsPage.tsx`:
+summary tiles, alert rendering, empty state, status/watchlist filter
+re-fetch, acknowledge, dismiss, issuer link, source link, watchlist chip
+rendering, pagination; `AlertCard.tsx`: category chip, Watchlist chip
+distinction; `WatchlistDetailPage.tsx`/`IssuerPage.tsx`: View Alerts link
+targets; `Layout.tsx`: nav position).

@@ -111,6 +111,7 @@ export interface AlertRow {
   issuer_legal_name: string;
   issuer_ticker: string | null;
   universe_names: string[];
+  watchlist_names: string[];
   category: string;
   severity: EvidenceSeverity;
   headline: string;
@@ -246,9 +247,37 @@ export interface MorningBriefSummary {
   run_details: RunDetails;
 }
 
+/**
+ * Alerts Center landing-page tiles (Milestone 9) — `alert.status` workflow
+ * counts, deliberately distinct from the Morning Brief's research-cycle
+ * counts (`SeverityCounts`, `issuers_with_developments`). "New" here means
+ * "not yet acknowledged/dismissed," never "new in the latest research
+ * cycle" — see `AlertsPage.tsx`'s explanatory copy for why both concepts
+ * coexist without being merged.
+ */
+export interface AlertsSummary {
+  new_count: number;
+  high_severity_count: number;
+  watchlist_alert_count: number;
+  acknowledged_count: number;
+}
+
+/** One issuer-search match for the Alerts Center's issuer filter —
+ * scoped server-side to issuers that actually have at least one alert. */
+export interface AlertIssuerSearchResult {
+  issuer_id: string;
+  issuer_legal_name: string;
+  issuer_ticker: string | null;
+}
+
+export interface AlertIssuerSearchResponse {
+  issuers: AlertIssuerSearchResult[];
+}
+
 export interface AlertsQuery {
   issuerId?: string;
   universeId?: string;
+  watchlistId?: string;
   severity?: EvidenceSeverity;
   category?: string;
   evidenceProvider?: ProviderName | string;
@@ -269,6 +298,7 @@ export async function fetchAlerts(query: AlertsQuery): Promise<AlertsPage> {
   const params = new URLSearchParams();
   if (query.issuerId) params.set("issuer_id", query.issuerId);
   if (query.universeId) params.set("universe_id", query.universeId);
+  if (query.watchlistId) params.set("watchlist_id", query.watchlistId);
   if (query.severity) params.set("severity", query.severity);
   if (query.category) params.set("category", query.category);
   if (query.evidenceProvider) params.set("evidence_provider", query.evidenceProvider);
@@ -280,6 +310,14 @@ export async function fetchAlerts(query: AlertsQuery): Promise<AlertsPage> {
   params.set("page", String(query.page ?? 1));
   params.set("page_size", String(query.pageSize ?? 50));
   return apiFetch<AlertsPage>(`/api/alerts?${params.toString()}`);
+}
+
+export async function fetchAlertsSummary(): Promise<AlertsSummary> {
+  return apiFetch<AlertsSummary>("/api/alerts/summary");
+}
+
+export async function searchAlertIssuers(q: string): Promise<AlertIssuerSearchResponse> {
+  return apiFetch<AlertIssuerSearchResponse>(`/api/alerts/issuers?q=${encodeURIComponent(q)}`);
 }
 
 export async function fetchAlertEvidence(alertId: string): Promise<AlertEvidenceDetail> {

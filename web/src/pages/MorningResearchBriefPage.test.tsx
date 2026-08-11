@@ -69,6 +69,7 @@ const BASE_ALERT: AlertRow = {
   issuer_legal_name: "Acme Distressed Co",
   issuer_ticker: "ACME",
   universe_names: ["Distressed Core"],
+  watchlist_names: [],
   category: "bankruptcy_or_receivership",
   severity: "high",
   headline: "Potential bankruptcy or receivership filing detected in a new 8-K.",

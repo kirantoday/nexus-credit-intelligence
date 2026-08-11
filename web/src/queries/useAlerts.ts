@@ -5,6 +5,8 @@ import {
   dismissAlert,
   fetchAlertEvidence,
   fetchAlerts,
+  fetchAlertsSummary,
+  searchAlertIssuers,
 } from "../api/filingMonitor";
 
 export function useAlerts(query: AlertsQuery, options?: { enabled?: boolean }) {
@@ -13,6 +15,21 @@ export function useAlerts(query: AlertsQuery, options?: { enabled?: boolean }) {
     queryFn: () => fetchAlerts(query),
     placeholderData: (previousData) => previousData,
     enabled: options?.enabled,
+  });
+}
+
+export function useAlertsSummary() {
+  return useQuery({
+    queryKey: ["alerts-summary"],
+    queryFn: () => fetchAlertsSummary(),
+  });
+}
+
+export function useAlertIssuerSearch(query: string) {
+  return useQuery({
+    queryKey: ["alert-issuer-search", query],
+    queryFn: () => searchAlertIssuers(query),
+    enabled: query.trim().length > 0,
   });
 }
 
@@ -31,6 +48,7 @@ export function useAcknowledgeAlert() {
       acknowledgeAlert(alertId, actedBy),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+      void queryClient.invalidateQueries({ queryKey: ["alerts-summary"] });
       void queryClient.invalidateQueries({ queryKey: ["morning-brief"] });
     },
   });
@@ -50,6 +68,7 @@ export function useDismissAlert() {
     }) => dismissAlert(alertId, reason, actedBy),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+      void queryClient.invalidateQueries({ queryKey: ["alerts-summary"] });
       void queryClient.invalidateQueries({ queryKey: ["morning-brief"] });
     },
   });

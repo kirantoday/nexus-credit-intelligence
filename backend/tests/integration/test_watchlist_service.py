@@ -480,3 +480,64 @@ def test_get_watchlist_detail_returns_none_for_a_research_universe_id(
     )
 
     assert watchlist_service.get_watchlist_detail(db_session, universe.id) is None
+
+
+def test_new_alert_count_is_distinct_from_new_development_count(db_session: Session) -> None:
+    """Milestone 9: `new_alert_count` (`alert.status=new`) must be computed
+    independently from `issuers_with_new_developments`/`high_severity_count`
+    (research-cycle "new development", Milestone 8) — an alert well outside
+    the current research cycle but still `status=new` must count toward
+    the former and not the latter, proving the two axes are genuinely
+    separate rather than one silently driving the other."""
+    _seed_daily_run(db_session, window_start=date(2026, 6, 10))
+    watchlist = watchlist_service.create_watchlist(
+        db_session, name=f"New Alert Count Test {uuid4()}", description=""
+    )
+    issuer = _seed_issuer(db_session, legal_name=f"New Alert Count Co {uuid4()}")
+    watchlist_service.add_issuer(db_session, watchlist.id, issuer_id=issuer.id, rationale="x")
+    # Well before the research cycle boundary, but still status=new.
+    _seed_alert(
+        db_session,
+        issuer_id=issuer.id,
+        as_of=date(2026, 1, 1),
+        severity=EvidenceSeverity.HIGH,
+        headline="Old but unacknowledged",
+    )
+
+    result = watchlist_service.get_watchlist(db_session, watchlist.id)
+
+    assert result is not None
+    assert result.issuers_with_new_developments == 0
+    assert result.new_alert_count == 1
+    assert result.high_severity_alert_count == 1
+
+
+def test_new_alert_count_excludes_acknowledged_and_dismissed(db_session: Session) -> None:
+    watchlist = watchlist_service.create_watchlist(
+        db_session, name=f"Ack Exclusion Test {uuid4()}", description=""
+    )
+    issuer = _seed_issuer(db_session, legal_name=f"Ack Exclusion Co {uuid4()}")
+    watchlist_service.add_issuer(db_session, watchlist.id, issuer_id=issuer.id, rationale="x")
+    acknowledged = _seed_alert(db_session, issuer_id=issuer.id, as_of=date(2026, 6, 1))
+    alert_repository.acknowledge_alert(db_session, acknowledged.id, acknowledged_by=None)
+    dismissed = _seed_alert(db_session, issuer_id=issuer.id, as_of=date(2026, 6, 2))
+    alert_repository.dismiss_alert(
+        db_session, dismissed.id, dismissed_by=None, dismissal_reason=None
+    )
+
+    result = watchlist_service.get_watchlist(db_session, watchlist.id)
+
+    assert result is not None
+    assert result.new_alert_count == 0
+
+
+def test_new_alert_count_zero_for_empty_watchlist(db_session: Session) -> None:
+    watchlist = watchlist_service.create_watchlist(
+        db_session, name=f"Empty Alert Count Test {uuid4()}", description=""
+    )
+
+    result = watchlist_service.get_watchlist(db_session, watchlist.id)
+
+    assert result is not None
+    assert result.new_alert_count == 0
+    assert result.high_severity_alert_count == 0

@@ -23,6 +23,7 @@ import {
 } from "@mui/material";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import NotificationsNoneOutlinedIcon from "@mui/icons-material/NotificationsNoneOutlined";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ApiError } from "../api/client";
 import type { WatchlistIssuerRow } from "../api/watchlist";
@@ -360,7 +361,16 @@ export function WatchlistDetailPage(): ReactElement {
               </Typography>
             )}
           </Box>
-          <Stack direction="row" spacing={1}>
+          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            <Button
+              size="small"
+              component={RouterLink}
+              to={`/alerts?watchlist=${watchlist.id}`}
+              startIcon={<NotificationsNoneOutlinedIcon />}
+              variant="outlined"
+            >
+              View Alerts
+            </Button>
             <Button
               size="small"
               startIcon={<EditOutlinedIcon />}
@@ -378,7 +388,7 @@ export function WatchlistDetailPage(): ReactElement {
             </Button>
           </Stack>
         </Stack>
-        <Stack direction="row" spacing={3} sx={{ mt: 2 }}>
+        <Stack direction="row" spacing={3} sx={{ mt: 2 }} flexWrap="wrap" useFlexGap>
           <Box>
             <Typography variant="h5" fontWeight={700} lineHeight={1.1}>
               {watchlist.issuer_count}
@@ -411,6 +421,19 @@ export function WatchlistDetailPage(): ReactElement {
             </Typography>
             <Typography variant="caption" color="text.secondary">
               high-severity
+            </Typography>
+          </Box>
+          <Box>
+            <Typography
+              variant="h5"
+              fontWeight={700}
+              lineHeight={1.1}
+              color={watchlist.new_alert_count > 0 ? "warning.main" : "text.primary"}
+            >
+              {watchlist.new_alert_count}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              new alerts
             </Typography>
           </Box>
         </Stack>

@@ -133,6 +133,10 @@ class AlertRow(BaseModel):
     """One evidence-backed alert. `universe_names` is display-only context
     ("which Research Universes is this issuer in") — filtering by universe
     is a separate query parameter, not client-side filtering of this field.
+    `universe_names` never includes Watchlist names (Milestone 9) — those
+    are `watchlist_names`, a distinct field, since a personal Watchlist
+    and an organization-curated Research Universe are different concepts
+    (ADR-016) that must never be visually or semantically merged.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -142,6 +146,7 @@ class AlertRow(BaseModel):
     issuer_legal_name: str
     issuer_ticker: str | None
     universe_names: list[str]
+    watchlist_names: list[str]
     category: str
     severity: EvidenceSeverity
     headline: str
@@ -181,6 +186,42 @@ class AlertEvidenceDetail(BaseModel):
 
     alert: AlertRow
     evidence: list[ResearchEvidenceRow]
+
+
+class AlertsSummary(BaseModel):
+    """Alerts Center landing-page tiles (Milestone 9, PLAN.md 24.11) — the
+    analyst-inbox counts, not the Morning Research Brief's research-cycle
+    counts. `new_count`/`acknowledged_count` are `alert.status` workflow
+    state; `high_severity_count` is `new_count` narrowed to `severity=high`
+    (the immediately-actionable subset); `watchlist_alert_count` is
+    `new_count` narrowed to issuers on any Watchlist. Deliberately just
+    four numbers — a busier summary would defeat the "analyst inbox," not
+    a dashboard, framing."""
+
+    model_config = ConfigDict(frozen=True)
+
+    new_count: int
+    high_severity_count: int
+    watchlist_alert_count: int
+    acknowledged_count: int
+
+
+class AlertIssuerSearchResult(BaseModel):
+    """One issuer-search match for the Alerts Center's issuer filter —
+    scoped to issuers that actually have at least one alert (the real
+    search space for this filter), not every issuer Nexus has ever seen."""
+
+    model_config = ConfigDict(frozen=True)
+
+    issuer_id: UUID
+    issuer_legal_name: str
+    issuer_ticker: str | None
+
+
+class AlertIssuerSearchResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    issuers: list[AlertIssuerSearchResult]
 
 
 class SeverityCounts(BaseModel):

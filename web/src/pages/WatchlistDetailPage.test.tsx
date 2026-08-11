@@ -73,6 +73,8 @@ function makeDetail(
       issuer_count: issuers.length,
       issuers_with_new_developments: 1,
       high_severity_count: 1,
+      new_alert_count: 1,
+      high_severity_alert_count: 1,
       last_activity_at: "2026-08-10T00:00:00Z",
       created_at: "2026-08-01T00:00:00Z",
       updated_at: "2026-08-10T00:00:00Z",
@@ -100,6 +102,19 @@ describe("WatchlistDetailPage", () => {
     expect(screen.getByText("Diebold Nixdorf, Incorporated")).toBeInTheDocument();
     expect(screen.getByText("Filed for Chapter 11 protection")).toBeInTheDocument();
     expect(screen.getByText("Chapter 11")).toBeInTheDocument();
+  });
+
+  it("shows a new-alerts count and a View Alerts link filtered to this Watchlist", async () => {
+    vi.spyOn(watchlistApi, "fetchWatchlist").mockResolvedValue(makeDetail());
+
+    renderWithProviders();
+
+    await waitFor(() => {
+      expect(screen.getByText("CFO Demo Watchlist")).toBeInTheDocument();
+    });
+    expect(screen.getByText("new alerts")).toBeInTheDocument();
+    const viewAlertsLink = screen.getByRole("link", { name: /View Alerts/ });
+    expect(viewAlertsLink).toHaveAttribute("href", "/alerts?watchlist=watchlist-1");
   });
 
   it("shows an empty state when the Watchlist has no issuers", async () => {

@@ -18,7 +18,13 @@ from sqlalchemy.orm import Session
 
 from app.core.types import AlertStatus, DetectionMethod, EvidenceSeverity
 from app.db.session import get_db
-from app.schemas.filing_monitor import AlertEvidenceDetail, AlertRow, AlertsPage
+from app.schemas.filing_monitor import (
+    AlertEvidenceDetail,
+    AlertIssuerSearchResponse,
+    AlertRow,
+    AlertsPage,
+    AlertsSummary,
+)
 from app.services import filing_monitor_api_service
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
@@ -29,6 +35,7 @@ def list_alerts(
     db: Annotated[Session, Depends(get_db)],
     issuer_id: UUID | None = None,
     universe_id: UUID | None = None,
+    watchlist_id: UUID | None = None,
     severity: EvidenceSeverity | None = None,
     category: str | None = None,
     evidence_provider: str | None = None,
@@ -43,11 +50,16 @@ def list_alerts(
     """`triggered_since` scopes to Nexus's own processing time — pass the
     Morning Brief's `since` value to show only alerts from the latest
     successful daily run (PLAN.md Milestone 7.5.2 section 7). Omit it to see
-    the full historical alert list."""
+    the full historical alert list. `watchlist_id` (Milestone 9) filters to
+    a Watchlist's issuer membership — a distinct parameter from
+    `universe_id` even though both resolve through the same collection-
+    membership mechanism, since a Watchlist and a Research Universe are
+    different product concepts (ADR-016) the UI must never conflate."""
     return filing_monitor_api_service.list_alerts(
         db,
         issuer_id=issuer_id,
         universe_id=universe_id,
+        watchlist_id=watchlist_id,
         severity=severity,
         category=category,
         evidence_provider=evidence_provider,
@@ -59,6 +71,25 @@ def list_alerts(
         page=page,
         page_size=page_size,
     )
+
+
+@router.get("/summary", response_model=AlertsSummary)
+def get_alerts_summary(db: Annotated[Session, Depends(get_db)]) -> AlertsSummary:
+    """Alerts Center landing-page tiles (Milestone 9): new / high-severity
+    (new) / watchlist (new) / acknowledged counts — four cheap COUNT
+    queries, zero Anthropic calls, reusing only already-persisted
+    `alert_event`/`collection_membership` data."""
+    return filing_monitor_api_service.get_alerts_summary(db)
+
+
+@router.get("/issuers", response_model=AlertIssuerSearchResponse)
+def search_alert_issuers(
+    db: Annotated[Session, Depends(get_db)],
+    q: Annotated[str, Query(min_length=1)],
+) -> AlertIssuerSearchResponse:
+    """Issuer-name search for the Alerts Center's issuer filter (Milestone
+    9), scoped to issuers that actually have at least one alert."""
+    return filing_monitor_api_service.search_alert_issuers(db, q)
 
 
 @router.get("/{alert_id}/evidence", response_model=AlertEvidenceDetail)

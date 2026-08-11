@@ -93,6 +93,21 @@ describe("IssuerPage", () => {
     expect(screen.getByText(/9 records/)).toBeInTheDocument();
   });
 
+  it("shows a View Alerts link filtered to this issuer", async () => {
+    vi.spyOn(issuerApi, "fetchIssuerDetail").mockResolvedValue(BASE_ISSUER);
+    vi.spyOn(capitalStructureApi, "fetchCapitalStructure").mockResolvedValue(
+      EMPTY_CAPITAL_STRUCTURE,
+    );
+
+    renderIssuerPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Cobalt Ridge Energy Corp")).toBeInTheDocument();
+    });
+    const viewAlertsLink = screen.getByRole("link", { name: /View Alerts/ });
+    expect(viewAlertsLink).toHaveAttribute("href", "/alerts?issuer=iss-1");
+  });
+
   it("falls back to the flat securities table when no capital structure layers exist", async () => {
     vi.spyOn(issuerApi, "fetchIssuerDetail").mockResolvedValue({
       ...BASE_ISSUER,

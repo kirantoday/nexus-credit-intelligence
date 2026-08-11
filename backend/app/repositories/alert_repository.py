@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.types import AlertStatus, DetectionMethod, EvidenceSeverity
 from app.domain.alert import AlertEvent, AlertEventCreate
 from app.models.alert import AlertEvent as AlertEventModel
+from app.models.issuer import Issuer as IssuerModel
 
 
 def _to_domain(row: AlertEventModel) -> AlertEvent:
@@ -93,6 +94,7 @@ def list_alerts(
     db: Session,
     *,
     issuer_id: UUID | None = None,
+    issuer_ids: list[UUID] | None = None,
     severity: EvidenceSeverity | None = None,
     category: str | None = None,
     evidence_provider: str | None = None,
@@ -111,10 +113,19 @@ def list_alerts(
     own PROCESSING time (`triggered_at`) — the one the Morning Research
     Brief's daily-run scoping needs: "alerts Nexus created since the last
     successful daily run," which a March-dated filing discovered today
-    correctly satisfies even though its `as_of_date` is months old."""
+    correctly satisfies even though its `as_of_date` is months old.
+
+    `issuer_ids` (Milestone 9) filters to a whole set of issuers — e.g. a
+    Watchlist's membership — resolved at the SQL level with correct
+    pagination/`total`, unlike a fetch-a-page-then-post-filter-in-Python
+    approach, which would both misreport `total` and silently drop rows
+    off a page. `issuer_id` and `issuer_ids` may both be given (AND
+    semantics); no current caller does, but neither excludes the other."""
     stmt = select(AlertEventModel)
     if issuer_id is not None:
         stmt = stmt.where(AlertEventModel.issuer_id == issuer_id)
+    if issuer_ids is not None:
+        stmt = stmt.where(AlertEventModel.issuer_id.in_(set(issuer_ids)))
     if severity is not None:
         stmt = stmt.where(AlertEventModel.severity == severity.value)
     if category is not None:
@@ -248,3 +259,44 @@ def dismiss_alert(
     db.flush()
     db.refresh(row)
     return _to_domain(row)
+
+
+def count_alerts(
+    db: Session,
+    *,
+    status: AlertStatus | None = None,
+    severity: EvidenceSeverity | None = None,
+    issuer_ids: list[UUID] | None = None,
+) -> int:
+    """Lightweight count-only query for the Alerts Center's summary tiles
+    (Milestone 9, PLAN.md 24.11) — deliberately not `list_alerts` with
+    `page_size=1`, which would still execute the full filtered query just
+    to discard the rows."""
+    stmt = select(func.count()).select_from(AlertEventModel)
+    if status is not None:
+        stmt = stmt.where(AlertEventModel.status == status.value)
+    if severity is not None:
+        stmt = stmt.where(AlertEventModel.severity == severity.value)
+    if issuer_ids is not None:
+        stmt = stmt.where(AlertEventModel.issuer_id.in_(set(issuer_ids)))
+    return db.execute(stmt).scalar_one()
+
+
+def search_issuers_with_alerts(
+    db: Session, query: str, *, limit: int = 20
+) -> list[tuple[UUID, str, str | None]]:
+    """Issuer name search scoped to issuers that actually have at least one
+    alert (Milestone 9's Alerts Center issuer filter) — the real search
+    space for this filter, not every issuer Nexus has ever seen. Returns
+    `(issuer_id, legal_name, ticker)` tuples, distinct, name-ordered."""
+    pattern = f"%{query}%"
+    stmt = (
+        select(IssuerModel.id, IssuerModel.legal_name, IssuerModel.ticker)
+        .join(AlertEventModel, AlertEventModel.issuer_id == IssuerModel.id)
+        .where(IssuerModel.legal_name.ilike(pattern))
+        .distinct()
+        .order_by(IssuerModel.legal_name.asc())
+        .limit(limit)
+    )
+    rows = db.execute(stmt).all()
+    return [(row[0], row[1], row[2]) for row in rows]

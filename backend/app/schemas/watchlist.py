@@ -21,7 +21,16 @@ from app.core.types import EvidenceSeverity
 
 class WatchlistSummary(BaseModel):
     """One Watchlist, with the roll-up counts an analyst dashboard needs —
-    the row shape for the Watchlists landing page."""
+    the row shape for the Watchlists landing page.
+
+    `issuers_with_new_developments`/`high_severity_count` are research-
+    cycle "new development" counts (Milestone 8 — reuses
+    `morning_brief_service.resolve_research_cycle`). `new_alert_count`/
+    `high_severity_alert_count` (Milestone 9) are `alert.status=new`
+    workflow counts — a deliberately separate axis (PLAN.md 24.11): a
+    Watchlist can show 0 new developments this cycle while still carrying
+    unacknowledged alerts from an earlier one, and vice versa.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -32,6 +41,8 @@ class WatchlistSummary(BaseModel):
     issuer_count: int
     issuers_with_new_developments: int
     high_severity_count: int
+    new_alert_count: int
+    high_severity_alert_count: int
     last_activity_at: datetime | None
     created_at: datetime
     updated_at: datetime

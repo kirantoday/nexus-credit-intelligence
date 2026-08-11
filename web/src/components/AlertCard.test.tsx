@@ -28,6 +28,7 @@ const BASE_ALERT: AlertRow = {
   issuer_legal_name: "Acme Distressed Co",
   issuer_ticker: "ACME",
   universe_names: ["Distressed Core"],
+  watchlist_names: [],
   category: "bankruptcy_or_receivership",
   severity: "high",
   headline: "Potential bankruptcy or receivership filing detected in a new 8-K.",
@@ -116,6 +117,27 @@ describe("AlertCard", () => {
 
     expect(screen.getByText("AI-assisted")).toBeInTheDocument();
     expect(screen.queryByText("Deterministic")).not.toBeInTheDocument();
+  });
+
+  it("shows the category as a readable chip", () => {
+    renderWithProviders(<AlertCard alert={BASE_ALERT} />);
+
+    expect(screen.getByText("bankruptcy or receivership")).toBeInTheDocument();
+  });
+
+  it("shows Watchlist membership chips distinctly from Research Universe chips", () => {
+    renderWithProviders(
+      <AlertCard alert={{ ...BASE_ALERT, watchlist_names: ["Demo Watchlist"] }} />,
+    );
+
+    expect(screen.getByText("Demo Watchlist")).toBeInTheDocument();
+    expect(screen.getByText("Distressed Core")).toBeInTheDocument();
+  });
+
+  it("shows no Watchlist chips when the issuer is on no Watchlist", () => {
+    renderWithProviders(<AlertCard alert={BASE_ALERT} />);
+
+    expect(screen.queryByText("Demo Watchlist")).not.toBeInTheDocument();
   });
 
   it("expands to show evidence excerpts when 'Why was this flagged?' is clicked", async () => {
