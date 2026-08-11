@@ -6603,7 +6603,7 @@ Live-verified via `curl` and a real Chrome browser session:
 **Commit Hash**
 
 `7c43e3d` (feature), `3b4a531` (live-caught `acknowledge_alert` 422 fix),
-`PENDING_ABOUT_COMMIT_HASH` (About page copy update)
+`0b7cc6d` (About page copy update)
 
 **Approximate Time Spent**
 
