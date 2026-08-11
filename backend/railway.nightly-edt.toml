@@ -1,0 +1,7 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "python -m app.scripts.run_nightly_scheduled_discovery"
+cronSchedule = "0 2 * * *"
