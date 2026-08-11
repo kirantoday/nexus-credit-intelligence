@@ -190,6 +190,7 @@ const AVAILABLE_TODAY = [
   "Credit Universe",
   "Research Universes",
   "Morning Research Brief",
+  "Watchlists",
   "Issuer Detail",
   "Distress Timeline",
   "SEC / court / security provenance",
@@ -198,7 +199,6 @@ const AVAILABLE_TODAY = [
 ];
 
 const PLANNED_NEXT = [
-  "Watchlists",
   "Alerts and user-specific monitoring",
   "Universal search",
   "Research notes and audit events",

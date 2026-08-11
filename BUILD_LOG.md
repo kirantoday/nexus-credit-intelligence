@@ -6355,20 +6355,60 @@ will be needed then.
 `web/src/components/AddToWatchlistButton.test.tsx` (5),
 `web/src/components/Layout.test.tsx` (updated for the enabled nav item).
 
-**Remaining Work**
+**Production verification**
 
-- Production deploy/browser verification and the regression pass across
-  Credit Universe, Research Universes, Morning Research Brief, Diebold
-  Nixdorf/Trinseo timelines, and Market Context — see the follow-up
-  entry/commit for results.
-- `AboutPage.tsx`'s "Available Today vs. What's Next" copy is updated
-  only after production verification confirms the deploy is genuinely
-  live, per this milestone's own instruction not to claim availability
-  ahead of actual deployment.
+Deployed via the standard Railway (backend)/Vercel (frontend) auto-deploy
+on push to `main`. Live-verified via `curl` (backend `/health`,
+`/api/watchlists`, `/api/research-universes`) and a real Chrome browser
+session against both the deployed backend and frontend:
+
+- Watchlists landing page renders the real CFO Demo Watchlist card with
+  real counts (6 issuers, 1 with a new development, 0 high-severity —
+  correctly reflecting current alert data, not fabricated numbers).
+- Watchlist detail renders the full real issuer table (issuer, current
+  status from real Research Universe memberships, latest development
+  headline/date, correctly-colored severity chips, new-developments
+  badge, securities count) exactly as designed.
+- Issuer Detail (Trinseo PLC) correctly shows "ON 1 WATCHLIST" and the
+  Add to Watchlist menu correctly shows "CFO Demo Watchlist" pre-checked.
+- **A real regression was found and fixed live during this pass**:
+  `GET /api/research-universes` had no `collection_type` filter by
+  default, so the new CFO Demo Watchlist was appearing on the
+  organization-coverage Research Universes landing page and in Morning
+  Research Brief's universe filter dropdown — both share the same
+  `research_universe_service.list_research_universes` call. Fixed by
+  making that function always exclude `collection_type=watchlist`
+  (commit `939e353`, 2 new regression tests, redeployed and
+  re-verified live via both `curl` and browser — confirmed absent from
+  Research Universes and the Morning Brief filter, still present at
+  `GET /api/watchlists`).
+- Regression-checked: Credit Universe (loads, Market Context panel
+  shows live SOFR/HY OAS), Research Universes (23 real universes render,
+  no Watchlist leakage post-fix), Morning Research Brief (191 issuers
+  with developments, severity counts, universe filter dropdown clean),
+  Trinseo PLC's Distress Timeline (15 events, current status unchanged).
+  No console errors, no failed network requests observed.
+- **Mobile viewport**: same tooling limitation as the prior mobile-
+  responsiveness milestone — `resize_window` reports success but
+  `window.innerWidth` in the live tab does not actually change,
+  confirmed via `javascript_tool` (this environment's Chrome window is
+  not resizable through the available browser-automation tools).
+  Real-device/visual mobile verification of the Watchlists UI could not
+  be completed for the same reason documented then. Confidence instead
+  rests on the automated test suite's mobile-specific coverage
+  (`WatchlistDetailPage.test.tsx`'s mobile-card-rendering test, which
+  mocks `useIsMobile` directly and passes) plus reuse of the same
+  `DataTable`/`useIsMobile` responsive pattern already used and verified
+  elsewhere in the app.
+- `AboutPage.tsx`'s "Available Today vs. What's Next" copy updated to
+  move Watchlists into "Available Today" now that the deploy is
+  genuinely live and verified (not before, per this milestone's own
+  instruction).
 
 **Commit Hash**
 
-`9899007`
+`9899007` (feature), `939e353` (live-caught Research Universes
+regression fix), `PENDING_ABOUT_COMMIT_HASH` (About page copy update)
 
 **Approximate Time Spent**
 
