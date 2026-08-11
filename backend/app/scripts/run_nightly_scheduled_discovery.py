@@ -31,6 +31,16 @@ can never launch a second real daily cycle for a research day already
 completed. No new scheduling-state table or mechanism is introduced —
 this reuses the existing `market_discovery_run` daily-run-boundary concept
 end to end.
+
+Also refreshes the two FRED market-context series (SOFR, HY OAS) on every
+real (non-no-op) trigger — found 2026-08-11 to have never been refreshed
+since their one-time Milestone 5 seed (`app.providers.fred.provider.
+sync_series` was never wired into any recurring job). This refresh is
+deliberately independent of the market-discovery duplicate-run check
+above (a different data source, a different cadence — FRED publishing
+its own observations is not "a research day"), and a FRED-side failure
+never blocks or is blocked by the research cycle launch below (the same
+per-provider isolation this codebase already uses everywhere else).
 """
 
 from __future__ import annotations
@@ -40,9 +50,22 @@ import sys
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+from sqlalchemy.orm import Session
+
 from app.config import get_settings
 from app.db.session import SessionLocal
+from app.providers.base.http_client import ThrottledHttpClient
+from app.providers.fred import provider as fred_provider
 from app.repositories import market_discovery_repository
+
+# The only two FRED series Market Context displays (PLAN.md section 18
+# step 5) — (series_id, category), matching `market_context_service.py`'s
+# own `_SOFR_SERIES_ID`/`_HY_OAS_SERIES_ID` and the categories used at
+# their original Milestone 5 seed.
+_MARKET_CONTEXT_SERIES: tuple[tuple[str, str], ...] = (
+    ("SOFR", "rate"),
+    ("BAMLH0A0HYM2", "spread"),
+)
 
 EASTERN = ZoneInfo("America/New_York")
 
@@ -86,6 +109,42 @@ def should_run(now_et: datetime, latest_daily_run_window_start: date | None) -> 
     )
 
 
+def _refresh_market_context(
+    db: Session, *, fred_api_key: str | None, user_agent: str | None
+) -> None:
+    """Refreshes only `SOFR`/`BAMLH0A0HYM2` via the existing, unmodified
+    `fred_provider.sync_series` (idempotent per `(series_id, obs_date)` —
+    safe to call every night regardless of what's already stored). Never
+    raises: a FRED-side failure (missing key, transient HTTP error) is
+    logged and swallowed, matching this codebase's per-provider isolation
+    convention — the research cycle below must never be blocked by this.
+    """
+    if not fred_api_key:
+        print("Market Context refresh: skipped (FRED_API_KEY not configured).")
+        return
+    http_client = ThrottledHttpClient(user_agent=user_agent or "nexus-credit-intelligence/1.0")
+    try:
+        for series_id, category in _MARKET_CONTEXT_SERIES:
+            try:
+                result = fred_provider.sync_series(
+                    db, http_client, api_key=fred_api_key, series_id=series_id, category=category
+                )
+                db.commit()
+                new_count = sum(1 for o in result.observations if o.observation_created)
+                latest = max(result.observations, key=lambda o: o.observation.obs_date)
+                print(
+                    f"Market Context refresh: {series_id} — {new_count} new observation(s), "
+                    f"latest={latest.observation.obs_date} value={latest.observation.value}"
+                )
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 - per-series isolation, never blocks the research cycle
+                db.rollback()
+                print(f"Market Context refresh: {series_id} FAILED ({exc}) — continuing.")
+    finally:
+        http_client.close()
+
+
 def main(argv: list[str] | None = None, *, now_et: datetime | None = None) -> int:
     """`now_et` is exposed as an injectable parameter purely for deterministic
     testing (see `tests/unit/test_run_nightly_scheduled_discovery.py`) —
@@ -98,10 +157,20 @@ def main(argv: list[str] | None = None, *, now_et: datetime | None = None) -> in
         return 1
 
     now_et = now_et if now_et is not None else datetime.now(EASTERN)
+    is_correct_trigger = now_et.hour == TARGET_HOUR_ET
     db = SessionLocal()
     try:
         latest_daily = market_discovery_repository.get_latest_successful_daily_run(db)
         latest_window_start = latest_daily.window_start_date if latest_daily else None
+        # Independent of the research-cycle duplicate check below: FRED
+        # publishes on its own cadence, not "a research day," and refreshing
+        # it is fully idempotent, so it runs on every real (correct-hour)
+        # trigger regardless of whether a market-discovery cycle already
+        # completed for today.
+        if is_correct_trigger:
+            _refresh_market_context(
+                db, fred_api_key=settings.fred_api_key, user_agent=settings.sec_user_agent
+            )
     finally:
         db.close()
 

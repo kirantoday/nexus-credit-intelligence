@@ -5998,3 +5998,103 @@ python -m mypy app/
 a real-data spot-check before any fix, the classification fix itself
 across 4 files, 20 new tests, DST-safe scheduler wrapper design and
 implementation, full verification pass, documentation).
+
+---
+
+## 2026-08-11 — Stale Market Context (SOFR/HY OAS) investigated and fixed; TD-024
+
+**Context**
+
+Production showed SOFR `3.64%` as of `2026-08-05` and HY OAS `2.73%` as
+of `2026-08-04` — user flagged these as suspiciously stale on
+`2026-08-11`. Investigated per explicit instruction: no UI change until
+root cause was found; no fabricated dates; no hiding of staleness.
+
+**Investigation**
+
+- `app.providers.fred.provider.sync_series` is the only function that
+  fetches new FRED observations. Grepped the entire `app/` tree for any
+  caller besides its own definition — none exists. No script, no API
+  route, no scheduled job ever invokes it.
+- `fred_series_registry.last_synced_at` for both `SOFR` and
+  `BAMLH0A0HYM2`: `2026-08-06 14:20:49`/`50 UTC` — identical to the
+  moment Milestone 5 first seeded them, five days prior, confirming zero
+  syncs since.
+- `fred_repository.get_latest_observation` (`ORDER BY obs_date DESC
+  LIMIT 1`) and `app.core.freshness.compute_freshness` (measuring age
+  from `retrieved_at`, correctly returning `cached` for 5-day-old data
+  under FRED's `live_within=1 day`/`cached_within=30 days` policy) were
+  both inspected and found correct — freshness was honestly reporting
+  "cached," never falsely "live," and the query logic was never
+  selecting the wrong row. This was purely an ingestion-cadence gap, not
+  a caching, TTL, or selection bug.
+- Queried live FRED directly (`api.stlouisfed.org/fred/series/
+  observations`, real API key, no mock): `SOFR` latest real observation
+  is `2026-08-10 = 3.63`; `BAMLH0A0HYM2` latest real observation is
+  `2026-08-07 = 2.70` (weekends correctly absent from both; HY OAS
+  publishes on a short lag even from FRED's own side).
+- Stored rows confirmed via direct query: Nexus's actual latest stored
+  SOFR observation before any fix was `2026-08-05 = 3.64`; HY OAS was
+  `2026-08-04 = 2.73` — exactly matching what production displayed.
+  Genuinely stale, not a display bug.
+
+**Fix**
+
+Two parts, both scoped to exactly `SOFR`/`BAMLH0A0HYM2` — no historical
+discovery, SEC backfill, CourtListener sync, or Anthropic call involved:
+
+1. **Immediate one-time refresh**: called the existing, unmodified
+   `sync_series` directly against production for both series. 3 new
+   observations each. Verified live via `GET /api/market-context`:
+   `sofr.value=3.63, as_of_date=2026-08-10, freshness=live`;
+   `high_yield_oas.value=2.70, as_of_date=2026-08-07, freshness=live`.
+2. **Recurring refresh**: `app.scripts.run_nightly_scheduled_discovery`
+   (the 10 PM ET wrapper from the prior entry) now also calls
+   `_refresh_market_context` — `sync_series` for exactly these two
+   series — on every correct-hour trigger, deliberately independent of
+   the market-discovery research-cycle duplicate-check (FRED publishes
+   on its own cadence; refreshing it is unconditionally safe/idempotent
+   regardless of whether a research day already completed) and isolated
+   per-series (a `SOFR` failure never blocks `BAMLH0A0HYM2` or the
+   research cycle launch, matching this codebase's existing
+   per-provider-isolation convention throughout). No API key configured
+   → skips gracefully, logged, never crashes the wrapper.
+
+**Tests Added**
+
+4 new tests in `test_run_nightly_scheduled_discovery.py`:
+correct-hour trigger refreshes Market Context (even when the research
+cycle itself is a duplicate no-op, proving independence), wrong-hour
+trigger does not refresh, skips gracefully without an API key, and a
+per-series failure is isolated (one fails, the other still succeeds).
+
+**Test Results**
+
+Full backend suite: 456 → 460 passed (+4 net new tests). The 3
+pre-existing tests in this file continue passing unchanged, now
+implicitly exercising the `_no_close_session` fixture's new
+`_refresh_market_context` stub with no behavior change. `ruff check` /
+`black --check` / `mypy` — clean.
+
+**Production Verification**
+
+`GET /api/market-context` on the live Railway backend, post-manual-fix:
+
+```
+sofr:          value=3.63  as_of_date=2026-08-10  freshness=live
+high_yield_oas: value=2.70  as_of_date=2026-08-07  freshness=live
+```
+
+**Remaining Work**
+
+- KI-002 (Railway cron trigger creation) still governs whether this
+  recurring refresh actually runs automatically in production — the
+  code path is proven and tested, but not yet live on a schedule.
+- TD-024 recorded, resolved.
+
+**Approximate Time Spent**
+
+~45 minutes (investigation across provider/service/repository code,
+live FRED API verification, one-time production refresh, recurring-fix
+implementation in the existing nightly wrapper, 4 new tests, full
+verification, documentation).
