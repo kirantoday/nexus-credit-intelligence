@@ -279,15 +279,28 @@ def run_discovery(
         for forms_group in _split_forms_for_full_text_search(forms):
             from_offset = 0
             while True:
-                result = search_full_text_fn(
-                    http_client,
-                    query=query,
-                    forms=forms_group,
-                    start_date=resolved_start,
-                    end_date=resolved_end,
-                    from_offset=from_offset,
-                    size=FULL_TEXT_SEARCH_MAX_PAGE_SIZE,
-                )
+                try:
+                    result = search_full_text_fn(
+                        http_client,
+                        query=query,
+                        forms=forms_group,
+                        start_date=resolved_start,
+                        end_date=resolved_end,
+                        from_offset=from_offset,
+                        size=FULL_TEXT_SEARCH_MAX_PAGE_SIZE,
+                    )
+                except Exception as exc:  # noqa: BLE001 - per-query isolation, mirrors the
+                    # existing per-candidate/per-issuer try/except below: one query's
+                    # transient failure (observed live as a genuine SEC-side 500) must
+                    # never crash the whole run and strand its `market_discovery_run`
+                    # row at `status='running'` forever (TD-022) — skip the rest of
+                    # this query/forms_group's pagination and move on; already-processed
+                    # candidates from other queries are unaffected and not reprocessed.
+                    errors_count += 1
+                    error_messages.append(
+                        f"query {query!r} forms={forms_group!r} from={from_offset}: {exc}"
+                    )
+                    break
                 queries_executed += 1
                 hits = result.dto.hits.hits
                 filings_examined += len(hits)

@@ -169,13 +169,23 @@ def _resolve_research_cycle(db: Session) -> tuple[date, date, bool]:
     return latest_research_day, preceding_research_day, is_fallback
 
 
-def _build_run_details(db: Session) -> RunDetails:
-    """Everything 7.5.2's original fix computed, unchanged: the daily-run
-    boundary (mode-scoped, backfill-excluded), and pipeline-run counters
-    scoped to *that* run's own `started_at` — a genuinely different
-    question ("how did the last discovery run perform") than the brief's
-    own `latest_research_day` ("what research cycle is this"). Secondary/
-    diagnostics only."""
+def _build_run_details(
+    db: Session, *, preceding_research_day: date, latest_research_day: date
+) -> RunDetails:
+    """Pipeline-run identity/status fields (`last_successful_run`/
+    `latest_run`/`since`) are unchanged from 7.5.2's original fix —
+    "how did the last discovery run perform," a genuinely different
+    question from the brief's own `latest_research_day`. Secondary/
+    diagnostics only.
+
+    `new_sec_filings`/`new_court_events`/`new_research_evidence`, however,
+    are scoped to the *research cycle's* `(preceding_research_day,
+    latest_research_day]` window by each record's own real-world source
+    date — not `since` (a specific run's `started_at`) — per the same
+    2026-08-10 correction as the alert partitioning below: a one-time
+    explicit `--mode backfill` window used to correct a watermark gap
+    still belongs to the research cycle whose event dates it actually
+    covers, regardless of which run/mode ingested it."""
     latest_successful = _latest_successful_daily_run(db)
     latest_run = _latest_daily_run(db)
     run_since = latest_successful.started_at if latest_successful else None
@@ -188,9 +198,15 @@ def _build_run_details(db: Session) -> RunDetails:
             db, [CollectionType.RESEARCH_UNIVERSE, CollectionType.BENCHMARK]
         )
     )
-    new_sec_filings = sec_filing_repository.count_filings_created_since(db, run_since)
-    new_court_events = court_docket_entry_repository.count_entries_created_since(db, run_since)
-    new_research_evidence = research_evidence_repository.count_evidence_created_since(db, run_since)
+    new_sec_filings = sec_filing_repository.count_filings_by_filing_date_between(
+        db, preceding_research_day, latest_research_day
+    )
+    new_court_events = court_docket_entry_repository.count_entries_by_entry_date_between(
+        db, preceding_research_day, latest_research_day
+    )
+    new_research_evidence = research_evidence_repository.count_evidence_by_source_date_between(
+        db, preceding_research_day, latest_research_day
+    )
 
     return RunDetails(
         last_successful_run=latest_successful,
@@ -323,6 +339,27 @@ _PERIOD_ALERT_FETCH_LIMIT = 2000
 _ISSUER_DISPLAY_CAP = 100
 
 
+def _is_new_development(
+    alert: AlertEvent, *, preceding_research_day: date, latest_research_day: date
+) -> bool:
+    """The 2026-08-10 correction: whether an alert belongs in
+    `new_developments` vs. `historical_intelligence` is decided by its
+    real-world `as_of_date` relative to the research-cycle boundary
+    `(preceding_research_day, latest_research_day]` — never by
+    `is_backfill`. `is_backfill` describes *how the row was ingested*
+    (which pipeline mode created it); it is not, and was never meant to
+    be, a proxy for *when the underlying event actually happened*. That
+    distinction was invisible as long as every explicit-window ingestion
+    genuinely was old data — it broke the day a one-time explicit
+    `--mode backfill --start/--end` window was used to correct a
+    watermark gap and ingest genuinely current (Aug 9-10) activity,
+    which `is_backfill=True` then mislabeled as historical. `is_backfill`
+    itself is untouched and still exposed on `AlertRow` as ingestion
+    provenance — this function only changes which bucket an alert is
+    displayed in, nothing about the row's own persisted data."""
+    return preceding_research_day < alert.as_of_date <= latest_research_day
+
+
 def get_morning_brief(db: Session) -> MorningBriefSummary:
     """ "What materially changed during the latest completed business-day
     research cycle, compared with the preceding one?" (PLAN.md Milestone
@@ -342,8 +379,17 @@ def get_morning_brief(db: Session) -> MorningBriefSummary:
         page=1,
         page_size=_PERIOD_ALERT_FETCH_LIMIT,
     )
-    new_alerts = [a for a in alerts if not a.is_backfill]
-    historical_alerts = [a for a in alerts if a.is_backfill]
+    new_alerts = []
+    historical_alerts = []
+    for a in alerts:
+        if _is_new_development(
+            a,
+            preceding_research_day=preceding_research_day,
+            latest_research_day=latest_research_day,
+        ):
+            new_alerts.append(a)
+        else:
+            historical_alerts.append(a)
 
     # Batch-fetched once for the whole cycle's alerts, never per alert or
     # per issuer — the naive per-row version issued two extra queries per
@@ -385,5 +431,9 @@ def get_morning_brief(db: Session) -> MorningBriefSummary:
         historical_intelligence=historical_intelligence[:_ISSUER_DISPLAY_CAP],
         historical_intelligence_issuer_count=len(historical_intelligence),
         no_material_changes=(len(new_developments) == 0),
-        run_details=_build_run_details(db),
+        run_details=_build_run_details(
+            db,
+            preceding_research_day=preceding_research_day,
+            latest_research_day=latest_research_day,
+        ),
     )

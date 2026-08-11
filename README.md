@@ -307,25 +307,41 @@ cd backend
 ./.venv/Scripts/python -m app.scripts.run_market_discovery --mode delta
 ```
 
-**The Morning Research Brief (`GET /api/morning-brief`) answers "what materially
-changed since this user last reviewed the brief?"** — a user-relative boundary
-(`morning_brief_view`), not a pipeline-run watermark (PLAN.md Milestone 7.5.2's
-correction). Alerts in the current period are grouped by issuer, ranked by
-severity, and split into `new_developments` (genuinely new events) vs.
+**The Morning Research Brief (`GET /api/morning-brief`) answers "what
+materially changed during the latest completed business-day research
+cycle, compared with the preceding one?"** — `latest_research_day`/
+`preceding_research_day`, derived purely from canonical successful daily-run
+data (`market_discovery_run`/`filing_monitor_run`'s most recent successful
+`delta`/`baseline`-mode run, `mode=backfill` structurally excluded) plus
+calendar business-day arithmetic (weekends skipped; a Monday's preceding
+research day is the prior Friday) — never from when the page was opened,
+refreshed, or revisited (PLAN.md Milestone 7.5.2's third, final correction;
+there is no `morning_brief_view`/page-view mechanism — that was removed).
+Alerts in the current period are grouped by issuer, ranked by severity, and
+split into `new_developments` (genuinely new events) vs.
 `historical_intelligence` (an older event Nexus happened to discover this
-period), via the existing `alert_event.is_backfill` signal. The discovery
-pipeline itself still drives *what data exists* — whichever of
-`market_discovery_run`/`filing_monitor_run` is the most recent successful
-`delta`/`baseline`-mode run (`mode=backfill` structurally excluded) — but that
-is now secondary "run/data details," not the primary boundary. Historical data
+period), via the existing `alert_event.is_backfill` signal. Historical data
 stays fully queryable elsewhere (Issuer Detail, Research Universes, evidence
 drill-down, and the Morning Brief's own "Show historical alerts" toggle).
 
-**Future nightly command** (documented, not yet scheduled — Railway Cron
-activation requires separate explicit approval per PLAN.md §24.6):
+**Nightly production schedule (active since 2026-08-10, PLAN.md §24.6):**
+Railway Cron, two triggers (`0 2 * * *` and `0 3 * * *` UTC — covering both
+US DST regimes, since Railway cron has no timezone parameter), both running
+`python -m app.scripts.run_nightly_scheduled_discovery`. That wrapper checks
+the real `America/New_York` wall-clock hour via `zoneinfo` (not a hardcoded
+DST date) and only the trigger landing on 10:00 PM ET actually runs; the
+other exits immediately. It also checks
+`market_discovery_repository.get_latest_successful_daily_run` before doing
+any work, so a research day that already completed is never reprocessed —
+duplicate-run protection independent of (and in addition to) Railway's own
+overlapping-execution skip. See PLAN.md §24.6 for the exact Railway
+configuration and how to verify a night's run succeeded.
 
 ```bash
-python -m app.scripts.run_market_discovery --mode delta
+# What the wrapper launches on a real 10 PM ET trigger — the same command
+# an operator would run by hand for an ad hoc daily catch-up:
+python -m app.scripts.run_market_discovery --mode delta \
+    --max-ai-cost-usd 2.00 --max-ai-calls 300 --max-sonnet-calls 75
 ```
 
 `app.scripts.run_overnight_filing_monitor` (the older, Milestone 6.5

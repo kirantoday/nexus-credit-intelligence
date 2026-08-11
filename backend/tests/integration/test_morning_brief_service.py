@@ -38,6 +38,7 @@ from app.domain.collection import Collection, CollectionCreate, CollectionMember
 from app.domain.issuer import Issuer, IssuerCreate
 from app.domain.market_discovery import MarketDiscoveryRun, MarketDiscoveryRunCreate
 from app.domain.provenance import ProvenanceCreate
+from app.domain.sec_filing import SecFilingCreate
 from app.models.alert import AlertEvent as AlertEventModel
 from app.models.collection import CollectionMembership as CollectionMembershipModel
 from app.repositories import (
@@ -46,6 +47,7 @@ from app.repositories import (
     issuer_repository,
     market_discovery_repository,
     provenance_repository,
+    sec_filing_repository,
 )
 from app.schemas.filing_monitor import DailyRunSummary
 from app.services import morning_brief_service
@@ -54,6 +56,8 @@ from tests.integration.conftest import reported_public_provenance
 # 2026-08-07 is a Friday; 2026-08-10 is the following Monday.
 _FRIDAY = date(2026, 8, 7)
 _THURSDAY = date(2026, 8, 6)
+_SATURDAY = date(2026, 8, 8)
+_SUNDAY = date(2026, 8, 9)
 _MONDAY = date(2026, 8, 10)
 
 
@@ -341,3 +345,195 @@ def test_only_a_new_later_run_advances_the_window(db_session: Session) -> None:
     after = morning_brief_service.get_morning_brief(db_session)
     assert after.latest_research_day == _FRIDAY
     assert after.preceding_research_day == _THURSDAY
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-10 correction: classification must follow `as_of_date` relative to
+# the research-cycle boundary, never `is_backfill` — see
+# `morning_brief_service._is_new_development`'s docstring for the real
+# production incident this fixes (a one-time explicit `--mode backfill
+# --start/--end` window used to correct a watermark gap ingested genuinely
+# current Aug 9-10 activity, which the old `is_backfill`-only check
+# mislabeled as historical).
+# ---------------------------------------------------------------------------
+
+
+def test_saturday_event_appears_as_mondays_new_development(db_session: Session) -> None:
+    """A Saturday-dated event, ingested via a mechanical `--mode backfill`
+    catch-up window (`is_backfill=True`), must still surface as a genuinely
+    new development for the Friday->Monday research cycle."""
+    issuer = _seed_issuer(db_session, legal_name=f"Saturday Event Test Co {uuid4()}")
+    _seed_daily_run(db_session, window_start=_MONDAY)
+    _seed_alert(
+        db_session,
+        issuer_id=issuer.id,
+        is_backfill=True,  # mechanically ingested via an explicit backfill window
+        as_of=_SATURDAY,
+        triggered_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+
+    brief = morning_brief_service.get_morning_brief(db_session)
+
+    assert any(d.issuer_id == issuer.id for d in brief.new_developments)
+    assert not any(d.issuer_id == issuer.id for d in brief.historical_intelligence)
+
+
+def test_sunday_event_appears_as_mondays_new_development(db_session: Session) -> None:
+    """Same as the Saturday case, for Sunday — both weekend days must
+    surface as new developments in Monday's cycle, never as historical
+    intelligence, regardless of the mechanical ingestion mode."""
+    issuer = _seed_issuer(db_session, legal_name=f"Sunday Event Test Co {uuid4()}")
+    _seed_daily_run(db_session, window_start=_MONDAY)
+    _seed_alert(
+        db_session,
+        issuer_id=issuer.id,
+        is_backfill=True,
+        as_of=_SUNDAY,
+        triggered_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+
+    brief = morning_brief_service.get_morning_brief(db_session)
+
+    assert any(d.issuer_id == issuer.id for d in brief.new_developments)
+    assert not any(d.issuer_id == issuer.id for d in brief.historical_intelligence)
+
+
+def test_older_june_filing_discovered_monday_remains_historical(db_session: Session) -> None:
+    """A genuinely old (June) event, discovered/ingested during Monday's
+    enrichment, must remain historical intelligence — proves the fix
+    didn't just start marking everything "new"."""
+    issuer = _seed_issuer(db_session, legal_name=f"June Filing Test Co {uuid4()}")
+    _seed_daily_run(db_session, window_start=_MONDAY)
+    _seed_alert(
+        db_session,
+        issuer_id=issuer.id,
+        is_backfill=False,  # ingested via the ordinary delta path this cycle
+        as_of=date(2026, 6, 15),
+        triggered_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+
+    brief = morning_brief_service.get_morning_brief(db_session)
+
+    assert not any(d.issuer_id == issuer.id for d in brief.new_developments)
+    assert any(d.issuer_id == issuer.id for d in brief.historical_intelligence)
+
+
+def test_backfill_mode_does_not_force_in_window_event_to_historical(db_session: Session) -> None:
+    """A mechanical `backfill`-mode ingestion of an event dated exactly the
+    research day itself must classify as new — `is_backfill=True` alone
+    must never force historical classification."""
+    issuer = _seed_issuer(db_session, legal_name=f"Backfill In-Window Test Co {uuid4()}")
+    _seed_daily_run(db_session, window_start=_MONDAY)
+    _seed_alert(
+        db_session,
+        issuer_id=issuer.id,
+        is_backfill=True,
+        as_of=_MONDAY,
+        triggered_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+
+    brief = morning_brief_service.get_morning_brief(db_session)
+
+    assert any(d.issuer_id == issuer.id for d in brief.new_developments)
+
+
+def test_delta_mode_does_not_force_old_event_to_new(db_session: Session) -> None:
+    """The reverse direction: a mechanical `delta`-mode ingestion of a
+    genuinely old event must not classify as new just because
+    `is_backfill=False` — proves the fix isn't a one-directional patch."""
+    issuer = _seed_issuer(db_session, legal_name=f"Delta Old Event Test Co {uuid4()}")
+    _seed_daily_run(db_session, window_start=_MONDAY)
+    _seed_alert(
+        db_session,
+        issuer_id=issuer.id,
+        is_backfill=False,
+        as_of=date(2026, 1, 15),
+        triggered_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+
+    brief = morning_brief_service.get_morning_brief(db_session)
+
+    assert not any(d.issuer_id == issuer.id for d in brief.new_developments)
+    assert any(d.issuer_id == issuer.id for d in brief.historical_intelligence)
+
+
+def test_counts_and_cards_use_identical_event_date_semantics(db_session: Session) -> None:
+    """`issuers_with_developments`/`severity_counts` (the summary numbers)
+    must never disagree with which issuers actually appear under
+    `new_developments` (the displayed cards) — both must derive from the
+    exact same classification, not two different boundaries."""
+    new_issuer = _seed_issuer(db_session, legal_name=f"Counts New Test Co {uuid4()}")
+    old_issuer = _seed_issuer(db_session, legal_name=f"Counts Old Test Co {uuid4()}")
+    _seed_daily_run(db_session, window_start=_MONDAY)
+    _seed_alert(
+        db_session,
+        issuer_id=new_issuer.id,
+        severity=EvidenceSeverity.HIGH,
+        is_backfill=True,
+        as_of=_SUNDAY,
+        triggered_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+    _seed_alert(
+        db_session,
+        issuer_id=old_issuer.id,
+        severity=EvidenceSeverity.HIGH,
+        is_backfill=False,
+        as_of=date(2026, 2, 1),
+        triggered_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+
+    brief = morning_brief_service.get_morning_brief(db_session)
+
+    # `new_issuer`'s alert is HIGH severity with the most recent possible
+    # `triggered_at` — severity-first, most-recent-second ranking (existing,
+    # unchanged sort) puts it at the very front, so it survives
+    # `_ISSUER_DISPLAY_CAP` regardless of how much real shared-DB data
+    # exists alongside it.
+    new_issuer_ids = {d.issuer_id for d in brief.new_developments}
+    assert new_issuer.id in new_issuer_ids
+    assert old_issuer.id not in new_issuer_ids
+    # The summary count and the displayed list must never disagree about
+    # which classification a given issuer received — `issuers_with_developments`
+    # is the true (uncapped) count, so it can only be >= the capped list's
+    # length, never less, and the specific issuer we seeded must be
+    # reflected in both.
+    assert brief.issuers_with_developments >= len(brief.new_developments)
+    assert brief.severity_counts.high >= 1
+
+
+def _seed_filing(db: Session, issuer_id: UUID, *, filing_date: date) -> None:
+    provenance = provenance_repository.create_provenance(db, reported_public_provenance())
+    sec_filing_repository.create_filing(
+        db,
+        SecFilingCreate(
+            issuer_id=issuer_id,
+            accession_no=f"0001-26-{uuid4().int % 1000000:06d}",
+            form_type="8-K",
+            filing_date=filing_date,
+            is_amendment=False,
+            primary_document="test-filing.htm",
+            primary_document_url=f"https://example.invalid/{uuid4()}.htm",
+            provenance_id=provenance.id,
+        ),
+    )
+
+
+def test_run_details_new_sec_filings_uses_event_date_not_creation_time(
+    db_session: Session,
+) -> None:
+    """`RunDetails.new_sec_filings` must count by the filing's real-world
+    `filing_date` within the research-cycle window, not by when Nexus
+    happened to persist the row — the same 2026-08-10 correction as alert
+    partitioning, applied to this secondary/diagnostics counter."""
+    issuer = _seed_issuer(db_session, legal_name=f"Run Details Filing Test Co {uuid4()}")
+    _seed_daily_run(db_session, window_start=_MONDAY)
+
+    before = morning_brief_service.get_morning_brief(db_session)
+    baseline = before.run_details.new_sec_filings
+
+    _seed_filing(db_session, issuer.id, filing_date=_SUNDAY)  # in-window
+    _seed_filing(db_session, issuer.id, filing_date=date(2026, 1, 1))  # out of window
+
+    after = morning_brief_service.get_morning_brief(db_session)
+
+    assert after.run_details.new_sec_filings == baseline + 1

@@ -503,3 +503,65 @@ def test_watermark_only_advances_on_zero_errors(db_session: Session) -> None:
     assert run.status.value == "completed_with_errors"
     assert run.errors_count == 1
     assert run.resulting_watermark == expected_watermark
+
+
+def test_query_level_failure_does_not_crash_the_run(db_session: Session) -> None:
+    """TD-022: a transient SEC-side failure (observed live as a genuine
+    `500 Internal Server Error`) on one full-text-search query/page must not
+    raise out of `run_discovery` and strand the run at `status='running'`
+    forever — it must be caught, counted as an error (same isolation
+    convention as the existing per-candidate/per-issuer boundaries), and the
+    run must continue on to process the *next* query rather than aborting
+    the whole run. Live-caught twice during the 2026-08-09→10 daily
+    catch-up window before this fix (`voluntary petition`, then `chapter 7
+    bankruptcy`, both genuine SEC `500`s)."""
+    calls: list[str] = []
+
+    def _first_query_raises(
+        http_client: ThrottledHttpClient,
+        *,
+        query: str,
+        forms: tuple[str, ...],
+        start_date: date,
+        end_date: date,
+        from_offset: int,
+        size: int,
+    ) -> FetchResult[SecFullTextSearchResponseDTO]:
+        calls.append(query)
+        if query == "failing query":
+            raise RuntimeError("simulated SEC EDGAR 500 Internal Server Error")
+        return FetchResult(
+            dto=_fts_response(_hit(cik="9990000008", adsh="0001-26-000008")),
+            raw_bytes=b"{}",
+            content_type="application/json",
+            url="https://efts.sec.gov/LATEST/search-index?q=test",
+            retrieved_at=datetime.now(UTC),
+        )
+
+    run = market_discovery_service.run_discovery(
+        db_session,
+        _NullHttpClient(),  # type: ignore[arg-type]
+        None,
+        mode=FilingMonitorRunMode.BACKFILL,
+        window_start=date(2026, 7, 1),
+        window_end=date(2026, 7, 6),
+        environment="test",
+        queries=("failing query", "healthy query"),
+        search_full_text_fn=_first_query_raises,
+        process_issuer_filings_fn=_no_op_process_issuer_filings,
+    )
+
+    # Both queries were attempted — the failure on the first (possibly
+    # retried once per amendment-suffix forms group, per TD-014) did not
+    # abort the loop before the second query ever ran.
+    assert "failing query" in calls
+    assert "healthy query" in calls
+    # The run reached a terminal status (never crashed out, never stuck at
+    # 'running') and honestly recorded the query-level failure(s) — one per
+    # amendment-suffix forms group the failing query was attempted against.
+    assert run.status.value == "completed_with_errors"
+    assert run.errors_count >= 1
+    assert any("failing query" in msg for msg in (run.error_summary or "").split(";"))
+    # The healthy query's real candidate was still processed despite the
+    # other query's failure — isolation, not all-or-nothing.
+    assert run.candidate_filings == 1

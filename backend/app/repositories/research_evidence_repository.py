@@ -8,15 +8,17 @@ just another filter value, not a special case.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.types import DetectionMethod, EvidenceSeverity, EvidenceType, ReviewStatus
 from app.domain.research_evidence import ResearchEvidence, ResearchEvidenceCreate
+from app.models.court_docket_entry import CourtDocketEntry as CourtDocketEntryModel
 from app.models.research_evidence import ResearchEvidence as ResearchEvidenceModel
+from app.models.sec_filing import SecFiling as SecFilingModel
 
 
 def _to_domain(row: ResearchEvidenceModel) -> ResearchEvidence:
@@ -166,12 +168,51 @@ def list_issuer_ids_with_evidence_types(
 
 
 def count_evidence_created_since(db: Session, since: datetime | None) -> int:
-    """Provider-agnostic count by `created_at` — backs the Morning Research
-    Brief's "New Research Evidence" metric across every evidence provider
-    (SEC, CourtListener, and future ones), not just SEC filings."""
+    """Provider-agnostic count by `created_at` (discovery-time) — a
+    genuinely different, still-valid metric. Not used by the Morning
+    Research Brief's `RunDetails` as of PLAN.md Milestone 7.5.2's
+    business-day-cycle correction — see `count_evidence_by_source_date_between`
+    for the event-date metric that replaced it there."""
     stmt = select(func.count()).select_from(ResearchEvidenceModel)
     if since is not None:
         stmt = stmt.where(ResearchEvidenceModel.created_at >= since)
+    return db.execute(stmt).scalar_one()
+
+
+def count_evidence_by_source_date_between(
+    db: Session, start_exclusive: date, end_inclusive: date
+) -> int:
+    """Provider-agnostic count by the evidence's *underlying source's*
+    real-world date in `(start_exclusive, end_inclusive]` — the Morning
+    Research Brief's "New Research Evidence" metric (PLAN.md Milestone
+    7.5.2's business-day-cycle correction). `research_evidence` itself
+    carries no date column (ADR-018: provider-agnostic, `filing_id`/
+    `docket_entry_id` are each provider's own FK), so this joins to
+    whichever of `sec_filing.filing_date`/`court_docket_entry.entry_date`
+    actually applies per row — never both, since a row has exactly one of
+    `filing_id`/`docket_entry_id` set, matching ADR-018's own invariant."""
+    stmt = (
+        select(func.count())
+        .select_from(ResearchEvidenceModel)
+        .outerjoin(SecFilingModel, ResearchEvidenceModel.filing_id == SecFilingModel.id)
+        .outerjoin(
+            CourtDocketEntryModel,
+            ResearchEvidenceModel.docket_entry_id == CourtDocketEntryModel.id,
+        )
+        .where(
+            or_(
+                and_(
+                    SecFilingModel.filing_date > start_exclusive,
+                    SecFilingModel.filing_date <= end_inclusive,
+                ),
+                and_(
+                    CourtDocketEntryModel.entry_date.is_not(None),
+                    CourtDocketEntryModel.entry_date > start_exclusive,
+                    CourtDocketEntryModel.entry_date <= end_inclusive,
+                ),
+            )
+        )
+    )
     return db.execute(stmt).scalar_one()
 
 

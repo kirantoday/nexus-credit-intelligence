@@ -5728,3 +5728,273 @@ root-cause via `py-spy` and fix, full AI call-path audit, model-routing/
 budget/observability design and implementation across ~20 files, live
 quality validation with two real bugs found and fixed, 22 new tests,
 full verification pass, documentation).
+
+---
+
+## 2026-08-10 — Milestone 7.5.3 zero-AI historical ingestion confirmed complete; resumption of normal daily production research cycle; SEC query-loop reliability fix; Morning Research Brief event-date classification fix; DST-safe nightly scheduler wrapper
+
+**Context**
+
+Picking back up after the prior entry's pause. This entry covers four
+distinct pieces of work performed in one continuous session at the
+user's explicit direction: (1) documenting the Milestone 7.5.3 zero-AI
+historical backfill's real completion, which happened via a separate
+session this environment has no transcript access to; (2) resuming and
+running the normal daily/delta production research cycle for 2026-08-10;
+(3) a real production bug found and fixed in Morning Research Brief's
+classification logic; (4) implementing (but not yet Railway-deploying) a
+DST-safe nightly scheduler.
+
+**Part 1 — Milestone 7.5.3 Zero-AI Historical Ingestion (documented from database inspection)**
+
+Direct inspection of `nexus.market_discovery_run` found 5 `mode=backfill`
+attempts (window `2026-01-01`→`2026-08-06`) between 2026-08-09 03:26 UTC
+and 2026-08-10 08:41 UTC — user-confirmed as the authorized zero-AI
+(`--ai-mode zero`, $0 Anthropic spend) historical coverage re-run,
+approved in a separate session. 4 attempts crashed on genuine
+infrastructure issues (2 SEC-side transient `500`s on the top-level query
+loop — see TD-022 below; 2 previously-undocumented stalls — a DB
+idle-in-transaction hang and an SEC-document-fetch hang, both safely
+killed and resumed via existing `(cik, accession_no)`/`rule_version`
+idempotency, zero corruption confirmed via direct query each time); the
+5th completed with 0 errors. Final state: 2,652 issuers (from 787),
+28,170 SEC filings (from 7,243), 22,252 research evidence rows (from
+6,239), 3,123 alerts (from 2,212), 4,727 `market_discovery_candidate`
+rows (from 891) — all real, zero duplicate `(cik, accession_no)` pairs or
+issuer CIKs. `ai_call_log` confirmed unchanged at 8 rows across all 5
+attempts — $0 Anthropic spend maintained exactly as required. AI review
+of the resulting deferred bundles (evidence that needed model judgment
+but received none, per zero-AI mode's design) remains separate,
+still-deferred work — not run by this pass, not auto-triggered by
+anything.
+
+**Part 2 — Resuming the Normal Daily/Delta Cycle for 2026-08-10**
+
+Before running anything, inspected `market_discovery_repository.
+get_latest_successful_run` (used by `delta` mode to compute its own
+resume watermark) and found it does not exclude `mode=backfill` — by
+design, unlike `get_latest_successful_daily_run` (Morning Brief display
+only). Because the Part 1 backfill's declared window ended `2026-08-06`
+but it didn't actually complete until `2026-08-10`, and `resulting_
+watermark` for a successful run is stamped with real completion time
+(`datetime.now(UTC)`), a bare `--mode delta` invocation would have
+silently skipped Sunday `2026-08-09` entirely (Saturday `2026-08-08` was
+already covered by the real `2026-08-07`→`08` delta run). See TD-023.
+
+Corrected with an explicit `--mode backfill --start 2026-08-09 --end
+2026-08-10` catch-up run (not counted as a Morning Brief research day,
+since `backfill` mode is excluded from the daily-run boundary), followed
+by a `--mode delta` labeling pass so the cycle is correctly recorded as
+`2026-08-10` from the product's perspective. AI budget for the whole
+night, explicitly user-authorized: max cost $2.00, max calls 300, max
+Sonnet calls 75 — enforced proactively by the existing `AiCallBudget`/
+`ModelRouter` (verified: `deferred_no_budget=0`, `calls_blocked_by_
+budget=0` on every invocation; budget was never actually exhausted).
+Each retry's own budget was computed as the *remaining* allowance after
+subtracting all prior spend that night, so the cumulative total across
+every invocation never exceeded the authorized $2.00/300/75 ceiling.
+
+Real SEC-side transient `500` errors were hit repeatedly overnight (an
+elevated error rate specific to that night, not a code defect) —
+`market_discovery_service.run_discovery`'s top-level query loop had no
+per-query isolation, so the first two attempts crashed entirely (8
+candidates processed before each crash, both times leaving the run row
+stuck at `status='running'` with no error recorded). Rather than keep
+blindly retrying, applied a scoped fix (TD-022, code below) mirroring the
+existing per-candidate/per-issuer isolation one level down: a query-level
+failure is now caught, counted as an error, and the loop continues to
+the next query. After the fix, every subsequent run degraded gracefully
+instead of crashing.
+
+| Run | Mode | Window | Status | Result |
+|---|---|---|---|---|
+| Catch-up attempt 1 | backfill | Aug 9–10 | crashed (pre-fix, uncaught SEC 500) | 8 candidates |
+| Catch-up attempt 2 | backfill | Aug 9–10 | crashed (pre-fix, uncaught SEC 500) | 8 candidates |
+| Catch-up attempt 3 (post-fix) | backfill | Aug 9–10 | `completed_with_errors` (6 isolated SEC 500s out of ~64 query/form combos) | **281 candidates, 119 existing + 125 new issuers, 537 evidence, 177 alerts** |
+| Delta labeling, 3 attempts | delta | Aug 10 | 2× `completed_with_errors`, 1× **`success`** | Final: `8a67a94a-bfc7-4453-a68b-f9ee5229dd83`, window `2026-08-10`→`2026-08-11`, 0 errors, 264 candidates all idempotent-skipped (0 new — confirms no duplicate processing) |
+
+Providers: CourtListener 2 `failed_retryable` / 20 `no_data` / 201
+`unsupported`; OpenFIGI 62 `complete` / 14 `failed_retryable` / 147
+`no_data`; SEC 148 `complete` / 27 `no_data`. Cumulative AI usage across
+the whole night: 291 calls (220 Haiku, 70 Sonnet, 1 failed/unattributed),
+$1.044921 total — well within the $2.00/300/75 authorization. Residual
+gap, honestly reported: 6 of ~64 query/form combinations in the catch-up
+run hit unrecoverable transient SEC `500`s and were not retried further
+that night to conserve budget/time (TD-022 records this).
+
+**Part 3 — Morning Research Brief classification bug found and fixed**
+
+After the corrected run, `GET /api/morning-brief` showed
+`latest_research_day=2026-08-10`/`preceding_research_day=2026-08-07`
+correctly, but `new_developments: 0` and `no_material_changes: true`
+despite 225 real alerts having just been created (177 counted by the
+run's own loop; TD-017's known undercount explains the gap — the
+enrichment orchestrator's own evidence/alert creation isn't tallied by
+the discovery loop's local counters). Root cause, found by inspection
+before any fix: `alert_event.is_backfill` — set purely from the
+*invocation mode* (`mode is FilingMonitorRunMode.BACKFILL`) — was being
+used as the sole signal for "is this a new development or historical
+intelligence" in `morning_brief_service.get_morning_brief`. The Aug
+9–10 catch-up window necessarily used `--mode backfill` (since `--mode
+delta` cannot accept an explicit `--start`/`--end`), so all 225 of its
+alerts — genuinely current Aug 9–10 activity — were mechanically
+mislabeled `is_backfill=True` and filed as historical.
+
+Investigated the real split before touching any production data, per
+explicit instruction: of 225 alerts from the catch-up run, 178 had
+`as_of_date=2026-08-10`, 47 had `as_of_date<=2026-08-07`, 0 missing/
+ambiguous. Spot-checked both groups against real SEC filing text —
+correct in both directions (e.g. a same-day loan-maturity-extension
+alert dated Aug 10 vs. a "Term Loan Repricing Amendment executed in
+February 2026" alert dated Aug 6).
+
+Fixed by decoupling classification from `is_backfill` entirely:
+`morning_brief_service._is_new_development` now classifies purely by
+`alert.as_of_date` relative to the research-cycle boundary
+`(preceding_research_day, latest_research_day]` — `is_backfill` is left
+completely untouched as ingestion-mode provenance (still exposed on
+`AlertRow`), never repurposed or removed. The same event-date-vs-
+creation-time issue existed in `RunDetails.new_sec_filings`/
+`new_court_events`/`new_research_evidence` (all counted by `created_at`
+relative to a specific run's `started_at`, which is why they showed 0
+too) — fixed with three new repository functions
+(`sec_filing_repository.count_filings_by_filing_date_between`,
+`court_docket_entry_repository.count_entries_by_entry_date_between`,
+`research_evidence_repository.count_evidence_by_source_date_between`,
+the last joining through `sec_filing.filing_date`/`court_docket_entry.
+entry_date` since `research_evidence` itself carries no date column per
+ADR-018), all scoped to the same `(preceding_research_day,
+latest_research_day]` window. The old `created_at`-based functions are
+left in place, unused by the Brief but still available for any caller
+that genuinely wants a discovery-time metric — not deleted, per explicit
+instruction not to repurpose existing signals globally.
+
+Verified against real production data (read-only, before any commit):
+`issuers_with_developments` 0→191, `severity_counts` 0/0/0→65/26/110,
+`no_material_changes` true→false, `historical_intelligence_issuer_count`
+254→93, `run_details.new_sec_filings` 0→373,
+`run_details.new_research_evidence` 0→581.
+
+9 new regression tests added to `test_morning_brief_service.py`: Saturday
+event → new development, Sunday event → new development, older June
+filing discovered Monday → remains historical, backfill-mode invocation
+does not force an in-window event to historical, delta-mode invocation
+does not force an old event to new (the reverse-direction proof), counts
+and displayed cards use identical event-date semantics (cap-aware, since
+the live shared database now has 191 real new-development issuers
+against a 100-issuer display cap), and `RunDetails.new_sec_filings` uses
+event-date not creation-time. All 7 existing Morning Brief tests
+continue passing unchanged.
+
+**Part 4 — DST-safe nightly scheduler (implemented, not yet Railway-deployed)**
+
+`app.scripts.run_nightly_scheduled_discovery` (new): a thin wrapper
+intended to be invoked by **two** Railway Cron triggers nightly (`0 2 *
+* *` and `0 3 * * *` UTC — Railway Cron has no timezone parameter,
+verified against Railway's own docs, not assumed). The wrapper computes
+the real `America/New_York` wall-clock hour via `zoneinfo` (the actual
+IANA timezone database — the 2026 US DST transition dates are never
+hardcoded anywhere) and only the trigger landing on hour 22 (10 PM)
+launches the real `run_market_discovery --mode delta` subprocess; the
+other exits immediately as a no-op. Before launching, it also checks
+`market_discovery_repository.get_latest_successful_daily_run` — the same
+function the Brief itself uses — and no-ops if a daily cycle already
+completed for the current Eastern date, layered on top of Railway's own
+overlapping-execution skip. `TZ=America/New_York` is set for the
+subprocess so the underlying script's naive `date.today()` also resolves
+to the correct Eastern business date rather than a container's default
+UTC (live-verified locally: `TZ=UTC` shifted `date.today()` to the next
+calendar day at 11:14 PM ET — the exact failure mode this guards
+against). Recurring nightly AI budget defaults to tonight's authorized
+$2.00/300/75, overridable via `NIGHTLY_MAX_AI_COST_USD`/
+`NIGHTLY_MAX_AI_CALLS`/`NIGHTLY_MAX_SONNET_CALLS` env vars.
+
+10 new tests: 7 pure-logic unit tests for the `should_run` decision
+function (EDT, EST, wrong-trigger no-op in both directions, a real
+DST-transition proof via `zoneinfo` rather than hardcoded dates,
+duplicate-day no-op, prior-day completion does not block tonight) plus 3
+integration tests for `main()` (valid invocation launches exactly one
+subprocess, already-completed day no-ops, wrong hour no-ops).
+
+Railway cron trigger creation itself was **not performed** — this
+working environment has no Railway CLI/dashboard access. See KI-002 for
+the exact operator steps to activate it.
+
+**Technical Debt**
+
+- **TD-022 (new)**: `market_discovery_service.run_discovery`'s top-level
+  SEC full-text-search query loop had no per-query error isolation — one
+  transient SEC `500` crashed the entire run, stranding its
+  `market_discovery_run` row at `status='running'` forever. Fixed with a
+  scoped `try`/`except` around the search call (mirrors the existing
+  per-candidate/per-issuer isolation pattern), tested
+  (`test_query_level_failure_does_not_crash_the_run`). Observed 4 times
+  total across tonight's work (2 crashes pre-fix, plus 6+2 isolated
+  post-fix occurrences that no longer crashed the run).
+- **TD-023 (new)**: `get_latest_successful_run`'s `resulting_watermark`
+  for a `backfill`-mode run reflects real completion time, not its
+  declared window end — correct by design for most cases, but creates a
+  gap when a backfill's declared window and its real completion time
+  diverge significantly (exactly what happened here). Not fixed in
+  `market_discovery_service`/`market_discovery_repository` itself this
+  pass (a genuine design tradeoff between two valid interpretations,
+  deserving its own explicit decision) — worked around with one manual
+  explicit-window catch-up run.
+
+**Tests Added**
+
+20 new tests total: 9 `test_morning_brief_service.py` (event-date
+classification), 1 `test_market_discovery_service.py` (TD-022 query
+isolation), 7 unit + 3 integration for the nightly scheduler wrapper.
+
+**Test Results**
+
+Full backend suite: 456 passed (449 → 456, +7 net; some new tests
+replaced/extended existing coverage). `ruff check` / `black --check` /
+`mypy` — clean on every touched file. One test (`test_valid_invocation_
+launches_exactly_one_delta_run`) initially collided with tonight's own
+real production data (hardcoded a near-term date that, after tonight's
+real run, now genuinely has a completed daily cycle) — fixed by moving
+to a date far enough in the future (2030) to never collide with real
+data, same caution `test_daily_run_boundary.py` already documents for
+this shared, real database.
+
+**Commands Executed**
+
+```
+python -m app.scripts.run_market_discovery --mode backfill \
+    --start 2026-08-09 --end 2026-08-10 \
+    --max-ai-calls <remaining> --max-ai-cost-usd <remaining> --max-sonnet-calls <remaining>
+    # (3 attempts; budget recomputed as remaining allowance each retry)
+python -m app.scripts.run_market_discovery --mode delta \
+    --max-ai-calls <remaining> --max-ai-cost-usd <remaining> --max-sonnet-calls <remaining>
+    # (3 attempts, final one status=success)
+python -m pytest -q   # 456 passed
+python -m ruff check app/ tests/
+python -m black --check app/ tests/
+python -m mypy app/
+```
+
+**Remaining Work**
+
+- KI-002 (new): Railway Cron trigger creation for the nightly scheduler
+  is documented and ready but not performed — needs operator action with
+  Railway dashboard/CLI access.
+- TD-022/TD-023 above.
+- 6 query/form combinations in tonight's catch-up window (substantial
+  doubt, restructuring advisor, restructuring support agreement,
+  debtor-in-possession financing ×2 form-groups, auditor resignation)
+  never successfully completed against live SEC EDGAR — a future run
+  could pick these up.
+- The historical AI-review pass over Milestone 7.5.3's deferred bundles
+  remains separate, still-deferred, not authorized by this pass.
+- Milestone 7.5.4/7.6/Milestone 8 explicitly not to begin.
+
+**Approximate Time Spent**
+
+~4 hours (production database investigation, watermark-gap diagnosis,
+3 catch-up run attempts with a live reliability fix applied mid-session,
+3 delta labeling attempts, Morning Brief root-cause investigation with
+a real-data spot-check before any fix, the classification fix itself
+across 4 files, 20 new tests, DST-safe scheduler wrapper design and
+implementation, full verification pass, documentation).

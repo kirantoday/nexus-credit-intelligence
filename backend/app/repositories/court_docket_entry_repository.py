@@ -6,7 +6,7 @@ repository conventions (function-style, domain objects only, flush-not-commit).
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -99,9 +99,32 @@ def count_entries_created_since(db: Session, since: datetime | None) -> int:
     """Counts by `created_at` (when Nexus ingested the entry), not
     `entry_date` (the real-world docket event date) — see
     `sec_filing_repository.count_filings_created_since` for the same
-    discovery-time-vs-event-time distinction, applied here for the Morning
-    Research Brief's "New Court Events" metric."""
+    discovery-time-vs-event-time distinction. Not used by the Morning
+    Research Brief's `RunDetails` as of PLAN.md Milestone 7.5.2's
+    business-day-cycle correction — see `count_entries_by_entry_date_between`
+    for the event-date metric that replaced it there."""
     stmt = select(func.count()).select_from(CourtDocketEntryModel)
     if since is not None:
         stmt = stmt.where(CourtDocketEntryModel.created_at >= since)
+    return db.execute(stmt).scalar_one()
+
+
+def count_entries_by_entry_date_between(
+    db: Session, start_exclusive: date, end_inclusive: date
+) -> int:
+    """Counts by `entry_date` (the real-world docket event date, nullable —
+    a real, honestly-represented data gap, never coerced to a fake date) in
+    `(start_exclusive, end_inclusive]` — the Morning Research Brief's "New
+    Court Events" metric (PLAN.md Milestone 7.5.2's business-day-cycle
+    correction), scoped to the current research cycle regardless of which
+    pipeline run or mode ingested the row."""
+    stmt = (
+        select(func.count())
+        .select_from(CourtDocketEntryModel)
+        .where(
+            CourtDocketEntryModel.entry_date.is_not(None),
+            CourtDocketEntryModel.entry_date > start_exclusive,
+            CourtDocketEntryModel.entry_date <= end_inclusive,
+        )
+    )
     return db.execute(stmt).scalar_one()

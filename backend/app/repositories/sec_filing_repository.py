@@ -96,13 +96,38 @@ def list_filings_since(
 
 def count_filings_created_since(db: Session, since: datetime | None) -> int:
     """Counts by `created_at` (when Nexus discovered/persisted the filing),
-    not `filing_date` (the real-world event date) — PLAN.md Milestone 7.5
-    section 17's provider-aware Morning Research Brief asks "what changed
-    since last successful run," which is a discovery-time question, not an
-    event-time one (a historical backfill filing from January discovered
-    today is genuinely new *to Nexus* today, even though it isn't a new
-    real-world event)."""
+    not `filing_date` (the real-world event date) — a genuinely different,
+    still-valid "how much did the last pipeline run itself discover"
+    question. Not used by the Morning Research Brief's `RunDetails` as of
+    PLAN.md Milestone 7.5.2's business-day-cycle correction — see
+    `count_filings_by_filing_date_between` for the event-date metric that
+    replaced it there (a historical backfill filing from January discovered
+    today is genuinely new *to Nexus* today, but is not "new" to the
+    current research cycle, which is what the Brief actually asks)."""
     stmt = select(func.count()).select_from(SecFilingModel)
     if since is not None:
         stmt = stmt.where(SecFilingModel.created_at >= since)
+    return db.execute(stmt).scalar_one()
+
+
+def count_filings_by_filing_date_between(
+    db: Session, start_exclusive: date, end_inclusive: date
+) -> int:
+    """Counts by `filing_date` (the real-world event date) in
+    `(start_exclusive, end_inclusive]` — the Morning Research Brief's
+    "New SEC Filings" metric (PLAN.md Milestone 7.5.2's business-day-cycle
+    correction), scoped to the current research cycle regardless of which
+    pipeline run or mode (`delta` vs. an explicit `backfill` window used to
+    correct a watermark gap) actually ingested the row. Never conflated
+    with `count_filings_created_since` (discovery-time), which answers a
+    different question and is left unchanged for any caller that still
+    needs it."""
+    stmt = (
+        select(func.count())
+        .select_from(SecFilingModel)
+        .where(
+            SecFilingModel.filing_date > start_exclusive,
+            SecFilingModel.filing_date <= end_inclusive,
+        )
+    )
     return db.execute(stmt).scalar_one()
