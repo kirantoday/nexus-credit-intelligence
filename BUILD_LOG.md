@@ -6911,7 +6911,7 @@ decision being made, not a new architectural decision.
 
 **Commit Hash**
 
-(pending — see PLAN.md for the same placeholder, filled in once committed)
+`b0c14eb`
 
 **Approximate Time Spent**
 
