@@ -25,6 +25,7 @@ from app.domain.research import (
     ResearchNoteVersion,
     ResearchNoteVersionCreate,
 )
+from app.models.issuer import Issuer as IssuerModel
 from app.models.research import ResearchNote as ResearchNoteModel
 from app.models.research import ResearchNoteVersion as ResearchNoteVersionModel
 
@@ -139,6 +140,35 @@ def list_notes_by_issuer(
     stmt = stmt.order_by(ResearchNoteModel.updated_at.desc())
     rows = db.execute(stmt).scalars().all()
     return [_note_to_domain(row) for row in rows]
+
+
+def list_notes(
+    db: Session, *, issuer_id: UUID | None = None, include_archived: bool = False
+) -> list[tuple[ResearchNote, str, str | None]]:
+    """Cross-issuer (or, with `issuer_id`, single-issuer) note listing with
+    joined issuer display fields — backs the Research Notes workspace page
+    (PLAN.md row 9 slice, workspace-discoverability follow-up).
+
+    Additive alongside `list_notes_by_issuer`: that function is unchanged
+    and still backs `research_note_service.list_notes_for_issuer`
+    (in turn used by `app.scripts.seed_demo_research_note` and unaffected
+    by this addition). When `issuer_id` is supplied here, the filter/
+    archive/ordering logic is identical to `list_notes_by_issuer`'s, so
+    the issuer-scoped API response is unchanged except for the two new
+    additive fields.
+    """
+    stmt = select(ResearchNoteModel, IssuerModel.legal_name, IssuerModel.ticker).join(
+        IssuerModel, ResearchNoteModel.issuer_id == IssuerModel.id
+    )
+    if issuer_id is not None:
+        stmt = stmt.where(ResearchNoteModel.issuer_id == issuer_id)
+    if not include_archived:
+        stmt = stmt.where(ResearchNoteModel.is_archived.is_(False))
+    stmt = stmt.order_by(ResearchNoteModel.updated_at.desc())
+    rows = db.execute(stmt).all()
+    return [
+        (_note_to_domain(note_row), legal_name, ticker) for note_row, legal_name, ticker in rows
+    ]
 
 
 def apply_note_fields(

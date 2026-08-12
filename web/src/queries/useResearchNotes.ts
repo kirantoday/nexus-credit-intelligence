@@ -20,6 +20,16 @@ export function useResearchNotes(issuerId: string | undefined, includeArchived =
   });
 }
 
+/** Cross-issuer listing for the Research Notes workspace page —
+ * `useResearchNotes` above is unchanged and still backs Issuer Detail's
+ * own issuer-scoped notes section. */
+export function useAllResearchNotes(includeArchived = false) {
+  return useQuery({
+    queryKey: ["research-notes", "all", includeArchived],
+    queryFn: () => fetchResearchNotes(undefined, includeArchived),
+  });
+}
+
 export function useResearchNote(noteId: string | undefined) {
   return useQuery({
     queryKey: ["research-note", noteId],

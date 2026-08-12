@@ -36,11 +36,11 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Morning Research Brief", path: "/research-brief", enabled: true },
   { label: "Watchlists", path: "/watchlists", enabled: true },
   { label: "Alerts", path: "/alerts", enabled: true },
+  { label: "Research Notes", path: "/research-notes", enabled: true },
+  { label: "Search", path: "/search", enabled: true },
   { label: "About Nexus", path: "/about", enabled: true },
   { label: "Dashboard", path: "/dashboard", enabled: false },
   { label: "Capital Structure", path: "/capital-structure", enabled: false },
-  { label: "Search", path: "/search", enabled: true },
-  { label: "Research Workspace", path: "/research", enabled: false },
   { label: "Research Assistant", path: "/assistant", enabled: false },
 ];
 

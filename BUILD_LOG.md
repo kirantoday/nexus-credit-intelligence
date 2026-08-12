@@ -6993,3 +6993,94 @@ work (`fbf5da4`, `707f4b0`, `b0c14eb`, `4840634`), not new code.
 probing on both Railway and Vercel, Supabase migration-state check; the
 push itself; post-push verification via live backend endpoints and a
 live browser walkthrough on the actual production URL).
+
+---
+
+## 2026-08-12 — Research Notes workspace: cross-issuer discoverability (extension of Milestone 10A)
+
+**Summary**
+
+After Milestones 10A/12 went live, the user found Research Notes had no
+entry point in the left navigation — the only way to reach a note was
+Credit Universe → an issuer → scroll to "Analyst Research Notes." An
+inspection (requested and performed before any code) confirmed: no
+`/research-notes` (bare) route existed; the only nav item that looked
+related (`Research Workspace` → `/research`) was a stale, disabled
+pre-10A placeholder pointing at a route that was never built;
+`GET /api/research-notes` required `issuer_id`, so no cross-issuer
+listing was possible at any layer (repository, service, or API); and
+`ResearchNoteResponse` carried no issuer display fields, so even a naive
+cross-issuer list would have shown bare UUIDs. Per explicit instruction,
+this was reported and approval obtained before writing any code — no new
+domain model, table, or parallel architecture was created; this is
+strictly additive to the existing `research_note`/`research_note_version`/
+`audit_event` model and `research_note_service`.
+
+**Backend** (no migration): `GET /api/research-notes`'s `issuer_id` query
+param changed from required to optional — omitted means cross-issuer;
+supplied means byte-for-byte the same behavior as before (same filter,
+same `updated_at DESC` ordering, same default archive exclusion). New
+additive-only pieces, with nothing existing modified or removed:
+`research_repository.list_notes` (joins `issuer` for
+`legal_name`/`ticker`, handles both scoped and unscoped cases),
+`research_note_service.list_notes` (thin passthrough),
+`schemas.ResearchNoteSummary` (`ResearchNoteResponse` plus
+`issuer_legal_name`/`issuer_ticker` — used only by the list response; the
+single-note GET/create/update/archive endpoints are untouched).
+`list_notes_by_issuer`/`list_notes_for_issuer` (the original functions)
+are unchanged and still back `app.scripts.seed_demo_research_note`'s
+idempotency check and Issuer Detail's own notes section, verified by
+running the pre-existing tests unmodified.
+
+**Frontend**: new `ResearchNotesWorkspacePage.tsx` (`/research-notes`) —
+an index over every issuer's notes (title, issuer legal name, ticker,
+thesis status, conviction, updated date), each title linking to the
+existing `ResearchNotePage` and each issuer name linking to `IssuerPage`.
+Deliberately not an editor and not a dashboard — no create action, no
+filtering/sorting/pagination infrastructure, matching the explicit
+"keep the first version simple" instruction (only two real notes exist
+in production today). The stale `Research Workspace → /research` nav
+item was replaced with `Research Notes → /research-notes`, enabled, and
+positioned per the requested order: Credit Universe, Research Universes,
+Morning Research Brief, Watchlists, Alerts, **Research Notes**, Search,
+About Nexus.
+
+**Tests**: 8 new backend tests (4 integration proving issuer-scoped
+parity with the original function, cross-issuer results, cross-issuer
+archive filtering, and issuer display field population; 4 route-level
+`TestClient` tests including an invalid-`issuer_id` 422 check). 8 new
+frontend tests (`ResearchNotesWorkspacePage`: loading/error/empty/
+populated states, note-link and issuer-link navigation targets,
+confirmation the fetch omits `issuer_id`) plus 3 updated/added `Layout`
+tests reflecting the new nav order and a dedicated mobile-drawer
+Research Notes test. Existing `ResearchNotesSection.test.tsx` updated
+only to type its mock data as the new (structurally superset)
+`ResearchNoteSummary` shape — no behavioral assertion changed.
+
+**Full suite results**: 537 + 8 = 545 backend tests, 190/190 frontend
+tests (25 files). `ruff`/`black`/`mypy` clean; `eslint`/`prettier`/`tsc`
+clean; both production builds succeed.
+
+**Regression verification**: live-checked locally — Issuer Detail's
+"Analyst Research Notes" section, version history, and the demo note's
+content all rendered unchanged after this change; the workspace page
+correctly showed both the seeded Demo Research Note *and* a real note
+the user had created live in production during their own verification
+of Milestone 10A, confirming the cross-issuer query reads real
+production data correctly, not a fixture.
+
+**Deployment discipline** (explicit, staged, per direct instruction not
+to repeat the earlier commit-without-push gap): implemented locally →
+tests passed locally → committed locally → pushed to `origin/main` →
+remote `HEAD` confirmed → Railway redeployed → Vercel redeployed → both
+verified live. Full stage-by-stage record, including commit hash and
+live verification output, in the same day's conversation record; this
+entry is written before any of those later stages to keep the "what was
+built" narrative separate from "what shipped," consistent with the
+KI-003 lesson above.
+
+**AI cost**: zero Anthropic calls — this change touches only
+`research_note` listing/display, no AI code path exists anywhere near it.
+
+**Technical debt**: none new. No migration, no schema change, no new
+domain concept.

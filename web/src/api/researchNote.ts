@@ -42,8 +42,18 @@ export interface ResearchNote {
   updated_at: string;
 }
 
+/** A `ResearchNote` plus issuer display fields — only `GET
+ * /api/research-notes`'s list response includes these (Research Notes
+ * workspace, cross-issuer listing follow-up to Milestone 10A). The
+ * single-note fetch/create/update/archive calls keep returning a plain
+ * `ResearchNote`. */
+export interface ResearchNoteSummary extends ResearchNote {
+  issuer_legal_name: string;
+  issuer_ticker: string | null;
+}
+
 export interface ResearchNoteListResponse {
-  notes: ResearchNote[];
+  notes: ResearchNoteSummary[];
 }
 
 export interface ResearchNoteVersion {
@@ -110,13 +120,18 @@ export interface ResearchNoteUpdateInput extends ResearchNoteFieldsInput {
   edited_by?: string | null;
 }
 
+/** `issuerId` omitted fetches across every issuer (Research Notes
+ * workspace) — passing a real issuer id behaves exactly as before
+ * (Issuer Detail's own "Analyst Research Notes" section). */
 export async function fetchResearchNotes(
-  issuerId: string,
+  issuerId?: string,
   includeArchived = false,
 ): Promise<ResearchNoteListResponse> {
-  const params = new URLSearchParams({ issuer_id: issuerId });
+  const params = new URLSearchParams();
+  if (issuerId) params.set("issuer_id", issuerId);
   if (includeArchived) params.set("include_archived", "true");
-  return apiFetch<ResearchNoteListResponse>(`/api/research-notes?${params.toString()}`);
+  const query = params.toString();
+  return apiFetch<ResearchNoteListResponse>(`/api/research-notes${query ? `?${query}` : ""}`);
 }
 
 export async function fetchResearchNote(noteId: string): Promise<ResearchNote> {

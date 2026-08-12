@@ -21,6 +21,7 @@ from app.schemas.research import (
     ResearchNoteCreateRequest,
     ResearchNoteListResponse,
     ResearchNoteResponse,
+    ResearchNoteSummary,
     ResearchNoteUpdateRequest,
     ResearchNoteVersionListResponse,
     ResearchNoteVersionResponse,
@@ -34,13 +35,21 @@ router = APIRouter(prefix="/api/research-notes", tags=["research-notes"])
 @router.get("", response_model=ResearchNoteListResponse)
 def list_notes(
     db: Annotated[Session, Depends(get_db)],
-    issuer_id: UUID,
+    issuer_id: UUID | None = None,
     include_archived: bool = False,
 ) -> ResearchNoteListResponse:
-    notes = research_note_service.list_notes_for_issuer(
-        db, issuer_id, include_archived=include_archived
+    """`issuer_id` is optional (Research Notes workspace, cross-issuer
+    listing) — when supplied, filtering/ordering/archive behavior is
+    identical to the original issuer-scoped-only version of this route."""
+    notes = research_note_service.list_notes(
+        db, issuer_id=issuer_id, include_archived=include_archived
     )
-    return ResearchNoteListResponse(notes=[ResearchNoteResponse.from_domain(n) for n in notes])
+    return ResearchNoteListResponse(
+        notes=[
+            ResearchNoteSummary.from_domain_with_issuer(note, legal_name, ticker)
+            for note, legal_name, ticker in notes
+        ]
+    )
 
 
 @router.post("", response_model=ResearchNoteResponse, status_code=status.HTTP_201_CREATED)

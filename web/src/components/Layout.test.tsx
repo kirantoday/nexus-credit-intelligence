@@ -37,6 +37,7 @@ function renderLayout(initialPath = "/"): void {
           <Route element={<Layout />}>
             <Route path="/" element={<div>page content</div>} />
             <Route path="/about" element={<div>about page content</div>} />
+            <Route path="/research-notes" element={<div>research notes page content</div>} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -69,14 +70,39 @@ describe("Layout", () => {
     expect(screen.getByRole("link", { name: "Alerts" })).toHaveAttribute("href", "/alerts");
   });
 
-  it("shows an 'About Nexus' navigation item positioned after Alerts", () => {
+  it("shows a 'Research Notes' navigation item positioned after Alerts", () => {
+    renderLayout();
+
+    const links = screen.getAllByRole("link");
+    const labels = links.map((link) => link.textContent);
+
+    expect(labels).toContain("Research Notes");
+    expect(labels.indexOf("Research Notes")).toBe(labels.indexOf("Alerts") + 1);
+
+    expect(screen.getByRole("link", { name: "Research Notes" })).toHaveAttribute(
+      "href",
+      "/research-notes",
+    );
+  });
+
+  it("shows a 'Search' navigation item positioned after Research Notes", () => {
+    renderLayout();
+
+    const links = screen.getAllByRole("link");
+    const labels = links.map((link) => link.textContent);
+
+    expect(labels.indexOf("Search")).toBe(labels.indexOf("Research Notes") + 1);
+    expect(screen.getByRole("link", { name: "Search" })).toHaveAttribute("href", "/search");
+  });
+
+  it("shows an 'About Nexus' navigation item positioned last, after Search", () => {
     renderLayout();
 
     const links = screen.getAllByRole("link");
     const labels = links.map((link) => link.textContent);
 
     expect(labels).toContain("About Nexus");
-    expect(labels.indexOf("About Nexus")).toBe(labels.indexOf("Alerts") + 1);
+    expect(labels.indexOf("About Nexus")).toBe(labels.indexOf("Search") + 1);
 
     expect(screen.getByRole("link", { name: "About Nexus" })).toHaveAttribute("href", "/about");
   });
@@ -87,16 +113,6 @@ describe("Layout", () => {
     expect(screen.queryByText("Research Workspace")).not.toBeInTheDocument();
     expect(screen.queryByText("Research Assistant")).not.toBeInTheDocument();
     expect(screen.queryByText("Dashboard")).not.toBeInTheDocument();
-  });
-
-  it("shows a 'Search' navigation item positioned after About Nexus (Milestone 12A)", () => {
-    renderLayout();
-
-    const links = screen.getAllByRole("link");
-    const labels = links.map((link) => link.textContent);
-
-    expect(labels.indexOf("Search")).toBe(labels.indexOf("About Nexus") + 1);
-    expect(screen.getByRole("link", { name: "Search" })).toHaveAttribute("href", "/search");
   });
 
   it("renders the GlobalSearch input in the header", () => {
@@ -141,6 +157,21 @@ describe("Layout", () => {
       await user.click(within(dialog).getByRole("link", { name: "About Nexus" }));
 
       expect(screen.getByText("about page content")).toBeInTheDocument();
+    });
+
+    it("shows and navigates to Research Notes from the mobile drawer", async () => {
+      mockMobileViewport();
+      const user = userEvent.setup();
+      renderLayout();
+
+      await user.click(screen.getByRole("button", { name: /open navigation menu/i }));
+      const dialog = screen.getByRole("presentation");
+      const researchNotesLink = within(dialog).getByRole("link", { name: "Research Notes" });
+      expect(researchNotesLink).toHaveAttribute("href", "/research-notes");
+
+      await user.click(researchNotesLink);
+
+      expect(screen.getByText("research notes page content")).toBeInTheDocument();
     });
   });
 });

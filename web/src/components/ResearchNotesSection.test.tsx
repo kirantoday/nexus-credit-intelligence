@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import { ResearchNotesSection } from "./ResearchNotesSection";
 import * as researchNoteApi from "../api/researchNote";
-import type { ResearchNote, ResearchNoteListResponse } from "../api/researchNote";
+import type { ResearchNoteListResponse, ResearchNoteSummary } from "../api/researchNote";
 
 function renderWithProviders(issuerId = "issuer-1"): void {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -19,7 +19,7 @@ function renderWithProviders(issuerId = "issuer-1"): void {
   render(<ResearchNotesSection issuerId={issuerId} />, { wrapper: Wrapper });
 }
 
-function makeNote(overrides: Partial<ResearchNote> = {}): ResearchNote {
+function makeNote(overrides: Partial<ResearchNoteSummary> = {}): ResearchNoteSummary {
   return {
     id: "note-1",
     issuer_id: "issuer-1",
@@ -43,6 +43,8 @@ function makeNote(overrides: Partial<ResearchNote> = {}): ResearchNote {
     archived_by: null,
     created_at: "2026-08-01T00:00:00Z",
     updated_at: "2026-08-01T00:00:00Z",
+    issuer_legal_name: "Trinseo PLC",
+    issuer_ticker: "TSEOQ",
     ...overrides,
   };
 }

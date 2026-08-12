@@ -191,10 +191,32 @@ class ResearchNoteResponse(BaseModel):
         )
 
 
+class ResearchNoteSummary(ResearchNoteResponse):
+    """A `ResearchNoteResponse` plus the issuer display fields the
+    Research Notes workspace needs to show cross-issuer context without a
+    UUID-only view. Only `GET /api/research-notes`' list response uses
+    this — the single-note GET/create/update/archive endpoints keep
+    returning a plain `ResearchNoteResponse`, unchanged."""
+
+    model_config = ConfigDict(frozen=True)
+
+    issuer_legal_name: str
+    issuer_ticker: str | None
+
+    @staticmethod
+    def from_domain_with_issuer(
+        note: ResearchNote, issuer_legal_name: str, issuer_ticker: str | None
+    ) -> ResearchNoteSummary:
+        base = ResearchNoteResponse.from_domain(note)
+        return ResearchNoteSummary(
+            **base.model_dump(), issuer_legal_name=issuer_legal_name, issuer_ticker=issuer_ticker
+        )
+
+
 class ResearchNoteListResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    notes: list[ResearchNoteResponse]
+    notes: list[ResearchNoteSummary]
 
 
 class ResearchNoteVersionResponse(BaseModel):

@@ -9,6 +9,7 @@ import { MorningResearchBriefPage } from "./pages/MorningResearchBriefPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { ResearchNoteEditorPage } from "./pages/ResearchNoteEditorPage";
 import { ResearchNotePage } from "./pages/ResearchNotePage";
+import { ResearchNotesWorkspacePage } from "./pages/ResearchNotesWorkspacePage";
 import { ResearchUniversesPage } from "./pages/ResearchUniversesPage";
 import { SearchPage } from "./pages/SearchPage";
 import { WatchlistDetailPage } from "./pages/WatchlistDetailPage";
@@ -21,6 +22,7 @@ export function App(): ReactElement {
         <Route path="/" element={<CreditUniversePage />} />
         <Route path="/issuers/:issuerId" element={<IssuerPage />} />
         <Route path="/issuers/:issuerId/research-notes/new" element={<ResearchNoteEditorPage />} />
+        <Route path="/research-notes" element={<ResearchNotesWorkspacePage />} />
         <Route path="/research-notes/:noteId" element={<ResearchNotePage />} />
         <Route path="/research-notes/:noteId/edit" element={<ResearchNoteEditorPage />} />
         <Route path="/research-universes" element={<ResearchUniversesPage />} />

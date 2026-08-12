@@ -126,6 +126,18 @@ def list_notes_for_issuer(
     )
 
 
+def list_notes(
+    db: Session, *, issuer_id: UUID | None = None, include_archived: bool = False
+) -> list[tuple[ResearchNote, str, str | None]]:
+    """Thin passthrough backing `GET /api/research-notes` — the Research
+    Notes workspace's cross-issuer listing, with the same issuer-scoped
+    behavior as `list_notes_for_issuer` when `issuer_id` is supplied.
+    Returns `(note, issuer_legal_name, issuer_ticker)` tuples."""
+    return research_repository.list_notes(
+        db, issuer_id=issuer_id, include_archived=include_archived
+    )
+
+
 def update_note(db: Session, note_id: UUID, data: ResearchNoteUpdate) -> ResearchNote | None:
     """Returns `None` if the note doesn't exist. Raises
     `ResearchNoteArchivedError` if it exists but is archived. Returns the
