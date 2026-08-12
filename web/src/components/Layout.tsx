@@ -12,6 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import MenuIcon from "@mui/icons-material/Menu";
+import { GlobalSearch } from "./GlobalSearch";
 import { useIsMobile } from "../lib/useIsMobile";
 
 const DRAWER_WIDTH = 260;
@@ -38,7 +39,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "About Nexus", path: "/about", enabled: true },
   { label: "Dashboard", path: "/dashboard", enabled: false },
   { label: "Capital Structure", path: "/capital-structure", enabled: false },
-  { label: "Search", path: "/search", enabled: false },
+  { label: "Search", path: "/search", enabled: true },
   { label: "Research Workspace", path: "/research", enabled: false },
   { label: "Research Assistant", path: "/assistant", enabled: false },
 ];
@@ -79,9 +80,11 @@ export function Layout(): ReactElement {
           >
             <MenuIcon />
           </IconButton>
-          <Typography variant="h6" noWrap component="div">
+          <Typography variant="h6" noWrap component="div" sx={{ mr: 3 }}>
             Nexus Credit Intelligence
           </Typography>
+          <Box sx={{ flexGrow: 1 }} />
+          <GlobalSearch />
         </Toolbar>
       </AppBar>
       <Drawer

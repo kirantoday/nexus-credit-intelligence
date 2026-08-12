@@ -6763,3 +6763,161 @@ the precedent set by Milestone 9/Alerts and Milestone 8/Watchlists.
 service/schemas/routes/migration, frontend section/pages/routes, the
 live-caught `clock_timestamp()` ordering fix, full test/lint/type/build/
 migration suite, live browser production walkthrough, documentation).
+
+---
+
+## 2026-08-12 — Milestone 12: Universal Search (12A backend + 12B frontend)
+
+**Summary**
+
+PLAN.md §4.13 ("Search infrastructure") and §8 ("Universal Search"),
+built in two staged sub-phases per explicit user direction, mirroring the
+10A/10B staging pattern. A full architecture-and-product-design review
+(what PLAN.md already specified, existing search/filter functionality,
+realistic search targets per table, existing Postgres extensions,
+recommended MVP scope/architecture/ranking/API/UX, permissions posture,
+whether Research Note versions should be searchable, expected migration
+changes, testing/performance considerations, and a staged milestone
+breakdown) was delivered and explicitly approved before any code was
+written — no ADR/schema conflict was found. Full design record in
+PLAN.md §24.13; this entry summarizes what was built, the one real bug
+found and fixed, and verification.
+
+**Approved design decisions carried into implementation**
+
+- Searchable: `issuer`, `security`, `alert_event`, `court_docket`,
+  `court_docket_entry` (approved for inclusion — real free text like "DIP
+  financing," "automatic stay," "confirmation hearing"), `collection`
+  (Research Universes/Watchlists/Benchmarks), `research_note` (current
+  content only), and a deliberately thin `sec_filing` metadata search
+  (`form_type` only in the fuzzy tier; exact `accession_no` via Tier 0).
+- Excluded: `research_evidence`, `research_note_version`, `audit_event`,
+  `docket_document` (until real searchable content exists), all of 10B.
+- Database architecture: per-table generated `tsvector` columns + GIN
+  indexes, not a centralized `search_document` table — resolves TD-003.
+  `pg_trgm` used selectively (`issuer.legal_name`/`security.description`
+  only), never indiscriminately.
+- Ranking: Tier 0 exact identifiers never blended with fuzzy results;
+  Tier 1 issuer/security prefix match; Tier 2 weighted `ts_rank_cd` full-
+  text search; Tier 3 `pg_trgm` fallback. No new severity scale invented;
+  existing "new alert"/"new development" semantics untouched.
+- Frontend: `GlobalSearch` AppBar typeahead (300ms debounce, grouped,
+  keyboard nav, "See all results") + `/search`; simpler mobile
+  interaction (icon → full-screen dialog) instead of a desktop dropdown.
+- Result limits: typeahead 5/group, `/search` 10/group; no independently
+  paginated second search subsystem — "see all" reuses Credit Universe's
+  own `q` filter where a real destination exists.
+- `AUTH_ENABLED=false` unchanged; no access-control enforcement added for
+  Universal Search (preserves the existing TD-025 posture).
+
+**What was built**
+
+- Backend: `core/types.py` (`SearchEntityType`), seven ORM models gained
+  a generated `search_vector` `tsvector` column + GIN index (`issuer`,
+  `security`, `alert_event`, `court_docket`, `court_docket_entry`,
+  `collection`, `research_note` — never `research_note_version`), plus a
+  plain btree index on `court_docket.docket_number` and two `pg_trgm` GIN
+  indexes. Migration `0016` applied live. `repositories/
+  search_repository.py` (exact-match + per-entity-type prefix/FTS/
+  trigram queries, returning an internal `SearchHit`), `services/
+  search_service.py` (fixed issuer-first group ordering, exact-match
+  dedup against groups), `schemas/search.py`, `api/routes/search.py`
+  (`GET /api/search?q=&limit=`), registered in `main.py`.
+- Frontend: `api/search.ts`, `queries/useSearch.ts`, `lib/searchResult.ts`
+  (shared route/label resolution so `GlobalSearch` and `SearchPage` never
+  disagree on where a result navigates), `components/GlobalSearch.tsx`
+  (desktop dropdown + mobile full-screen dialog), `pages/SearchPage.tsx`.
+  Wired into `Layout.tsx`'s `AppBar` and the existing (previously
+  disabled) `Search` nav item; new `/search` route in `App.tsx`.
+
+**A real bug was found and fixed before the first commit**
+
+The first migration attempt failed live: `research_note`'s generated
+column used `concat_ws` to join six case fields, and Postgres declares
+`concat_ws` `STABLE`, not `IMMUTABLE` (it accepts variadic `any`
+arguments, so its output could in principle depend on session settings
+for non-text types) — `GENERATED ALWAYS AS ... STORED` requires an
+immutable expression and rejected it with `generation expression is not
+immutable`. Postgres DDL is transactional, so the failed `ALTER TABLE`
+rolled back cleanly with zero partial state (`alembic current` stayed at
+`0015`, confirmed live before retrying). Fixed by replacing `concat_ws`
+with plain `||` concatenation (immutable for `text`); migration
+regenerated and re-applied successfully, `alembic check` confirmed zero
+drift.
+
+A second, smaller precision issue was caught during manual live testing
+(not by a failing test): the thin `sec_filing` grouped-tier search
+initially substring-matched `accession_no` as well as `form_type` — a
+bare numeric query (e.g. a 4-digit maturity year) was incidentally
+matching inside unrelated 20-digit accession numbers. Fixed by dropping
+`accession_no` from that tier entirely (exact `accession_no` matching
+already lives in Tier 0, where it belongs).
+
+**Verification**
+
+- 537/537 backend tests pass (24 new: 5 unit for pure helpers, 14
+  integration against the live `nexus` schema using deliberately
+  distinctive "Zylospan"-style fixture data — not real terms like
+  "Chapter 11" — to keep assertions hermetic against tens of thousands of
+  real production rows, 5 route-level `TestClient` tests including one
+  that locks in the full excluded-entity-type set through a real HTTP
+  response).
+- 181/181 frontend tests pass (17 new: 8 `GlobalSearch`, 7 `SearchPage`,
+  2 `Layout` updates — the existing `Layout.test.tsx` needed a
+  `QueryClientProvider` wrapper added, since `GlobalSearch`'s `useQuery`
+  call now requires one, and its "does not show not-yet-built nav items"
+  assertion needed updating now that `Search` is real).
+- `ruff`/`black`/`mypy` clean on backend; `eslint`/`prettier`/`tsc` clean
+  on frontend; both production builds succeed.
+- `alembic upgrade head` applied live against the shared Supabase
+  project, outside the 10 PM ET nightly-ingestion window as planned;
+  `alembic check` confirms zero drift, both after the corrected migration
+  and again after full 12A/12B completion.
+- Full live production walkthrough: backend + frontend both boot cleanly;
+  desktop typeahead shows grouped dropdown results with working
+  ArrowDown+Enter keyboard navigation to Trinseo PLC; `/search?q=going
+  concern` renders real cross-entity results (Distress Development,
+  Research Universe "System-Detected: Going Concern," Research Note);
+  exact CIK lookup (`0001519061`) correctly tagged "Exact Matches"; a
+  live "confirmation hearing" query surfaced a real Diebold Nixdorf
+  docket entry and navigated correctly to the linked issuer page — never
+  a disconnected result. Live browser window resize did not reliably
+  reflect in this environment's screenshot capture, so mobile behavior
+  was verified through the automated test suite's established
+  `mockMobileViewport()` pattern instead of a live resized window.
+- Regression-checked: Watchlists and Alerts Center both render unchanged
+  (spot-checked live); nothing in the nightly scheduler, SEC/
+  CourtListener/OpenFIGI/FRED ingestion, AI routing, Morning Research
+  Brief, Research Universes, Distress Timeline, or Research Notes/
+  versioning/audit behavior was touched — this milestone is purely
+  additive.
+
+**AI cost**
+
+Zero Anthropic calls — confirmed by inspection (no `app.ai` import
+anywhere in the new/changed files) and by `ai_call_log`'s unchanged row
+count before/after. Universal Search requires no LLM for normal queries.
+
+**Technical debt**
+
+TD-003 resolved by this milestone (see PLAN.md Technical Debt table). No
+new technical debt recorded — both real bugs found during implementation
+were fixed before commit, not deferred.
+
+**No ADR was written** — PLAN.md §4.13 already explicitly deferred this
+exact implementation decision ("Decision deferred to implementation...
+§16 build order step 12") to this milestone; this is that deferred
+decision being made, not a new architectural decision.
+
+**Commit Hash**
+
+(pending — see PLAN.md for the same placeholder, filled in once committed)
+
+**Approximate Time Spent**
+
+~5 hours (architecture/product-design review and report, backend schema/
+repository/service/route implementation, the live-caught `concat_ws`
+immutability fix, backend test suite, frontend component/page/routing
+implementation, the live-caught `accession_no` noise fix, frontend test
+suite, full test/lint/type/build/migration verification, live browser
+production walkthrough, documentation).

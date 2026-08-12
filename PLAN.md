@@ -69,13 +69,13 @@ the milestone-by-milestone stop-and-wait workflow.
 
 | Field | Value |
 |---|---|
-| **Overall Progress** | ~59% — Milestones 1–8, 6.5, 7.5, 7.5.1, 7.5.2, 7.5.3, 9 (Alerts), 15 complete; Milestone 9/row 9 (Research Notes/Documents) split — 10A (Research Notes + Audit Trail) complete, 10B (Documents/Storage) not started, awaiting separate approval |
-| **Current Milestone** | Milestone 10A (Research Notes + Audit Trail) — complete. 10B (Research Documents + Supabase Storage) explicitly deferred, awaiting separate approval; Universal Search also not started |
-| **Current Status** | Milestone 10A implements PLAN.md row 9's Research Notes half only, per explicit user direction to split the original "Research notes/documents + audit events" milestone into two controlled sub-phases. `research_note`/`research_note_version` (full-snapshot-per-edit versioning, "Version 1 → Version 2 → Version 3" all independently renderable) + `audit_event` (the app's first audited-write path) shipped, migrated (`0015`), and verified live against the shared `nexus` schema. No `user`/`role`/`user_role` tables built — genuinely no 10A functional need; `AUTH_ENABLED=false` unchanged; identity fields (`author_user_id`, `edited_by`, `audit_event.user_id`) are nullable `text`, mirroring `collection.owner_user_id`'s Milestone 8 precedent, never fabricated per-user ownership. Issuer Detail gained an "Analyst Research Notes" section beneath the Distress Timeline, a create/edit form, a note detail page with clickable version history and an audit trail panel. A real, idempotently-seeded Demo Research Note on Trinseo PLC (3 real dated versions citing real `alert_event` evidence: covenant stress → going concern → Chapter 11) was built through the app's own `research_note_service`, not a bypassing script. A real ordering bug was live-caught and fixed before commit: `occurred_at`/`edited_at` used `now()` (transaction-frozen) rather than `clock_timestamp()` (real per-statement time), which could produce unstable audit/version ordering within one transaction — migration `0015` corrected and re-verified with zero drift. 511/511 backend tests pass (16 new; 2 pre-existing unrelated live-FRED `502`s confirmed transient on retry), 164/164 frontend tests pass (17 new). Zero Anthropic calls. Full live-browser production walkthrough completed. Full detail in §24.12 and `BUILD_LOG.md`. |
+| **Overall Progress** | ~61% — Milestones 1–8, 6.5, 7.5, 7.5.1, 7.5.2, 7.5.3, 9 (Alerts), 10A (Research Notes + Audit Trail), 12 (Universal Search), 15 complete; Milestone 9/row 9 (Research Notes/Documents) split — 10B (Documents/Storage) not started, awaiting separate approval; row 11 (TRACE) not started |
+| **Current Milestone** | Milestone 12 (Universal Search) — complete (both 12A backend and 12B frontend). 10B (Research Documents + Supabase Storage) and row 11 (TRACE) remain not started |
+| **Current Status** | Universal Search implements PLAN.md §4.13/§8, built in two staged sub-phases (12A backend, 12B frontend) per explicit user direction, with a full architecture-and-product-design review completed and approved before any code was written. Per-table generated `tsvector` columns (`GENERATED ALWAYS AS ... STORED`) + GIN indexes added to `issuer`/`security`/`alert_event`/`court_docket`/`court_docket_entry`/`collection`/`research_note` (migration `0016`), resolving TD-003 in favor of no new synced table. `pg_trgm` GIN indexes added narrowly on `issuer.legal_name`/`security.description` for typo tolerance. Deterministic ranking preserved exactly as specified: Tier 0 exact identifiers (CIK/ticker/LEI/CUSIP/ISIN/FIGI/docket number/accession number) never blended with fuzzy results; Tier 1 issuer/security prefix match; Tier 2 `websearch_to_tsquery`/`ts_rank_cd` full-text search; Tier 3 `pg_trgm` similarity fallback. `sec_filing` is a deliberately thin metadata-only search (`form_type` substring, `accession_no` exact via Tier 0 only — never implies filing-content search, since none is stored). `research_evidence`, `research_note_version`, `audit_event`, and `docket_document` are all deliberately excluded, and 10B is untouched. `GlobalSearch` (AppBar typeahead, 300ms debounce, grouped results, full keyboard navigation, "See all results") and `/search` (larger per-group results, reusing Credit Universe's own filter for issuer/security "see all" rather than building a second pagination system) ship in 12B. A real bug was live-caught and fixed before the first commit: `concat_ws` (STABLE, not IMMUTABLE) broke `research_note`'s generated column; fixed with plain `||` concatenation, migration corrected and re-verified with zero drift. Zero Anthropic calls anywhere in this milestone. 537/537 backend tests pass (24 new), 181/181 frontend tests pass (17 new). Full live-browser walkthrough completed, including cross-entity queries ("going concern," "confirmation hearing") and exact-identifier lookup (CIK). Full detail in §24.13 and `BUILD_LOG.md`. |
 | **Last Updated** | 2026-08-12 |
 | **Current Git Branch** | main |
-| **Latest Commit** | `fbf5da4` — Milestone 10A: Research Notes + Audit Trail |
-| **Next Milestone** | 10B (Research Documents + Supabase Storage) and Universal Search both remain not-yet-authorized — neither begins until explicitly approved |
+| **Latest Commit** | (pending — see BUILD_LOG.md for this milestone's commit hash) |
+| **Next Milestone** | 10B (Research Documents + Supabase Storage) and row 11 (TRACE adapter) both remain not-yet-authorized — neither begins until explicitly approved |
 
 ---
 
@@ -104,7 +104,7 @@ milestone completes; it is not itself a log (see `BUILD_LOG.md` for that).
 | 9 | Research notes/documents + audit events | 10A (Research Notes + Audit Trail) Complete; 10B (Documents/Storage) Not Started, awaiting separate approval | 2026-08-12 | `fbf5da4` | Split into two approved sub-phases by explicit user direction — see §24.12 for the full 10A design record. `research_note`/`research_note_version` (full-snapshot-per-edit versioning) + `audit_event` (first audited-write path in the app) live-migrated (`0015`) and verified against the shared `nexus` schema. No `user`/`role`/`user_role` tables built — genuinely no 10A functional need, `AUTH_ENABLED=false` unchanged, identity fields nullable text mirroring `collection.owner_user_id`'s Milestone 8 precedent. A real Demo Research Note (Trinseo PLC, 3 real dated versions: covenant stress → going concern → Chapter 11, all citing real `alert_event` evidence) seeded idempotently via the app's own service. 511/511 backend tests pass (16 new), 164/164 frontend tests pass (17 new). Zero Anthropic calls. 10B (Documents, Supabase Storage, `research_document`) explicitly deferred, not started. |
 | 10 | Alerts (Alerts Center — analyst inbox over existing `alert_event`, not a new rule engine) | Complete | 2026-08-11 | `7c43e3d` | Completed ahead of Milestone 9 (Research notes/documents) by explicit user direction — the incoming brief was explicitly numbered "Milestone 9" by the user even though this row is PLAN.md's original §18 build-order slot for Alerts; row numbers are left as originally assigned rather than renumbered, to avoid invalidating other cross-references in this document. See §24.11 for the full design: reused `alert_event`/`alerts.py`/`alert_repository.py` (already canonical since Milestone 6.5's ADR-018 pipeline, not the `alert_rule`/`alert_engine.py` design originally sketched in §12), zero migration, new `watchlist_id` filter + `/api/alerts/summary` + `/api/alerts/issuers` search, a new `AlertsPage.tsx` analyst-inbox UI, and two live-caught regressions fixed (`universe_names` leaking Watchlist names; incorrect pagination `total` for multi-issuer collection filters — both existed before this milestone but were only reachable once real Watchlists existed). Zero Anthropic calls. 23 new backend tests, 25 new/extended frontend tests. |
 | 11 | TRACE adapter/sample | Not Started | — | — | |
-| 12 | Universal Search | Not Started | — | — | |
+| 12 | Universal Search | Complete (12A backend + 12B frontend) | 2026-08-12 | (pending — see BUILD_LOG.md) | Built as two staged sub-phases per explicit user direction — see §24.13 for the full design record. 12A: per-table generated `tsvector` columns + GIN indexes on `issuer`/`security`/`alert_event`/`court_docket`/`court_docket_entry`/`collection`/`research_note` (migration `0016`, resolving TD-003), `pg_trgm` GIN on `issuer.legal_name`/`security.description`, deterministic exact-match/prefix/FTS/trigram ranking tiers, thin `sec_filing` metadata search. 12B: `GlobalSearch` header typeahead (debounced, grouped, keyboard-navigable) and `/search` results page. Deliberately excludes `research_evidence`, `research_note_version`, `audit_event`, `docket_document`, and all of 10B. Zero Anthropic calls. 537/537 backend tests pass (24 new), 181/181 frontend tests pass (17 new). |
 | 13 | AI Research Assistant + gated embeddings | Not Started | — | — | |
 | 14 | Disabled licensed-provider capability cards | Not Started | — | — | |
 | 15 | Railway/Vercel deployment validation | Completed Early | 2026-08-09 | (verified during Milestone 7.5.2, no dedicated deployment commit — deploy already existed) | Discovered already satisfied while implementing Milestone 7.5.2, not newly deployed by this milestone. Live-verified: `GET https://nexus-credit-intelligence-production.up.railway.app/health` → `200 {"status":"healthy","environment":"production"}`; `GET https://nexus-credit-intelligence.vercel.app/` → `200`; a real `OPTIONS` preflight from the Vercel origin to the Railway API returns `access-control-allow-origin: https://nexus-credit-intelligence.vercel.app` (CORS correctly configured, not just "not blocked"); Alembic migrations applied live via `DIRECT_DATABASE_URL` per KI-001 (closed 2026-08-05). This is roadmap bookkeeping only — no deployment action was taken by this milestone. |
@@ -122,7 +122,7 @@ already made in §1–23; will grow with genuine shortcuts taken during implemen
 |---|---|---|---|---|
 | TD-001 | Domain-layer boundary (providers must not call SQLAlchemy directly, §3) is enforced by code review/directory convention only — no automated import-boundary lint rule | Low | Add an import-linter/ruff rule restricting SQLAlchemy imports outside `repositories/` once core patterns stabilize | Open (deferred by design) |
 | TD-002 | Authentication disabled (`AUTH_ENABLED=false`) for the V1 demo; every request treated as an implicit administrator | Medium | Wire Supabase Auth JWT validation per §13 once the demo audience needs real user/role separation | Open (deferred by design) |
-| TD-003 | Search index storage shape (single `search_document` table vs. per-table `tsvector` columns, §4.13) not yet decided | Low | Decide during build step 12 based on query-performance testing | Open (deferred by design) |
+| TD-003 | ~~Search index storage shape (single `search_document` table vs. per-table `tsvector` columns, §4.13) not yet decided~~ **Resolved in Milestone 12A.** Per-table generated `tsvector` columns (`GENERATED ALWAYS AS ... STORED`) chosen over a synced `search_document` table — Postgres auto-maintains a generated column on every INSERT/UPDATE, so no writer (SEC ingestion, CourtListener sync, `research_note_service`, ...) needs to remember to also write to a second table, and this project has zero triggers anywhere to keep one in sync automatically. See §24.13. | — | `backend/app/repositories/search_repository.py` | **Resolved** (`backend/alembic/versions/0016_universal_search_vectors_and_indexes.py`) |
 | TD-004 | `backend/app/db/session.py` uses synchronous SQLAlchemy (`create_engine`/`sessionmaker`), not an async engine, even though FastAPI/provider adapters are async-capable | Low | Revisit if a provider-heavy milestone (SEC/FRED/CourtListener concurrency) shows the sync DB layer is a real bottleneck; async SQLAlchemy is a drop-in-ish swap behind the repository layer (§3) | Open (pragmatic choice, not a gap) |
 | TD-005 | `data_entitlement.derived_data_permission` exists on the model/domain object (PLAN.md §4.8) but `policy_check` doesn't yet use it — deciding whether a *calculated* value derived from licensed inputs may be treated less restrictively than the raw input requires walking `calculation_input` lineage back to the strictest governing entitlement, which has no real licensed provider to test against yet | Low | Implement once Milestone 14 (disabled licensed-provider capability cards) or a real licensed adapter makes this testable against actual data | Open (deferred by design, ADR-014) |
 | TD-006 | SEC EDGAR company-facts responses (hundreds of us-gaap concepts, several MB for a large filer) are stored inline in `raw_provider_payload.payload_json` (JSONB) rather than Supabase Storage — PLAN.md §4.4 names "SEC JSON" as an example of a *small* inline-appropriate response, but company-facts specifically is not small. `SUPABASE_STORAGE_BUCKET` isn't configured yet (deferred per Milestone 2), so storing large payloads there wasn't an option this milestone; skipping raw-payload persistence entirely was rejected as a correctness violation (breaks "every raw payload must be recoverable") | Medium | Move large provider responses (company-facts JSON, filings, court documents) to Supabase Storage via `storage_object_path` once the bucket is configured (Milestone 9/document milestone, or whenever Storage is first genuinely needed) | Open (deferred by design) |
@@ -606,6 +606,24 @@ was found and fixed, with the migration corrected and re-verified with
 zero drift. This was additive implementation of already-approved
 architecture (§4.10/§4.12), not a new architectural decision, so no ADR
 was written. See §24.12 for the full design record.
+
+**Milestone 12 (Universal Search) is complete**, built in two staged
+sub-phases (12A backend, 12B frontend) after a full architecture-and-
+product-design review that the user explicitly reviewed and approved
+before any code was written — no ADR/schema conflict was found. Per-table
+generated `tsvector` columns (not a new synced `search_document` table)
+resolve TD-003, covering `issuer`/`security`/`alert_event`/`court_docket`/
+`court_docket_entry`/`collection`/`research_note`; `research_evidence`,
+`research_note_version`, `audit_event`, `docket_document`, and all of 10B
+are deliberately excluded. Deterministic ranking only — exact identifiers
+(Tier 0) never blended with prefix/full-text/trigram fuzzy tiers, zero
+Anthropic calls anywhere. A live-caught bug (`concat_ws` is `STABLE`, not
+`IMMUTABLE` — Postgres rejected the original `research_note` generated
+column) was fixed before the first commit, migration re-verified with
+zero drift. `GlobalSearch` (debounced AppBar typeahead, grouped, full
+keyboard navigation) and `/search` ship in 12B, reusing Credit Universe's
+own filter for "see all" rather than building a second pagination system.
+See §24.13 for the full design record.
 
 ---
 
@@ -2555,3 +2573,209 @@ No ADR was written — this is additive implementation of already-approved
 architecture (§4.10/§4.12, and the row-9 slicing this document's own build
 order anticipated), not a new architectural decision, matching the
 precedent set by Milestone 9/Alerts (§24.11) and Milestone 8/Watchlists.
+
+---
+
+## 24.13 Milestone 12 — Universal Search (12A backend + 12B frontend — complete, 2026-08-12)
+
+**Scope**: PLAN.md §4.13 ("Search infrastructure") and §8 ("Universal
+Search"), built as two staged sub-phases (12A backend, 12B frontend) per
+explicit user direction, mirroring the 10A/10B staging pattern. A full
+architecture-and-product-design review was completed and explicitly
+approved *before* any code was written — no ADR/schema conflict was found;
+this section documents the approved design as actually implemented.
+
+**Searchable entity types**: `issuer`, `security`, `alert_event`,
+`court_docket`, `court_docket_entry`, `collection` (Research Universes/
+Watchlists/Benchmarks alike), `research_note` (current content only), and a
+deliberately thin `sec_filing` metadata search. **Excluded**:
+`research_evidence` (`alert_event` is already the canonical, human-facing
+"distress development" unit — `issuer_timeline_service.get_issuer_timeline`
+reads exclusively from `alert_event`, never `research_evidence`, confirming
+this live), `research_note_version` (only the live note is indexed — no
+`search_vector` column exists on that table at all, so a note's edit
+history can never produce duplicate/near-duplicate search hits),
+`audit_event` (operational log, not research content), `docket_document`
+(no real extracted text exists anywhere in this schema yet), and all of
+10B.
+
+**Database/index strategy — resolves TD-003**: per-table generated
+`tsvector` columns (`GENERATED ALWAYS AS ... STORED`) + GIN indexes,
+**not** a separate synced `search_document` table. A generated column is
+maintained automatically by Postgres on every INSERT/UPDATE — no new write
+path for any of the many existing writers (SEC ingestion, CourtListener
+sync, `research_note_service`, `watchlist_service`, `alert_synthesis_
+service`, ...) to remember, and no drift risk. This project has zero
+triggers anywhere — every side effect is explicit application code — and a
+synced `search_document` table would have been the first exception.
+Migration `0016` (live-applied, `alembic check` zero drift before and
+after) adds `search_vector` to `issuer`, `security`, `alert_event`,
+`court_docket`, `court_docket_entry`, `collection`, `research_note`; a
+plain btree index on `court_docket.docket_number` (a human-readable
+exact-match identifier that had no index before); and `pg_trgm` GIN
+indexes narrowly on `issuer.legal_name`/`security.description` — not
+indiscriminately on every text field, since only those two are
+proper-noun/typo-prone lookups.
+
+**A real bug was found and fixed before the first commit**: the original
+`research_note` generation expression used `concat_ws` to join its six
+case fields — Postgres declares `concat_ws` `STABLE`, not `IMMUTABLE` (it
+accepts variadic `any` arguments, so its output could in principle depend
+on session settings for non-text types), which `GENERATED ALWAYS AS ...
+STORED` rejects even though every argument here was already `text`. The
+live migration attempt failed with `generation expression is not
+immutable`; Postgres DDL is transactional, so the failed `ALTER TABLE`
+rolled back cleanly with zero partial state (`alembic current` stayed at
+`0015`, confirmed live before retrying). Fixed with plain `||`
+concatenation, which is immutable for `text`.
+
+**Exact-match implementation (Tier 0)**: `search_exact_matches` runs
+direct case-insensitive equality checks against `issuer.cik`/`ticker`/
+`lei`, `security.cusip`/`isin`/`figi`, `court_docket.docket_number`, and
+`sec_filing.accession_no` — all against already-existing (or, for
+`docket_number`, newly-added) indexes. Always queried and returned
+separately from the fuzzy tiers below; the API response keeps
+`exact_matches` as its own top-level list, never blended into a single
+score with `groups`.
+
+**FTS implementation (Tier 2)**: `websearch_to_tsquery('english', q)` +
+`ts_rank_cd` against each table's `search_vector`, with `setweight` tiers
+per field (`issuer.legal_name`/`ticker` = A; `security.description` = A;
+`alert_event.headline` = A, `.explanation` = B, `.category` = C;
+`court_docket.case_name` = A, `.nature_of_suit` = C;
+`court_docket_entry.description` = B; `collection.name` = A, `.description`
+= C; `research_note.title` = A, case fields = C). `alert_event.category`
+is stored snake_case (e.g. `"covenant_breach"`) — underscores are replaced
+with spaces before tokenizing so a query for "covenant" matches it as a
+separate word, live-verified with a dedicated test.
+
+**Trigram/fuzzy implementation (Tier 3)**: `pg_trgm` `similarity()` against
+`issuer.legal_name`/`security.description` only, and only invoked when
+Tier 1 (prefix) + Tier 2 (FTS) together don't fill the requested limit —
+never the primary ranking signal, purely typo tolerance.
+
+**Ranking behavior**: group order is fixed and issuer-first
+(`issuer, security, alert_event, court_docket, court_docket_entry,
+collection, research_note, sec_filing`) — structural, not score-driven, so
+`ts_rank_cd` values (which aren't meaningfully comparable across tables
+with different `tsvector` configurations) are only ever compared *within*
+one entity type's own results, never across types. Within `alert_event`
+results, ties break on `as_of_date` descending; within `research_note`,
+on `updated_at` descending — no new severity scale invented, and no
+existing "new alert"/"new development" semantics touched or reinterpreted.
+
+**API**: one endpoint, `GET /api/search?q=&limit=`, reused by both the
+header typeahead (`limit=5`) and `/search` (`limit=10`) — deliberately no
+pagination inside the endpoint itself; "see all results" reuses existing,
+already-paginated destination pages (Credit Universe's own `q` filter for
+issuer/security) where a real one exists, and simply shows nothing beyond
+the bounded per-group limit where it doesn't (no dedicated free-text-
+filterable list page exists for alerts/dockets/notes/collections today).
+
+**`GlobalSearch`/header UX**: a debounced (300ms, matching the existing
+`useDebouncedValue` convention) `TextField` in the `AppBar` on desktop,
+opening a grouped dropdown (`Popper`) as the analyst types. Full keyboard
+support: ArrowUp/ArrowDown move a highlighted index across a flattened
+list of every visible result plus a trailing "See all results" entry,
+Enter selects the highlighted item (or, with nothing highlighted, jumps to
+`/search`), Escape closes the dropdown. `ClickAwayListener` closes on an
+outside click. Selecting a result clears the input and navigates directly
+to the entity's existing page — Universal Search adds no new detail pages
+of its own.
+
+**`/search` UX**: a full page (`SearchPage.tsx`) with its own search box
+(URL-synced via `?q=`), an "Exact Matches" section when present, then one
+`Paper` per entity-type group (larger, `limit=10`, results), each result
+rendered as a clickable card (title, type-labeled exact-match chip where
+relevant, snippet, context date). Loading/empty/error states match the
+rest of the app's established pattern.
+
+**Mobile behavior**: below the `useIsMobile` breakpoint, the header
+renders a compact search icon button instead of an inline text field
+(the AppBar has no room for a desktop-sized dropdown on a phone) — tapping
+it opens a full-screen `Dialog` with the same debounced input and grouped
+results list, plus an explicit close button. Verified via the same
+`mockMobileViewport()` test convention already established in
+`WatchlistDetailPage.test.tsx`/`Layout.test.tsx` (a live-browser window
+resize did not reliably reflect in this environment's screenshot capture,
+so mobile behavior was verified through the automated test suite, not a
+live resized window).
+
+**Court docket-entry behavior**: matches on `description` (the only real
+free text a docket entry has — "DIP financing," "automatic stay,"
+"confirmation hearing," etc., per the explicit requirement), always joined
+back to its parent `court_docket` so the result carries the case name,
+docket number, and `issuer_id` — clicking it navigates straight to that
+issuer's Distress Timeline/"What happened in court?" section, never a
+disconnected result. Live-verified: searching "confirmation hearing"
+surfaced a real Diebold Nixdorf docket entry and correctly navigated to
+the Diebold Nixdorf issuer page.
+
+**SEC filing search limitations**: deliberately thin and stated as such in
+code, not just this document — `sec_filing` has no stored content
+anywhere in this schema (only accession number, form type, dates, a URL),
+so the grouped/fuzzy tier matches only `form_type` (e.g. "10-K", "8-K").
+It does **not** substring-match `accession_no` in that tier (a real,
+live-caught precision issue: a bare numeric query like a 4-digit year was
+incidentally matching inside unrelated 20-digit accession numbers before
+this was tightened) — exact `accession_no` matching is Tier 0 only.
+
+**Research Note behavior**: only the live `research_note` row is
+searchable; `research_note_version` carries no `search_vector` column at
+all. Live-verified with a dedicated test: editing a note's title makes the
+*new* title searchable and the *old* title stop matching, proving search
+reflects current content only, never a stale version snapshot. Historical
+versions remain reachable exactly where Milestone 10A already built that
+UI — the note's own Version History rail.
+
+**Tests**: 24 new backend tests (5 unit for pure helpers; 14 integration
+against the live `nexus` schema using deliberately distinctive
+"Zylospan"-style fixture data rather than real production terms like
+"Chapter 11," so assertions stay hermetic against tens of thousands of
+real rows; 5 route-level `TestClient` tests, including one that locks in
+the full excluded-entity-type set through a real HTTP response, not just
+code inspection). 17 new frontend tests (8 `GlobalSearch`: debounce,
+grouping, keyboard nav, Escape, no-results, mobile icon/dialog; 7
+`SearchPage`: prompt/loading/error/empty states, exact-match rendering,
+navigation targets, "see all" scoping; 2 `Layout` — updated for the now-
+enabled Search nav item and to wrap in `QueryClientProvider`, which
+`GlobalSearch`'s `useQuery` call now requires). 537/537 backend tests pass
+total, 181/181 frontend tests pass total.
+
+**Migration verification**: `alembic upgrade head` applied live against
+the shared Supabase project (outside the 10 PM ET nightly-ingestion
+window, per explicit instruction); `alembic check` confirms zero drift,
+both immediately after the fixed migration and again after full 12A/12B
+completion.
+
+**Production walkthrough**: real backend + frontend booted; live-browser
+verification of the desktop typeahead (grouped dropdown, ArrowDown +
+Enter navigation), the full `/search` page (exact matches, multiple real
+groups including "Research Universe" and "Research Note" for a "going
+concern" query), exact-identifier lookup (CIK `0001519061` → Trinseo PLC,
+tagged "Exact Matches"), and a court-docket-entry query ("confirmation
+hearing") correctly navigating to the linked issuer. Regression spot-check
+across Watchlists and Alerts confirmed both render unchanged.
+
+**Regression verification**: none found — purely additive (one migration
+adding nullable generated columns/indexes to seven existing tables, one
+new repository/service/schema/route file, one new frontend component/page
+plus `Layout.tsx`'s header). Nothing in the nightly scheduler, SEC/
+CourtListener/OpenFIGI/FRED ingestion, AI routing, Morning Research Brief,
+Watchlists, Alerts Center, Research Universes, Distress Timeline, or
+Research Notes/versioning/audit behavior was touched.
+
+**Anthropic application calls**: **0** — confirmed by design (no `app.ai`
+import anywhere in the new/changed files) and by inspection of
+`ai_call_log` (unchanged row count before/after). Universal Search
+requires no LLM for normal queries, per the explicit constraint.
+
+**Technical debt**: TD-003 resolved by this milestone (see Technical Debt
+table). No new technical debt recorded — the two real bugs found during
+implementation (`concat_ws` immutability, `accession_no` substring noise)
+were fixed before commit, not deferred.
+
+No ADR was written — PLAN.md §4.13 already explicitly deferred exactly
+this implementation decision ("Decision deferred to implementation... §16
+build order step 12") to this milestone; this is that decision being made,
+not a new architectural decision.

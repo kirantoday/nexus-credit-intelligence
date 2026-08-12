@@ -26,8 +26,18 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, Text, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Computed,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Text,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -37,6 +47,29 @@ from app.db.base import Base
 _THESIS_STATUS_SQL_LIST = ", ".join(f"'{value}'" for value in ThesisStatus)
 _CONVICTION_SQL_LIST = ", ".join(f"'{value}'" for value in Conviction)
 _ACCESS_CLASSIFICATION_SQL_LIST = ", ".join(f"'{value}'" for value in AccessClassification)
+# search_vector (Milestone 12A) — only on the live `research_note` table,
+# deliberately never added to `research_note_version`: version history
+# stays reachable through the note's own Version History UI, not as
+# separate, near-duplicate Universal Search hits. See
+# app.repositories.search_repository's module docstring.
+#
+# Plain `||` concatenation, not `concat_ws` — Postgres declares
+# `concat_ws` STABLE (not IMMUTABLE, since it accepts variadic `any`
+# arguments whose text representation could depend on session settings for
+# non-text types), which `GENERATED ALWAYS AS ... STORED` rejects even
+# though every argument here is already `text`. Live-caught: the first
+# migration attempt failed with `generation expression is not immutable`;
+# Postgres DDL is transactional, so the failed `ALTER TABLE` rolled back
+# cleanly with zero partial state, confirmed via `alembic current` staying
+# at `0015` and a direct column-existence check before retrying.
+_RESEARCH_NOTE_SEARCH_VECTOR_SQL = (
+    "setweight(to_tsvector('english', coalesce(title, '')), 'A') || "
+    "setweight(to_tsvector('english', "
+    "coalesce(bull_case, '') || ' ' || coalesce(base_case, '') || ' ' || "
+    "coalesce(bear_case, '') || ' ' || coalesce(catalysts, '') || ' ' || "
+    "coalesce(risks, '') || ' ' || coalesce(invalidation_conditions, '')"
+    "), 'C')"
+)
 
 
 class ResearchNote(Base):
@@ -61,6 +94,7 @@ class ResearchNote(Base):
         Index("ix_research_note_issuer_id", "issuer_id"),
         Index("ix_research_note_security_id", "security_id"),
         Index("ix_research_note_is_archived", "is_archived"),
+        Index("ix_research_note_search_vector", "search_vector", postgresql_using="gin"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -98,6 +132,9 @@ class ResearchNote(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    search_vector: Mapped[str | None] = mapped_column(
+        TSVECTOR, Computed(_RESEARCH_NOTE_SEARCH_VECTOR_SQL, persisted=True), nullable=True
     )
 
 

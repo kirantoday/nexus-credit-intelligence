@@ -10,6 +10,7 @@ import { NotFoundPage } from "./pages/NotFoundPage";
 import { ResearchNoteEditorPage } from "./pages/ResearchNoteEditorPage";
 import { ResearchNotePage } from "./pages/ResearchNotePage";
 import { ResearchUniversesPage } from "./pages/ResearchUniversesPage";
+import { SearchPage } from "./pages/SearchPage";
 import { WatchlistDetailPage } from "./pages/WatchlistDetailPage";
 import { WatchlistsPage } from "./pages/WatchlistsPage";
 
@@ -27,6 +28,7 @@ export function App(): ReactElement {
         <Route path="/watchlists" element={<WatchlistsPage />} />
         <Route path="/watchlists/:watchlistId" element={<WatchlistDetailPage />} />
         <Route path="/alerts" element={<AlertsPage />} />
+        <Route path="/search" element={<SearchPage />} />
         <Route path="/about" element={<AboutPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

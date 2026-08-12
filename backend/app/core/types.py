@@ -487,3 +487,23 @@ class AuditEventType(StrEnum):
     RESEARCH_NOTE_CREATED = "research_note_created"
     RESEARCH_NOTE_UPDATED = "research_note_updated"
     RESEARCH_NOTE_ARCHIVED = "research_note_archived"
+
+
+# --- Milestone 12A: Universal Search ---
+
+
+class SearchEntityType(StrEnum):
+    """The searchable entity types Universal Search groups results by
+    (PLAN.md 4.13/8; Milestone 12A). Deliberately excludes
+    `research_evidence`, `research_note_version`, `audit_event`, and
+    `docket_document` — see `app.repositories.search_repository`'s module
+    docstring for why each is excluded."""
+
+    ISSUER = "issuer"
+    SECURITY = "security"
+    ALERT_EVENT = "alert_event"
+    COURT_DOCKET = "court_docket"
+    COURT_DOCKET_ENTRY = "court_docket_entry"
+    COLLECTION = "collection"
+    RESEARCH_NOTE = "research_note"
+    SEC_FILING = "sec_filing"

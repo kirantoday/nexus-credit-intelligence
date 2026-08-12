@@ -15,6 +15,7 @@ from decimal import Decimal
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Computed,
     Date,
     ForeignKey,
     Index,
@@ -22,6 +23,7 @@ from sqlalchemy import (
     Text,
     text,
 )
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,6 +32,11 @@ from app.db.base import Base
 
 _INSTRUMENT_TYPE_SQL_LIST = ", ".join(f"'{value}'" for value in InstrumentType)
 _SENIORITY_SQL_LIST = ", ".join(f"'{value}'" for value in Seniority)
+# search_vector (Milestone 12A): description only — cusip/isin/figi are
+# identifiers, not natural-language text, and are matched exactly (Tier 0)
+# against their own existing unique indexes, never tokenized into this
+# tsvector. See app.repositories.search_repository's module docstring.
+_SEARCH_VECTOR_SQL = "setweight(to_tsvector('english', coalesce(description, '')), 'A')"
 
 
 class Security(Base):
@@ -55,6 +62,13 @@ class Security(Base):
         ),
         Index("ix_security_isin", "isin", unique=True, postgresql_where=text("isin IS NOT NULL")),
         Index("ix_security_figi", "figi", unique=True, postgresql_where=text("figi IS NOT NULL")),
+        Index("ix_security_search_vector", "search_vector", postgresql_using="gin"),
+        Index(
+            "ix_security_description_trgm",
+            "description",
+            postgresql_using="gin",
+            postgresql_ops={"description": "gin_trgm_ops"},
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -82,4 +96,7 @@ class Security(Base):
     synthetic_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     provenance_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("provenance.id"), nullable=False
+    )
+    search_vector: Mapped[str | None] = mapped_column(
+        TSVECTOR, Computed(_SEARCH_VECTOR_SQL, persisted=True), nullable=True
     )

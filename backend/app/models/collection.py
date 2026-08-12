@@ -15,6 +15,7 @@ from datetime import date, datetime
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Computed,
     Date,
     DateTime,
     ForeignKey,
@@ -24,7 +25,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -44,6 +45,13 @@ _VISIBILITY_SQL_LIST = ", ".join(f"'{value}'" for value in CollectionVisibility)
 _CURATION_METHOD_SQL_LIST = ", ".join(f"'{value}'" for value in CurationMethod)
 _VERIFICATION_STATUS_SQL_LIST = ", ".join(f"'{value}'" for value in VerificationStatus)
 _PRIORITY_SQL_LIST = ", ".join(f"'{value}'" for value in CollectionPriority)
+# search_vector (Milestone 12A) — covers Research Universes, Watchlists,
+# and Benchmarks alike (collection_type discriminates at query time, not
+# at the tsvector level). See app.repositories.search_repository.
+_COLLECTION_SEARCH_VECTOR_SQL = (
+    "setweight(to_tsvector('english', coalesce(name, '')), 'A') || "
+    "setweight(to_tsvector('english', coalesce(description, '')), 'C')"
+)
 
 
 class Collection(Base):
@@ -69,6 +77,7 @@ class Collection(Base):
         ),
         Index("ix_collection_slug", "slug", unique=True),
         Index("ix_collection_collection_type", "collection_type"),
+        Index("ix_collection_search_vector", "search_vector", postgresql_using="gin"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -94,6 +103,9 @@ class Collection(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    search_vector: Mapped[str | None] = mapped_column(
+        TSVECTOR, Computed(_COLLECTION_SEARCH_VECTOR_SQL, persisted=True), nullable=True
     )
 
 

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { Layout } from "./Layout";
 
@@ -28,15 +29,18 @@ afterEach(() => {
 });
 
 function renderLayout(initialPath = "/"): void {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
-    <MemoryRouter initialEntries={[initialPath]}>
-      <Routes>
-        <Route element={<Layout />}>
-          <Route path="/" element={<div>page content</div>} />
-          <Route path="/about" element={<div>about page content</div>} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialPath]}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/" element={<div>page content</div>} />
+            <Route path="/about" element={<div>about page content</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -80,7 +84,25 @@ describe("Layout", () => {
   it("does not show not-yet-built nav items", () => {
     renderLayout();
 
-    expect(screen.queryByText("Search")).not.toBeInTheDocument();
+    expect(screen.queryByText("Research Workspace")).not.toBeInTheDocument();
+    expect(screen.queryByText("Research Assistant")).not.toBeInTheDocument();
+    expect(screen.queryByText("Dashboard")).not.toBeInTheDocument();
+  });
+
+  it("shows a 'Search' navigation item positioned after About Nexus (Milestone 12A)", () => {
+    renderLayout();
+
+    const links = screen.getAllByRole("link");
+    const labels = links.map((link) => link.textContent);
+
+    expect(labels.indexOf("Search")).toBe(labels.indexOf("About Nexus") + 1);
+    expect(screen.getByRole("link", { name: "Search" })).toHaveAttribute("href", "/search");
+  });
+
+  it("renders the GlobalSearch input in the header", () => {
+    renderLayout();
+
+    expect(screen.getByRole("textbox", { name: "Search Nexus" })).toBeInTheDocument();
   });
 
   it("marks the current page's nav item as selected", () => {

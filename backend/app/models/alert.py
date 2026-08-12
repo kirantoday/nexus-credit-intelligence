@@ -16,6 +16,7 @@ from datetime import date, datetime
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Computed,
     Date,
     DateTime,
     ForeignKey,
@@ -24,7 +25,7 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,6 +35,18 @@ from app.db.base import Base
 _SEVERITY_SQL_LIST = ", ".join(f"'{value}'" for value in EvidenceSeverity)
 _DETECTION_METHOD_SQL_LIST = ", ".join(f"'{value}'" for value in DetectionMethod)
 _STATUS_SQL_LIST = ", ".join(f"'{value}'" for value in AlertStatus)
+# search_vector (Milestone 12A): alert_event is Universal Search's
+# "distress developments/timeline events" target — the Distress Timeline
+# itself reads exclusively from this table (issuer_timeline_service), never
+# research_evidence, so this is the same canonical unit, not a duplicate.
+# `category` is stored snake_case (e.g. "covenant_breach"); underscores are
+# replaced with spaces before tokenizing so a query for "covenant" matches
+# it as a separate word, not only the literal underscored token.
+_SEARCH_VECTOR_SQL = (
+    "setweight(to_tsvector('english', coalesce(headline, '')), 'A') || "
+    "setweight(to_tsvector('english', coalesce(explanation, '')), 'B') || "
+    "setweight(to_tsvector('english', replace(coalesce(category, ''), '_', ' ')), 'C')"
+)
 
 
 class AlertEvent(Base):
@@ -53,6 +66,7 @@ class AlertEvent(Base):
         Index("ix_alert_event_bundle_key", "bundle_key"),
         Index("ix_alert_event_provenance_id", "provenance_id"),
         Index("ix_alert_event_status", "status"),
+        Index("ix_alert_event_search_vector", "search_vector", postgresql_using="gin"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -90,4 +104,7 @@ class AlertEvent(Base):
     issuer_is_subject: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    search_vector: Mapped[str | None] = mapped_column(
+        TSVECTOR, Computed(_SEARCH_VECTOR_SQL, persisted=True), nullable=True
     )

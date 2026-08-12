@@ -1,4 +1,11 @@
-"""ORM model for `court_docket_entry` (PLAN.md section 4.5, Milestone 7)."""
+"""ORM model for `court_docket_entry` (PLAN.md section 4.5, Milestone 7).
+
+`search_vector` (Milestone 12A) — see
+`app.repositories.search_repository`'s module docstring. `description` is
+the only real free text on this table ("DIP financing," "automatic stay,"
+"confirmation hearing," etc.) — the actual analyst-searchable content of a
+docket entry.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +15,7 @@ from datetime import date, datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Computed,
     Date,
     DateTime,
     ForeignKey,
@@ -16,10 +24,13 @@ from sqlalchemy import (
     Text,
     text,
 )
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+
+_SEARCH_VECTOR_SQL = "setweight(to_tsvector('english', coalesce(description, '')), 'B')"
 
 
 class CourtDocketEntry(Base):
@@ -32,6 +43,7 @@ class CourtDocketEntry(Base):
         ),
         Index("ix_court_docket_entry_docket_id", "docket_id"),
         Index("ix_court_docket_entry_provenance_id", "provenance_id"),
+        Index("ix_court_docket_entry_search_vector", "search_vector", postgresql_using="gin"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -52,4 +64,7 @@ class CourtDocketEntry(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    search_vector: Mapped[str | None] = mapped_column(
+        TSVECTOR, Computed(_SEARCH_VECTOR_SQL, persisted=True), nullable=True
     )
