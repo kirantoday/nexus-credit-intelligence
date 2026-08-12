@@ -38,6 +38,10 @@ function renderLayout(initialPath = "/"): void {
             <Route path="/" element={<div>page content</div>} />
             <Route path="/about" element={<div>about page content</div>} />
             <Route path="/research-notes" element={<div>research notes page content</div>} />
+            <Route
+              path="/research-documents"
+              element={<div>research documents page content</div>}
+            />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -85,13 +89,28 @@ describe("Layout", () => {
     );
   });
 
-  it("shows a 'Search' navigation item positioned after Research Notes", () => {
+  it("shows a 'Research Documents' navigation item positioned after Research Notes", () => {
     renderLayout();
 
     const links = screen.getAllByRole("link");
     const labels = links.map((link) => link.textContent);
 
-    expect(labels.indexOf("Search")).toBe(labels.indexOf("Research Notes") + 1);
+    expect(labels).toContain("Research Documents");
+    expect(labels.indexOf("Research Documents")).toBe(labels.indexOf("Research Notes") + 1);
+
+    expect(screen.getByRole("link", { name: "Research Documents" })).toHaveAttribute(
+      "href",
+      "/research-documents",
+    );
+  });
+
+  it("shows a 'Search' navigation item positioned after Research Documents", () => {
+    renderLayout();
+
+    const links = screen.getAllByRole("link");
+    const labels = links.map((link) => link.textContent);
+
+    expect(labels.indexOf("Search")).toBe(labels.indexOf("Research Documents") + 1);
     expect(screen.getByRole("link", { name: "Search" })).toHaveAttribute("href", "/search");
   });
 
@@ -172,6 +191,23 @@ describe("Layout", () => {
       await user.click(researchNotesLink);
 
       expect(screen.getByText("research notes page content")).toBeInTheDocument();
+    });
+
+    it("shows and navigates to Research Documents from the mobile drawer", async () => {
+      mockMobileViewport();
+      const user = userEvent.setup();
+      renderLayout();
+
+      await user.click(screen.getByRole("button", { name: /open navigation menu/i }));
+      const dialog = screen.getByRole("presentation");
+      const researchDocumentsLink = within(dialog).getByRole("link", {
+        name: "Research Documents",
+      });
+      expect(researchDocumentsLink).toHaveAttribute("href", "/research-documents");
+
+      await user.click(researchDocumentsLink);
+
+      expect(screen.getByText("research documents page content")).toBeInTheDocument();
     });
   });
 });

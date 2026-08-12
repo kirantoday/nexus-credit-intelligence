@@ -27,6 +27,11 @@ export function searchResultPath(item: SearchResultItem): string {
         : `/?universe=${item.entity_id}`;
     case "research_note":
       return `/research-notes/${item.entity_id}`;
+    case "research_document":
+      // No dedicated document detail page — same pattern as security/
+      // alert_event/sec_filing: surfaces within Issuer Detail's own
+      // Research Documents section.
+      return item.issuer_id ? `/issuers/${item.issuer_id}` : "/";
   }
 }
 
@@ -38,6 +43,7 @@ const ENTITY_TYPE_LABEL: Record<SearchEntityType, string> = {
   court_docket_entry: "Court Docket Entry",
   collection: "Research Universe",
   research_note: "Research Note",
+  research_document: "Research Document",
   sec_filing: "SEC Filing",
 };
 
@@ -61,5 +67,6 @@ export const SEARCH_GROUP_ORDER: SearchEntityType[] = [
   "court_docket_entry",
   "collection",
   "research_note",
+  "research_document",
   "sec_filing",
 ];

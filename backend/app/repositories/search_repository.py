@@ -14,10 +14,16 @@ what this milestone's architecture review found to be real, analyst-
 meaningful, already-existing free text): `issuer`, `security`,
 `alert_event`, `court_docket`, `court_docket_entry`, `collection`
 (Research Universes/Watchlists/Benchmarks alike), `research_note`
-(current content only), and a deliberately **thin** `sec_filing` metadata
+(current content only), a deliberately **thin** `sec_filing` metadata
 search (accession number, form type — no filing content is stored
 anywhere in this schema, so "search SEC filings" cannot honestly mean more
-than that).
+than that), and — as of Milestone 10B-5 — `research_document`, equally
+**thin**: `title` plus `document_type`/`description` metadata only. No PDF
+extraction exists anywhere in this codebase, so `research_document.
+extracted_text` (always `NULL` in Milestone 10B) is never referenced by its
+`search_vector` — "search research documents" cannot honestly mean
+document-content search yet, exactly the same honesty constraint already
+applied to `sec_filing`.
 
 **Deliberately excluded**:
 - `research_evidence` — `alert_event` is the canonical, human-facing
@@ -33,9 +39,9 @@ than that).
   `search_vector` column exists on `research_note_version` at all.
 - `audit_event` — an operational log, not research content.
 - `docket_document` — no real extracted text exists anywhere in this
-  schema yet (10B/document extraction is out of scope); its only text
-  field is a short administrative label, not analyst-searchable content.
-- All of 10B (`research_document` doesn't exist).
+  schema yet (document extraction is out of scope through Milestone 10B);
+  its only text field is a short administrative label, not
+  analyst-searchable content.
 
 **Ranking tiers** (PLAN.md 4.13/8's fixed contract — exact identifier
 matches always outrank fuzzy matches, never blended into one score):
@@ -66,6 +72,7 @@ from app.models.court_docket import CourtDocket as CourtDocketModel
 from app.models.court_docket_entry import CourtDocketEntry as CourtDocketEntryModel
 from app.models.issuer import Issuer as IssuerModel
 from app.models.research import ResearchNote as ResearchNoteModel
+from app.models.research_document import ResearchDocument as ResearchDocumentModel
 from app.models.sec_filing import SecFiling as SecFilingModel
 from app.models.security import Security as SecurityModel
 
@@ -540,6 +547,47 @@ def search_research_notes(db: Session, query: str, *, limit: int) -> list[Search
             issuer_id=row.issuer_id,
             collection_type=None,
             context_date=row.updated_at.date(),
+            rank=float(row.r),
+        )
+        for row in db.execute(stmt).all()
+    ]
+
+
+def search_research_documents(db: Session, query: str, *, limit: int) -> list[SearchHit]:
+    """Thin per this table's own `search_vector` (title +
+    document_type/description metadata only — see module docstring).
+    Excludes archived documents, matching `search_research_notes`'s
+    identical treatment of archived research notes."""
+    q = query.strip()
+    if not q or limit <= 0:
+        return []
+    tsquery = func.websearch_to_tsquery("english", q)
+    rank = func.ts_rank_cd(ResearchDocumentModel.search_vector, tsquery)
+    stmt = (
+        select(
+            ResearchDocumentModel.id,
+            ResearchDocumentModel.title,
+            ResearchDocumentModel.document_type,
+            ResearchDocumentModel.description,
+            ResearchDocumentModel.issuer_id,
+            ResearchDocumentModel.document_date,
+            ResearchDocumentModel.created_at,
+            rank.label("r"),
+        )
+        .where(ResearchDocumentModel.search_vector.op("@@")(tsquery))
+        .where(ResearchDocumentModel.is_archived.is_(False))
+        .order_by(rank.desc(), ResearchDocumentModel.created_at.desc())
+        .limit(limit)
+    )
+    return [
+        SearchHit(
+            entity_type=SearchEntityType.RESEARCH_DOCUMENT,
+            entity_id=row.id,
+            title=row.title,
+            snippet=_first_non_empty(row.description, row.document_type.replace("_", " ").title()),
+            issuer_id=row.issuer_id,
+            collection_type=None,
+            context_date=row.document_date or row.created_at.date(),
             rank=float(row.r),
         )
         for row in db.execute(stmt).all()

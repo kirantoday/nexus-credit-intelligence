@@ -24,6 +24,7 @@ class RawProviderPayloadCreate(BaseModel):
     retrieved_at: datetime
     checksum: str
     content_type: str
+    size_bytes: int | None = None
     provenance_id: UUID | None = None
 
     @model_validator(mode="after")

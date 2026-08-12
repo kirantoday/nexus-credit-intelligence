@@ -30,7 +30,9 @@ from app.core.types import (
     DetectionMethod,
     EvidenceSeverity,
     InstrumentType,
+    OriginalSource,
     ProviderName,
+    ResearchDocumentType,
     ThesisStatus,
     TransformationType,
     VerificationStatus,
@@ -55,8 +57,11 @@ from app.repositories import (
     sec_filing_repository,
     security_repository,
 )
-from app.services import research_note_service, search_service
+from app.services import research_document_service, research_note_service, search_service
+from app.storage.fake_storage_client import FakeStorageClient
 from tests.integration.conftest import reported_public_provenance
+
+_VALID_PDF_CONTENT = b"%PDF-1.4\n%search fixture content\n%%EOF"
 
 _STAMP = str(uuid4())[:8]
 _ISSUER_NAME = f"Zylospan Materials Corp {_STAMP}"
@@ -164,6 +169,25 @@ def _fixture(db: Session) -> dict[str, object]:
         ),
     )
 
+    document = research_document_service.upload_document(
+        db,
+        FakeStorageClient(),
+        issuer_id=issuer.id,
+        security_id=None,
+        # Deliberately no "credit"/"agreement" in the title — a match on
+        # those words can only come from document_type's tokenized value,
+        # mirroring test_alert_category_underscore_is_tokenized.
+        document_type=ResearchDocumentType.CREDIT_AGREEMENT,
+        title=f"{_ISSUER_NAME} Loan Documentation",
+        description=None,
+        original_filename="loan-documentation.pdf",
+        content=_VALID_PDF_CONTENT,
+        document_date=date(2026, 3, 10),
+        confidentiality_classification=AccessClassification.STANDARD,
+        uploaded_by="test-analyst",
+        original_source=OriginalSource.OTHER,
+    )
+
     return {
         "issuer": issuer,
         "security": security,
@@ -172,6 +196,7 @@ def _fixture(db: Session) -> dict[str, object]:
         "entry": entry,
         "collection": collection,
         "note": note,
+        "document": document,
     }
 
 
@@ -192,6 +217,7 @@ def test_free_text_query_matches_across_entity_types(db_session: Session) -> Non
     assert ET.COURT_DOCKET in group_types
     assert ET.COURT_DOCKET_ENTRY in group_types
     assert ET.RESEARCH_NOTE in group_types
+    assert ET.RESEARCH_DOCUMENT in group_types
 
     issuer_group = next(g for g in resp.groups if g.entity_type == ET.ISSUER)
     assert any(_ISSUER_NAME in r.title for r in issuer_group.results)
@@ -323,6 +349,53 @@ def test_research_note_search_reflects_only_current_content_not_old_versions(
 
     new_note_group = next(g for g in new_resp.groups if g.entity_type == ET.RESEARCH_NOTE)
     assert note.id in {r.entity_id for r in new_note_group.results}
+
+
+def test_research_document_group_matches_title(db_session: Session) -> None:
+    fixture = _fixture(db_session)
+    document = fixture["document"]
+    resp = search_service.search(db_session, _ISSUER_NAME, per_group_limit=10)
+    document_group = next(g for g in resp.groups if g.entity_type == ET.RESEARCH_DOCUMENT)
+    assert document.id in {r.entity_id for r in document_group.results}
+
+
+def test_research_document_type_underscore_is_tokenized(db_session: Session) -> None:
+    """`document_type='credit_agreement'` must match a query for "credit
+    agreement" as separate words, not only the literal underscored token.
+    The fixture's title deliberately contains neither word — a match here
+    is only possible via document_type's underscore-to-space tokenization,
+    mirroring `test_alert_category_underscore_is_tokenized`."""
+    fixture = _fixture(db_session)
+    document = fixture["document"]
+    resp = search_service.search(db_session, f"{_STAMP} credit agreement", per_group_limit=10)
+    document_group = next(g for g in resp.groups if g.entity_type == ET.RESEARCH_DOCUMENT)
+    assert document.id in {r.entity_id for r in document_group.results}
+
+
+def test_research_document_group_excludes_archived_documents(db_session: Session) -> None:
+    fixture = _fixture(db_session)
+    document = fixture["document"]
+    research_document_service.archive_document(db_session, document.id, archived_by="test")
+
+    resp = search_service.search(db_session, _ISSUER_NAME, per_group_limit=10)
+    document_group = next((g for g in resp.groups if g.entity_type == ET.RESEARCH_DOCUMENT), None)
+    if document_group is not None:
+        assert document.id not in {r.entity_id for r in document_group.results}
+
+
+def test_research_document_search_does_not_reference_extracted_text(db_session: Session) -> None:
+    """`extracted_text` is always `NULL` in Milestone 10B (no PDF
+    extraction) — a query for text that would only exist in a hypothetical
+    extracted PDF body must not match, proving the search_vector never
+    references that column."""
+    fixture = _fixture(db_session)
+    document = fixture["document"]
+    resp = search_service.search(
+        db_session, f"{_STAMP} some-clause-that-would-only-exist-in-pdf-body", per_group_limit=10
+    )
+    document_group = next((g for g in resp.groups if g.entity_type == ET.RESEARCH_DOCUMENT), None)
+    if document_group is not None:
+        assert document.id not in {r.entity_id for r in document_group.results}
 
 
 def test_sec_filing_thin_search_does_not_match_accession_number_substring(

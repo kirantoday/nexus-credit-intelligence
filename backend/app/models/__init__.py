@@ -37,6 +37,7 @@ from app.models import (  # noqa: F401
     provenance,
     raw_provider_payload,
     research,
+    research_document,
     research_evidence,
     sec_filing,
     security,

@@ -32,6 +32,7 @@ def _to_domain(row: RawProviderPayloadModel) -> RawProviderPayload:
         retrieved_at=row.retrieved_at,
         checksum=row.checksum,
         content_type=row.content_type,
+        size_bytes=row.size_bytes,
         provenance_id=row.provenance_id,
     )
 
@@ -46,6 +47,7 @@ def create_payload(db: Session, data: RawProviderPayloadCreate) -> RawProviderPa
         retrieved_at=data.retrieved_at,
         checksum=data.checksum,
         content_type=data.content_type,
+        size_bytes=data.size_bytes,
         provenance_id=data.provenance_id,
     )
     db.add(row)

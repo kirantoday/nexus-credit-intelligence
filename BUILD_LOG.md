@@ -7084,3 +7084,191 @@ KI-003 lesson above.
 
 **Technical debt**: none new. No migration, no schema change, no new
 domain concept.
+
+---
+
+## 2026-08-12 — Milestone 10B: Research Documents + Supabase Storage
+
+**Summary**
+
+PLAN.md row 9's second slice — `research_document` (§4.10) plus the first
+real Supabase Storage integration anywhere in this codebase (TD-006). A
+full architecture-and-product-design review (what PLAN.md already
+specified, existing storage/upload code, canonical document model,
+document-type taxonomy, storage/bucket/path architecture, upload
+consistency strategy, security controls, file-type/size limits, issuer
+relationship, API design, Issuer Detail/global-workspace UX, audit
+behavior, archive/delete semantics, Universal Search integration, future
+extraction/RAG compatibility, migration/testing/deployment requirements)
+was delivered and explicitly approved, with 20 specific decisions/
+refinements from the user, before any code was written. Full design
+record in PLAN.md §24.14; this entry summarizes what was built, the one
+real bug found and fixed, and verification.
+
+**Pre-flight (before any code)**
+
+Live-verified via the Supabase Storage REST API that the shared project
+had zero existing buckets — no naming conflict with the requested
+`nexus-research-documents`. Created it (private, `application/pdf` only,
+25 MB bucket-level limit) and confirmed `public: false` via a direct
+`GET`. Confirmed Alembic's live head (`0016`) matched local before
+assigning migration numbers. All four Storage REST operations this
+milestone needed (upload, sign, download-via-signed-URL, delete) were
+round-tripped against the real, empty bucket with a throwaway test object
+*before* `SupabaseStorageClient` was written — including discovering,
+empirically rather than from documentation, that Supabase's sign endpoint
+returns a relative path requiring a base-URL prefix, and that appending
+`&download=<filename>` to a signed URL makes Supabase itself emit a
+correctly-encoded `Content-Disposition: attachment` header.
+
+**Approved design decisions carried into implementation**
+
+- PDF only (no DOCX/XLSX), 25 MB server-side limit (client-side check is
+  UX-only), PDF magic-byte verification against actual file bytes.
+- Private bucket, server-generated UUID object keys, short-lived (5 min)
+  signed URLs minted fresh per request, no direct browser→Storage
+  credentials anywhere.
+- Storage-first/database-second upload consistency, with a tested
+  compensating Storage delete if the database transaction fails, logged
+  clearly (not swallowed) on double-failure.
+- `StorageClient` protocol with a real `httpx`-based Supabase
+  implementation and a `FakeStorageClient` for tests — no `supabase-py`
+  dependency, matching this project's existing per-provider `httpx`
+  style.
+- Archive-only deletion (no hard delete, physical Storage object
+  preserved on archive) — identical posture to `research_note`.
+- Reuse ADR-007's `admin_upload` provenance channel and the existing
+  `audit_event` system — no parallel provenance or audit architecture.
+- Global `/research-documents` workspace + nav item shipped in the same
+  milestone as the issuer-scoped section, explicitly avoiding the 10A
+  discoverability gap.
+- Universal Search extended additively: `research_document` title/
+  document_type/description only, never `extracted_text` (always `NULL`
+  — no PDF extraction exists in this codebase).
+- No malware/AV scanning — honestly documented as absent, not implied to
+  exist.
+
+**What was built**
+
+- Backend: migration `0017` (`research_document` table +
+  `raw_provider_payload.size_bytes`) and migration `0018`
+  (`research_document.search_vector` + GIN index, added separately,
+  matching Milestone 12A's own pattern of adding search columns to
+  already-existing tables in a dedicated migration). `core/types.py`
+  (`ResearchDocumentType`, 3 new `AuditEventType` values,
+  `SearchEntityType.RESEARCH_DOCUMENT`). `app/storage/` (new package:
+  `base.py` protocol, `supabase_storage_client.py`,
+  `fake_storage_client.py`, `factory.py`). `domain/research_document.py`,
+  `repositories/research_document_repository.py`,
+  `services/research_document_service.py` (upload orchestration,
+  metadata update, archive, signed-URL minting with inline/download
+  variants), `schemas/research_document.py`,
+  `api/routes/research_documents.py` (multipart upload + list/get/
+  download/PATCH/archive), registered in `main.py`.
+  `search_repository.py`/`search_service.py` extended additively for
+  10B-5. `python-multipart` added as a new dependency.
+- Frontend: `api/researchDocument.ts`, `api/client.ts` gained
+  `apiUpload` (omits the `Content-Type` header for `FormData` bodies —
+  `apiFetch`'s always-JSON header would silently break a multipart
+  upload), `queries/useResearchDocuments.ts`,
+  `components/ResearchDocumentTypeBadge.tsx`,
+  `components/ResearchDocumentsSection.tsx` (embedded on `IssuerPage.tsx`
+  beneath Analyst Research Notes), `pages/ResearchDocumentUploadPage.tsx`
+  (`/issuers/:issuerId/research-documents/new`),
+  `pages/ResearchDocumentsWorkspacePage.tsx` (`/research-documents`),
+  `Layout.tsx` gained a `Research Documents` nav item positioned after
+  Research Notes, `lib/searchResult.ts`/`api/search.ts` extended
+  additively for 10B-5.
+
+**A real bug was found and fixed before the first commit**
+
+`web/src/pages/ResearchDocumentUploadPage.tsx` imported
+`AccessClassification` from `../api/researchDocument.ts`, which itself
+only had a local, non-exported `import type` of that name from
+`./researchNote.ts` — `npx tsc --noEmit` (no project-reference mode)
+didn't catch this, but the real production build (`tsc -b && vite
+build`, which this project's `npm run build` actually uses) failed with
+`TS2459: Module declares 'AccessClassification' locally, but it is not
+exported`. Fixed by adding an explicit `export type { AccessClassification }`
+re-export. A reminder that `tsc --noEmit` alone is not a substitute for
+running the actual configured build command — this project's own
+`npm run build` was run as part of verification and caught it before
+commit.
+
+**Verification**
+
+- 587/587 backend tests pass
+  (42 new: 13 unit — PDF signature/size/filename-
+  sanitization/storage-key validation; 16 integration — repository CRUD
+  plus service-layer upload orchestration including the compensating-
+  delete-on-failure path, metadata-update audit before/after state,
+  archive idempotency, signed-URL minting; 9 route-level `TestClient`
+  tests following `test_alerts_routes.py`'s "never mutate the live
+  shared schema at this layer" convention; 4 integration extending
+  Universal Search's own test suite for the new `research_document`
+  group).
+- 211/211 frontend tests pass (21 new across `ResearchDocumentsSection`,
+  `ResearchDocumentUploadPage`, `ResearchDocumentsWorkspacePage`, and
+  three updated/added `Layout` tests for the new nav item/position plus
+  a mobile-drawer test).
+- `ruff`/`black`/`mypy` clean on the whole backend; `eslint`/`prettier`/
+  `tsc` clean on the whole frontend; both production builds succeed
+  (`npm run build` specifically, not just `tsc --noEmit` — see the bug
+  above).
+- `alembic upgrade head` applied live against the shared Supabase
+  project for both `0017` and `0018` (outside the 10 PM ET nightly-
+  ingestion window, confirmed via `date -u` first); `alembic check`
+  confirms zero drift after each.
+- Both backend (`uvicorn`) and frontend (`vite`) confirmed booting
+  locally and serving real responses (`/health` 200; frontend dev server
+  200) before deployment.
+- Regression-checked: the full existing test suite passes unmodified
+  except one line (`test_search_group_entity_types_are_within_the_
+  approved_set`'s allowed-set literal, extended to include
+  `research_document` — no other existing assertion changed). Nothing in
+  the nightly scheduler, SEC/CourtListener/OpenFIGI/FRED ingestion, AI
+  routing, Morning Research Brief, Watchlists, Alerts Center, Research
+  Universes, Distress Timeline, Research Notes/versioning/audit
+  behavior, or any existing Universal Search entity type's ranking/
+  exact-match behavior was touched.
+
+**AI cost**
+
+Zero Anthropic calls, $0 — confirmed by inspection (no `app.ai` import
+anywhere in any new/changed file) and by `ai_call_log`'s unchanged row
+count before/after. No uploaded document's bytes or content were ever
+sent to Anthropic or any other AI provider — 10B performs no extraction,
+summarization, chat, agent, or embedding of any kind.
+
+**Technical debt**
+
+Four new items recorded (see PLAN.md Technical Debt table): TD-026 (no
+malware/AV scanning, honestly documented as absent), TD-027
+(`confidentiality_classification` captured, not enforced — same
+reasoning as TD-025), TD-028 (no physical Storage cleanup/reconciliation
+for archived documents; rare orphaned-object risk on a compensating-
+delete double-failure), TD-029 (no ASGI/proxy-level max-request-body-size
+limit — the 25 MB application-level check runs after Starlette has
+already spooled the request body).
+
+**No ADR was written** — this is additive implementation of already-
+approved architecture (PLAN.md §4.10, and the row-9 slicing already
+anticipated), matching the identical no-new-ADR precedent 10A and 12A
+both set.
+
+**Commit Hash**
+
+COMMIT_HASH_10B
+
+**Approximate Time Spent**
+
+~7 hours (architecture/product-design review and report; pre-flight
+bucket/credential/migration-head verification; live Storage REST API
+contract verification; backend persistence/storage-abstraction/service
+implementation with the compensating-delete upload strategy; backend API
+routes; backend test suite across four new test files plus Universal
+Search extensions; frontend API/query/component/page implementation
+across two workflows (issuer-scoped + global workspace); the live-caught
+TypeScript build bug; frontend test suite across three new test files
+plus `Layout` updates; full test/lint/type/build/migration verification;
+local boot verification; documentation).

@@ -69,13 +69,13 @@ the milestone-by-milestone stop-and-wait workflow.
 
 | Field | Value |
 |---|---|
-| **Overall Progress** | ~61% — Milestones 1–8, 6.5, 7.5, 7.5.1, 7.5.2, 7.5.3, 9 (Alerts), 10A (Research Notes + Audit Trail), 12 (Universal Search), 15 complete; Milestone 9/row 9 (Research Notes/Documents) split — 10B (Documents/Storage) not started, awaiting separate approval; row 11 (TRACE) not started |
-| **Current Milestone** | Milestone 12 (Universal Search) — complete (both 12A backend and 12B frontend). 10B (Research Documents + Supabase Storage) and row 11 (TRACE) remain not started |
-| **Current Status** | Universal Search implements PLAN.md §4.13/§8, built in two staged sub-phases (12A backend, 12B frontend) per explicit user direction, with a full architecture-and-product-design review completed and approved before any code was written. Per-table generated `tsvector` columns (`GENERATED ALWAYS AS ... STORED`) + GIN indexes added to `issuer`/`security`/`alert_event`/`court_docket`/`court_docket_entry`/`collection`/`research_note` (migration `0016`), resolving TD-003 in favor of no new synced table. `pg_trgm` GIN indexes added narrowly on `issuer.legal_name`/`security.description` for typo tolerance. Deterministic ranking preserved exactly as specified: Tier 0 exact identifiers (CIK/ticker/LEI/CUSIP/ISIN/FIGI/docket number/accession number) never blended with fuzzy results; Tier 1 issuer/security prefix match; Tier 2 `websearch_to_tsquery`/`ts_rank_cd` full-text search; Tier 3 `pg_trgm` similarity fallback. `sec_filing` is a deliberately thin metadata-only search (`form_type` substring, `accession_no` exact via Tier 0 only — never implies filing-content search, since none is stored). `research_evidence`, `research_note_version`, `audit_event`, and `docket_document` are all deliberately excluded, and 10B is untouched. `GlobalSearch` (AppBar typeahead, 300ms debounce, grouped results, full keyboard navigation, "See all results") and `/search` (larger per-group results, reusing Credit Universe's own filter for issuer/security "see all" rather than building a second pagination system) ship in 12B. A real bug was live-caught and fixed before the first commit: `concat_ws` (STABLE, not IMMUTABLE) broke `research_note`'s generated column; fixed with plain `||` concatenation, migration corrected and re-verified with zero drift. Zero Anthropic calls anywhere in this milestone. 537/537 backend tests pass (24 new), 181/181 frontend tests pass (17 new). Full live-browser walkthrough completed, including cross-entity queries ("going concern," "confirmation hearing") and exact-identifier lookup (CIK). Full detail in §24.13 and `BUILD_LOG.md`. |
+| **Overall Progress** | ~65% — Milestones 1–8, 6.5, 7.5, 7.5.1, 7.5.2, 7.5.3, 9 (Alerts), 10A (Research Notes + Audit Trail), 10B (Research Documents + Supabase Storage), 12 (Universal Search), 15 complete; row 11 (TRACE) not started |
+| **Current Milestone** | Milestone 10B (Research Documents + Supabase Storage) — complete (10B-1 through 10B-5). Row 11 (TRACE) remains not started |
+| **Current Status** | 10B implements PLAN.md §4.10's `research_document` plus the first real Supabase Storage integration in this codebase (resolving TD-006 for research documents specifically), built in five staged sub-phases per explicit user direction after a full architecture-and-product-design review, explicitly approved before any code was written. A private `nexus-research-documents` Supabase Storage bucket (PDF-only, 25 MB limit) backs a plain-`httpx` `SupabaseStorageClient` behind a `StorageClient` protocol (mirroring `LLMProvider`'s established shape) — every Storage REST endpoint used was live-verified against the real bucket before implementation. Uploads are validated server-side (PDF magic-byte signature, 25 MB cap checked before buffering), stored under server-generated UUID object keys (never the user's filename), and persisted via a Storage-first/database-second consistency strategy with a tested compensating-delete-on-failure path. Provenance reuses ADR-007's `admin_upload` channel exactly as anticipated. Archive-only deletion (no hard delete, physical Storage object always preserved), full audit-event coverage on write actions, and Universal Search extended additively (title/document_type/description only, never PDF content — migration `0018`) round out the milestone. Issuer Detail's Research Documents section and the global `/research-documents` workspace + nav item shipped together, avoiding the discoverability gap Research Notes had before its own 10A addendum. Zero Anthropic calls, $0 AI cost. Full detail in §24.14 and `BUILD_LOG.md`. |
 | **Last Updated** | 2026-08-12 |
 | **Current Git Branch** | main |
-| **Latest Commit** | `b0c14eb` — Milestone 12: Universal Search (12A backend + 12B frontend) |
-| **Next Milestone** | 10B (Research Documents + Supabase Storage) and row 11 (TRACE adapter) both remain not-yet-authorized — neither begins until explicitly approved |
+| **Latest Commit** | COMMIT_HASH_10B — Milestone 10B: Research Documents + Supabase Storage |
+| **Next Milestone** | Row 11 (TRACE adapter) remains not-yet-authorized — begins only when explicitly approved |
 
 ---
 
@@ -101,7 +101,7 @@ milestone completes; it is not itself a log (see `BUILD_LOG.md` for that).
 | 7.5.3 | Historical Discovery Coverage Repair (inserted) | Zero-AI historical ingestion Complete; AI review of deferred bundles intentionally still deferred/not authorized | `bc7afd0` (AI cost control), — (zero-AI re-run itself, see `BUILD_LOG.md`) | — | Re-runs the 2026-01-01→2026-08-06 historical discovery window with TD-014's corrected SEC full-text-search `forms` behavior active. Two early live attempts (Aug 9) hit a CourtListener `Retry-After` defect that stalled the batch for 4+ hours on an uncapped `time.sleep()` — root-caused via `py-spy`, fixed (RFC 7231-correct parsing + a hard wait ceiling, TD-020). The user then paused the milestone to require AI cost control, observability, and Haiku/Sonnet model routing before any further backfill; that control layer (`app.ai.model_router`, `ai_call_log` table/migration `0014`, hard per-run budgets, zero-AI mode, pre-run cost estimation) was built and tested (35 new tests, 418/418 backend tests passing), with live quality validation fixing a Haiku markdown-fence parsing bug and confirming definitive/high-impact categories (Chapter 11, bankruptcy, plan-confirmed) always route straight to Sonnet. With that control layer in place, the user separately authorized a **zero-AI** (`--ai-mode zero`, $0 Anthropic spend) re-run of the historical window purely to measure real coverage before any paid AI review. Across 5 live attempts (2026-08-09→10), 4 crashed on genuine infrastructure issues (two more SEC-side transient `500`s hitting the same undefended top-level query-loop gap as the original Retry-After incident's sibling bug, plus two previously-undocumented stall types — a DB idle-in-transaction hang and an SEC-document-fetch hang, both killed and safely resumed via existing `(cik, accession_no)`/`rule_version` idempotency — see TD-022); the 5th attempt completed with 0 errors. Final state: 2,652 issuers (from 787), 28,170 SEC filings (from 7,243), 22,252 research evidence rows (from 6,239), 3,123 alerts (from 2,212), confirmed $0 Anthropic spend throughout (`ai_call_log` unchanged at 8 rows across all 5 attempts). AI review of the resulting deferred bundles remains separate, still-deferred work — not run by this pass, not auto-triggered by anything. Full detail in `BUILD_LOG.md`. |
 | 7.5.3-daily | Resumption of normal daily production research cycle (inserted) | Complete | — | — | See the 2026-08-10 daily-cycle `BUILD_LOG.md` entry. A side effect of the historical re-run above was discovered and corrected: `market_discovery_repository.get_latest_successful_run` (used by `delta` mode to compute its own resume watermark) does not exclude `mode=backfill` runs by design (unlike `get_latest_successful_daily_run`, which does, for Morning Brief display purposes only) — so the backfill's own completion timestamp became the resume point for the next `delta` run, which would have silently skipped Sunday 2026-08-09's SEC activity entirely (Saturday 2026-08-08 was already covered by the prior real delta). Corrected with one explicit `--mode backfill --start 2026-08-09 --end 2026-08-10` catch-up run (same pipeline, same idempotency, not counted as a Morning Brief research day since backfill mode is excluded from the daily-run boundary) followed by a normal self-computing `--mode delta` run, which idempotently found the catch-up's work already done and correctly recorded itself as the `2026-08-10` daily research day. See TD-023 for the underlying watermark-computation note (not fixed — a one-time manual correction was sufficient and lower-risk than changing shared watermark logic mid-task). A second, more consequential bug was found and fixed the same day: Morning Research Brief's `new_developments`/`historical_intelligence` split (and `RunDetails`' `new_sec_filings`/`new_court_events`/`new_research_evidence` counters) relied solely on `alert_event.is_backfill` (an ingestion-mode flag) rather than each record's real-world event/source date — so the catch-up run's 225 genuinely-current alerts were mechanically mislabeled historical. Fixed by classifying purely on `as_of_date`/`filing_date`/`entry_date` relative to the `(preceding_research_day, latest_research_day]` research-cycle boundary; `is_backfill` itself is untouched, still exposed as ingestion provenance. Verified against real production data: `issuers_with_developments` 0→191, `no_material_changes` true→false. 9 new regression tests. Full detail in `BUILD_LOG.md`. |
 | 8 | Watchlists (personal tracking lists, `collection_type=watchlist`) | Complete | 2026-08-11 | `9899007` | Reused the existing `collection`/`collection_membership` schema per ADR-016 — zero migration needed. New `watchlist_service.py` (create/rename/delete Watchlist, add/remove issuer) + `GET/POST /api/watchlists`, `GET/PATCH/DELETE /api/watchlists/{id}`, `POST/DELETE .../issuers[/{issuer_id}]`. "New developments" reuses `morning_brief_service.resolve_research_cycle`/`is_new_development` verbatim — no second definition of "new." Batched repository functions (`list_alerts_by_issuers`, `count_securities_by_issuers`, `list_collections_with_membership_for_issuers`) avoid N+1 across a Watchlist's issuers. Frontend: Watchlists landing page, Watchlist detail (desktop table / mobile cards via the existing `DataTable` pattern), and one reusable `AddToWatchlistButton` wired into Issuer Detail. A real "CFO Demo Watchlist" was created via the application's own service (not a fixture) with 6 real, currently-tracked issuers spanning active Chapter 11 (Trinseo, EchoStar), post-emergence (Diebold Nixdorf), covenant/default pressure (Community Health Systems), refinancing risk (Lumen Technologies), and liability management (iHeartMedia). §14's original "ten coverage + one benchmark Watchlists" vision predates ADR-016's Research-Universes/Watchlists split and is superseded by it — see §14 and §24.1. No per-user auth exists yet (TD-002); every Watchlist is `scope=personal`/`owner_user_id=NULL` in a single shared analyst workspace, by explicit design, documented as a known limitation. 481 backend tests pass (21 new, covering Watchlist CRUD, duplicate/idempotent membership, deletion isolation, latest-development/research-cycle/severity aggregation, and the Watchlist-vs-Research-Universe "current status" boundary), 130 frontend tests pass (17 new, covering the landing page, detail page incl. mobile cards, and the reusable Add to Watchlist component). Zero Anthropic calls — Watchlists never construct AI prompts. |
-| 9 | Research notes/documents + audit events | 10A (Research Notes + Audit Trail) Complete; 10B (Documents/Storage) Not Started, awaiting separate approval | 2026-08-12 | `fbf5da4` | Split into two approved sub-phases by explicit user direction — see §24.12 for the full 10A design record. `research_note`/`research_note_version` (full-snapshot-per-edit versioning) + `audit_event` (first audited-write path in the app) live-migrated (`0015`) and verified against the shared `nexus` schema. No `user`/`role`/`user_role` tables built — genuinely no 10A functional need, `AUTH_ENABLED=false` unchanged, identity fields nullable text mirroring `collection.owner_user_id`'s Milestone 8 precedent. A real Demo Research Note (Trinseo PLC, 3 real dated versions: covenant stress → going concern → Chapter 11, all citing real `alert_event` evidence) seeded idempotently via the app's own service. 511/511 backend tests pass (16 new), 164/164 frontend tests pass (17 new). Zero Anthropic calls. 10B (Documents, Supabase Storage, `research_document`) explicitly deferred, not started. **2026-08-12 addendum**: added a cross-issuer Research Notes workspace (`/research-notes`, enabled `Research Notes` nav item) after the user found notes undiscoverable outside Issuer Detail — strictly additive to the same `research_note` model (`GET /api/research-notes`'s `issuer_id` made optional, no migration, no new domain concept). See BUILD_LOG.md's same-day "Research Notes workspace" entry. |
+| 9 | Research notes/documents + audit events | 10A (Research Notes + Audit Trail) Complete; 10B (Research Documents + Supabase Storage) Complete | 2026-08-12 | `fbf5da4` (10A), COMMIT_HASH_10B (10B) | Split into two approved sub-phases by explicit user direction — see §24.12 for the full 10A design record and §24.14 for the full 10B design record. `research_note`/`research_note_version` (full-snapshot-per-edit versioning) + `audit_event` (first audited-write path in the app) live-migrated (`0015`) and verified against the shared `nexus` schema. No `user`/`role`/`user_role` tables built — genuinely no 10A functional need, `AUTH_ENABLED=false` unchanged, identity fields nullable text mirroring `collection.owner_user_id`'s Milestone 8 precedent. A real Demo Research Note (Trinseo PLC, 3 real dated versions: covenant stress → going concern → Chapter 11, all citing real `alert_event` evidence) seeded idempotently via the app's own service. 511/511 backend tests pass (16 new), 164/164 frontend tests pass (17 new). Zero Anthropic calls. **2026-08-12 addendum**: added a cross-issuer Research Notes workspace (`/research-notes`, enabled `Research Notes` nav item) after the user found notes undiscoverable outside Issuer Detail — strictly additive to the same `research_note` model (`GET /api/research-notes`'s `issuer_id` made optional, no migration, no new domain concept). See BUILD_LOG.md's same-day "Research Notes workspace" entry. **10B (2026-08-12)**: `research_document` (migrations `0017`/`0018`) + the first real Supabase Storage integration (`nexus-research-documents` private bucket, plain-`httpx` `SupabaseStorageClient` behind a `StorageClient` protocol) — full upload/list/view/download/archive workflow on Issuer Detail and a global `/research-documents` workspace shipped in the same milestone (avoiding the 10A discoverability gap), plus Universal Search extended to include `research_document` (title/metadata only, never PDF content). See §24.14 for the full design record. |
 | 10 | Alerts (Alerts Center — analyst inbox over existing `alert_event`, not a new rule engine) | Complete | 2026-08-11 | `7c43e3d` | Completed ahead of Milestone 9 (Research notes/documents) by explicit user direction — the incoming brief was explicitly numbered "Milestone 9" by the user even though this row is PLAN.md's original §18 build-order slot for Alerts; row numbers are left as originally assigned rather than renumbered, to avoid invalidating other cross-references in this document. See §24.11 for the full design: reused `alert_event`/`alerts.py`/`alert_repository.py` (already canonical since Milestone 6.5's ADR-018 pipeline, not the `alert_rule`/`alert_engine.py` design originally sketched in §12), zero migration, new `watchlist_id` filter + `/api/alerts/summary` + `/api/alerts/issuers` search, a new `AlertsPage.tsx` analyst-inbox UI, and two live-caught regressions fixed (`universe_names` leaking Watchlist names; incorrect pagination `total` for multi-issuer collection filters — both existed before this milestone but were only reachable once real Watchlists existed). Zero Anthropic calls. 23 new backend tests, 25 new/extended frontend tests. |
 | 11 | TRACE adapter/sample | Not Started | — | — | |
 | 12 | Universal Search | Complete (12A backend + 12B frontend) | 2026-08-12 | `b0c14eb` | Built as two staged sub-phases per explicit user direction — see §24.13 for the full design record. 12A: per-table generated `tsvector` columns + GIN indexes on `issuer`/`security`/`alert_event`/`court_docket`/`court_docket_entry`/`collection`/`research_note` (migration `0016`, resolving TD-003), `pg_trgm` GIN on `issuer.legal_name`/`security.description`, deterministic exact-match/prefix/FTS/trigram ranking tiers, thin `sec_filing` metadata search. 12B: `GlobalSearch` header typeahead (debounced, grouped, keyboard-navigable) and `/search` results page. Deliberately excludes `research_evidence`, `research_note_version`, `audit_event`, `docket_document`, and all of 10B. Zero Anthropic calls. 537/537 backend tests pass (24 new), 181/181 frontend tests pass (17 new). |
@@ -144,6 +144,10 @@ already made in §1–23; will grow with genuine shortcuts taken during implemen
 | TD-023 | `market_discovery_repository.get_latest_successful_run` (which `delta` mode uses to compute its own resume watermark) does not exclude `mode=backfill` runs — by design, since a backfill genuinely does perform real SEC full-text-search queries as of its actual execution time and the next `delta` run should not blindly re-examine what was just examined. This is a different function from `get_latest_successful_daily_run` (which *does* exclude `backfill`, for Morning Brief display purposes only, per Milestone 7.5.2) and was left unchanged by that fix intentionally. The gap: a `backfill` run's `resulting_watermark` is stamped with its own real completion time (`datetime.now(UTC)`), not derived from its declared `window_end_date` — so if a backfill's declared window ends well in the past (e.g. `2026-08-06`) but the run doesn't actually *complete* until days later, the next `delta` run's self-computed `resolved_start` silently jumps to the backfill's completion date, skipping any calendar days between the backfill's declared window end and its real completion. Live-observed 2026-08-10: the Jan–Aug historical re-run's declared window ended `2026-08-06`, but it didn't finish until `2026-08-10`, which would have caused a bare `--mode delta` invocation to skip Sunday `2026-08-09` entirely. Worked around this time with one explicit `--mode backfill --start 2026-08-09 --end 2026-08-10` catch-up run rather than changing the shared watermark-resolution function under time pressure; not expected to recur under normal nightly operation (a `backfill`-mode run stamping `resulting_watermark` with its own completion time is *usually* correct — the gap only appears when a backfill's declared window and its real completion time diverge, which is specific to how long-running historical work happens to be) | Low | If a future long-running `backfill` (declared window far in the past, real completion much later) precedes a `delta` run again, either recompute the gap manually (as done here) or consider having `run_discovery` derive `resulting_watermark` for `backfill` mode from `window_end_date` instead of `datetime.now(UTC)` — a genuine design tradeoff (declared-window-end is more conservative/correct for `delta`'s resume point, but `datetime.now(UTC)` is more conservative for "don't re-examine what a backfill just, in real wall-clock time, actually checked") that deserves its own explicit decision, not a reflexive change | Open (discovered 2026-08-10, `backend/app/services/market_discovery_service.py`, `backend/app/repositories/market_discovery_repository.py`) |
 | TD-024 | ~~Market Context's SOFR/HY OAS values had gone stale (SOFR showing `2026-08-05`, HY OAS `2026-08-04`, on `2026-08-11`).~~ **Resolved 2026-08-11.** Root cause: `app.providers.fred.provider.sync_series` — the only function that fetches new FRED observations — had never been invoked by any recurring job, route, or script since its one-time Milestone 5 seed (`fred_series_registry.last_synced_at` was `2026-08-06 14:20 UTC` for both series, unchanged since). Not a provider error, not a caching/TTL bug (`compute_freshness` correctly showed `cached`, derived from `retrieved_at` as designed — it was never lying), and not a wrong-row-selection bug (`get_latest_observation`'s `ORDER BY obs_date DESC LIMIT 1` was already correct) — purely a missing recurring trigger. Live FRED confirmed the real latest observations were `SOFR=3.63` (`2026-08-10`) and `BAMLH0A0HYM2=2.70` (`2026-08-07`). Fixed in two parts: (1) an immediate one-time manual refresh via the existing, unmodified `sync_series`, verified live in production; (2) `app.scripts.run_nightly_scheduled_discovery` now also refreshes exactly these two series on every correct-hour (10 PM ET) trigger, independent of the market-discovery research-cycle duplicate-check (a different cadence, a different data source) and isolated per-series (one series' failure never blocks the other or the research cycle). No historical discovery, SEC backfill, CourtListener sync, or Anthropic call involved in this fix. 4 new tests (skip-without-key, per-series failure isolation, correct-hour triggers refresh, wrong-hour trigger does not) | — | `backend/app/scripts/run_nightly_scheduled_discovery.py` | **Resolved** — still pending KI-002 (Railway cron trigger creation itself) to run automatically in production; the code path is proven and tested |
 | TD-025 | `research_note.access_classification` (`standard`/`restricted`, Milestone 10A) is captured on every note and shown in the UI but not enforced by any route dependency — deliberately distinct from `DataClassification`/`policy_check`, which governs licensed *external* data, not an analyst-authored note's internal visibility | Low | Wire real enforcement once TD-002 (Supabase Auth JWT validation, `user`/`role`/`user_role`) exists — enforcement without real identity would be theater, not a control | Open (deferred by design, `backend/app/schemas/research.py`, `backend/app/api/routes/research_notes.py`) |
+| TD-026 | No malware/AV scanning exists for uploaded research documents (Milestone 10B) — uploaded PDFs are validated for actual PDF-signature content and size, but no scanning capability exists in this stack or has been contracted for | Medium | Integrate a malware-scanning service (e.g. a Supabase Storage webhook to a scanning provider, or a scan-before-serve step) if/when this moves beyond a shared internal-analyst-workspace posture | Open (deferred by design, honestly documented rather than implied to exist — `backend/app/services/research_document_service.py`) |
+| TD-027 | `research_document.confidentiality_classification` (`standard`/`restricted`, Milestone 10B) is captured on every document and shown in the UI but not enforced by any route dependency — identical reasoning to TD-025 (`research_note.access_classification`): no real identity/roles exist yet (`AUTH_ENABLED=false`) | Low | Wire real enforcement once TD-002 (Supabase Auth JWT validation) exists, alongside TD-025's identical fix | Open (deferred by design, `backend/app/models/research_document.py`) |
+| TD-028 | No physical Supabase Storage cleanup/reconciliation process exists for archived `research_document` rows (the object is deliberately never deleted on archive, for provenance durability) — and a rare orphaned-Storage-object risk exists if a compensating delete itself fails after a database write failure during upload (logged clearly, not silently swallowed, but not auto-retried) | Low | Build a reconciliation job (compare Storage object listing against `raw_provider_payload.storage_object_path` rows) only if a real need for archived-document storage cost reduction or orphan cleanup emerges — explicitly deferred per direct instruction ("design later if required") | Open (deferred by explicit direction, `backend/app/services/research_document_service.py`) |
+| TD-029 | No ASGI/proxy-level maximum-request-body-size limit exists for the research document upload endpoint — Starlette's own multipart parser has no such cap, so the application-level 25 MB check in `research_documents.py` runs only after the full request body has already been spooled (to memory then disk) by Starlette itself; a true streaming-abort defense against a very large request would need a Railway/reverse-proxy-level limit | Low | Add a reverse-proxy/ASGI-level max-body-size limit if abusive very-large uploads become a real observed problem — not implemented in Milestone 10B, a shared-internal-workspace risk judged acceptable for now | Open (deferred by design, `backend/app/api/routes/research_documents.py`) |
 | TD-021 | Model non-determinism on nested-subsidiary issuer attribution: live quality-validation during Milestone 7.5.3 re-reviewed a real production alert (EchoStar Corporation 8-K disclosing Chapter 11 filings by subsidiaries HSSC/HNS Americas) through both a fresh Haiku call and a fresh Sonnet call — both independently returned `issuer_is_subject=true`, disagreeing with the original stored value (`false`, from an earlier Sonnet review of the identical excerpt). This is *not* a Haiku-specific reliability gap (a fresh Sonnet call reproduced the same disagreement) — it appears to be genuine model non-determinism on a hard, legitimately ambiguous judgment call (a subsidiary filing vs. "the issuer and its consolidated subsidiaries acting together") of exactly the kind Milestone 7.5.1's audit was built around. The routing policy correction this milestone made (high-impact categories always go to Sonnet, never Haiku) is still the right conservative default, but does not fully close this — the underlying instability exists in Sonnet's own judgment on repeated fresh calls too | Medium | Consider a stricter human-review gate specifically for subsidiary/nested-entity Chapter 11 attribution (e.g. never auto-upgrade `verified` membership on this evidence type without an explicit second confirmation), or accept the existing `partial`/upgrade-only design as sufficient mitigation — a product decision, not purely an engineering one | Open (discovered during Milestone 7.5.3's live quality validation, not guessed) |
 
 ---
@@ -2780,3 +2784,285 @@ No ADR was written — PLAN.md §4.13 already explicitly deferred exactly
 this implementation decision ("Decision deferred to implementation... §16
 build order step 12") to this milestone; this is that decision being made,
 not a new architectural decision.
+
+---
+
+## 24.14 Milestone 10B — Research Documents + Supabase Storage (Milestone 9/row 9 slice — complete, 2026-08-12)
+
+**Scope**: PLAN.md row 9's second slice — `research_document` (§4.10) plus
+the first real Supabase Storage integration in this codebase (TD-006).
+Built after a full architecture-and-product-design review, explicitly
+approved before any code was written (mirroring 10A's/12A's precedent),
+in five staged sub-phases: 10B-1 (persistence/storage foundation), 10B-2
+(API routes), 10B-3 (Issuer Detail UX), 10B-4 (global workspace + nav),
+10B-5 (Universal Search integration).
+
+**Pre-implementation checks**: no existing bucket/configuration conflict
+found — the shared Supabase project had zero Storage buckets at all
+(live-verified via the Storage REST API before creating anything); a new
+private bucket, `nexus-research-documents` (PDF-only, 25 MB bucket-level
+limit as defense in depth), was created and confirmed private. Alembic's
+live head was `0016`, matching local, before this milestone's first
+migration. No ADR/schema conflict found with PLAN.md §4.10's original
+`research_document` sketch — it needed only additive refinement, the same
+category of "deliberate refinement" 10A recorded for `research_note`.
+
+**Schema (migration `0017`)**: `research_document` (id — client-generated
+`uuid4()`, not server-default, so the same id can be embedded in the
+Storage object key before the row exists; issuer_id NOT NULL;
+security_id nullable; document_type + confidentiality_classification
+text+CHECK; title; description; original_filename; raw_payload_id FK →
+`raw_provider_payload`; extracted_text nullable, never populated;
+document_date nullable; uploaded_by nullable; provenance_id FK;
+is_archived/archived_at/archived_by mirroring `research_note`'s
+"no hard delete, ever" posture; created_at/updated_at). Also adds
+`raw_provider_payload.size_bytes` (nullable bigint) — a generic byte-size
+column for every large payload that table stores, not duplicated onto
+`research_document` specifically, keeping physical-file metadata
+centralized on the one table already responsible for it. Migration `0018`
+(10B-5) adds `research_document.search_vector` in a separate migration,
+matching exactly how Milestone 12A added `search_vector` to seven
+already-existing tables in its own dedicated migration rather than
+bundling it into the table's creation. `confidentiality_classification`
+reuses `AccessClassification`'s `standard`/`restricted` values (the same
+two the column already uses on `research_note`) rather than a new,
+parallel enum — captured and displayed, not enforced, for the identical
+TD-025 reasoning (no real identity/roles exist yet).
+
+**Document type taxonomy**: a new, restrained `ResearchDocumentType`
+text+CHECK enum — `credit_agreement`, `amendment`, `earnings_presentation`,
+`investor_presentation`, `restructuring_presentation`,
+`lender_presentation`, `bankruptcy_court_document`,
+`financial_model_analysis`, `internal_research_memo`, `other`.
+
+**Storage architecture**: `SupabaseStorageClient` (plain `httpx` against
+Supabase Storage's REST API — no `supabase-py` dependency, matching this
+project's existing per-provider `httpx` style) behind a `StorageClient`
+Protocol (`app/storage/base.py`), mirroring `LLMProvider`'s established
+shape (ADR-010). Every endpoint used (`POST /object/{bucket}/{key}`,
+`POST /object/sign/{bucket}/{key}`, `DELETE /object/{bucket}/{key}`) was
+verified live against the real, empty bucket before being implemented —
+not assumed from memory of the API's shape. A `FakeStorageClient`
+(in-memory, with test hooks to simulate upload/delete/sign failures) is
+the only implementation any test ever touches — no test run makes a real
+Storage network call. Object keys are always
+`research-documents/{issuer_id}/{document_id}/{document_id}.pdf` — a
+server-generated UUID, never the user's filename, eliminating path
+traversal/collision risk by construction; `original_filename` is
+sanitized (control/path/header-unsafe characters stripped, length capped)
+and used only for display and `Content-Disposition`, never as a storage
+key. Live-verified against the real bucket: Supabase's signed-URL
+endpoint accepts an appended `download=<filename>` query parameter that
+makes Supabase itself emit a correctly percent-encoded
+`Content-Disposition: attachment; filename=...` header — used for the
+"Download" action; the plain signed URL (no `download` param) is used for
+"View," rendering the PDF inline in the browser's native viewer.
+
+**Upload consistency (approved architecture)**: Storage write happens
+first; the database transaction (`raw_provider_payload` + `provenance` +
+`research_document` + `audit_event`, one `db: Session`) second. Any
+exception in the database transaction after a successful Storage upload
+triggers a synchronous compensating `storage_client.delete()` of the
+just-uploaded object before re-raising; a compensating delete that itself
+fails is logged clearly (`logger.error`, not swallowed), leaving a rare,
+documented residual orphaned-object risk rather than a silent one. Tested
+directly: `test_upload_compensates_storage_when_database_write_fails`
+forces a real foreign-key violation (a nonexistent `security_id`) after a
+successful fake-Storage upload and asserts the object was both uploaded
+and then removed.
+
+**Provenance**: reuses ADR-007's `admin_upload` channel exactly as that
+ADR's own consequences section anticipated ("any future `research_document`
+admin upload") — `provider=admin_upload`, `original_source` (the
+uploader's attestation of where the document actually came from:
+`issuer_site`/`courtlistener`/`pacer`/`other`), `source_attested_by`/`at`.
+`provenance.classification=public` (an internally-uploaded research
+document is not licensed-vendor data, synthetic demo data, or
+AI-generated — `public` is the correct existing bucket; the
+standard/restricted internal-visibility distinction is
+`research_document.confidentiality_classification`, a separate concept,
+same split `research_note` already established).
+
+**Security controls implemented**: private bucket (never public); PDF
+magic-byte verification (`%PDF-` signature checked against actual file
+bytes, never the client-supplied MIME type or filename extension);
+25 MB limit enforced server-side (checked via `seek`/`tell` against the
+already-parsed spooled file before it's ever read into a Python bytes
+buffer, so an oversized upload is rejected without buffering it) —
+client-side validation exists only as a UX hint, never the security
+boundary; server-generated UUID object keys; sanitized filenames; safe,
+Supabase-generated `Content-Disposition` headers; short-lived (5-minute)
+signed URLs, minted fresh on every request, never cached or reused; no
+direct browser-to-Supabase-Storage credentials anywhere (the frontend has
+zero Supabase dependency — every upload/download proxies through
+FastAPI, confirmed by inspection: no `supabase-js`, no `VITE_SUPABASE_*`
+variable, in this codebase). **Explicitly and honestly not provided**: no
+malware/AV scanning (no such capability exists in this stack or has been
+contracted for) — documented as a real residual risk, not implied to
+exist. `AUTH_ENABLED` unchanged (`false`); `confidentiality_classification`
+captured, not enforced (TD-027, same reasoning as TD-025).
+
+**APIs** (`backend/app/api/routes/research_documents.py`, prefix
+`/api/research-documents`): `GET ?issuer_id=&document_type=&include_archived=`
+(list — `issuer_id` optional, backing both the issuer-scoped section and
+the global workspace with one endpoint, matching `research_notes`'
+precedent exactly), `POST` (multipart upload), `GET /{id}`,
+`GET /{id}/download?download=` (returns a fresh signed URL —
+`download=false` inline view, `download=true` forced Save-As),
+`PATCH /{id}` (metadata only — 409 if archived, mirroring
+`research_note`'s identical archived-is-read-only posture; never
+replaces the underlying file), `POST /{id}/archive`. Thin per §3 — all
+orchestration lives in `research_document_service`.
+
+**Deletion semantics**: archive-only, no hard delete, exactly matching
+`research_note`. Archiving never deletes the physical Storage object —
+the original artifact is preserved for provenance/audit durability;
+physical cleanup/reconciliation is explicitly not built (TD-028),
+consistent with the approved "design later if required" instruction.
+Archiving is idempotent (a second archive call is a no-op, returns the
+already-archived document, writes no second audit event) — same pattern
+as `research_note_service.archive_note`.
+
+**Audit trail**: reuses the existing `audit_event`/`audit_repository`
+exactly as 10A did — no parallel system. `research_document_uploaded`,
+`research_document_metadata_updated` (before/after state), and
+`research_document_archived` are audited; view/download actions are
+deliberately not audited in 10B (a different-shaped, high-frequency
+concern that would blur 10A's "first audited *write* path" precedent —
+a candidate for a future milestone once real access-tracking has a real
+compliance driver).
+
+**Frontend**: `ResearchDocumentsSection` embedded on `IssuerPage.tsx`
+directly beneath Analyst Research Notes (title, type badge, restricted/
+archived chips, filename, dates, uploaded-by, View/Download/Archive
+icon actions) with a dedicated upload page
+(`/issuers/:issuerId/research-documents/new`,
+`ResearchDocumentUploadPage.tsx` — file picker with client-side PDF/size
+hints, title auto-filled from the filename, document type/date/
+confidentiality/original-source/uploader fields), mirroring
+`ResearchNotesSection`'s/`ResearchNoteEditorPage`'s established shapes.
+A global `/research-documents` workspace (`ResearchDocumentsWorkspacePage.tsx`)
+and a `Research Documents` nav item (positioned directly after Research
+Notes) ship in the *same* milestone as the issuer-scoped section — not as
+a later addendum — explicitly avoiding the discoverability gap Research
+Notes had before its same-day 10A addendum. `useAllResearchDocuments`
+mirrors `useAllResearchNotes`'s cross-issuer-listing pattern exactly.
+
+**Universal Search integration (10B-5)**: extends the existing
+Milestone 12A architecture additively — one new migration
+(`0018`, `research_document.search_vector` + GIN index, same generated-
+column pattern as every other entity), one new `SearchEntityType.
+RESEARCH_DOCUMENT` member, one new `search_research_documents` function
+registered in `search_service`'s existing, unmodified `_GROUP_FUNCTIONS`
+list (positioned after `research_note`, before the thin `sec_filing`
+group). Deliberately thin, matching `sec_filing`'s precedent: the
+generated `search_vector` indexes `title` (weight A) plus
+`document_type` (weight C, underscores replaced with spaces so "credit
+agreement" matches `credit_agreement` — the exact tokenization technique
+already proven on `alert_event.category`) and `description` (weight C);
+it never references `extracted_text` (always `NULL` — no PDF extraction
+exists anywhere in this codebase), so "search research documents" cannot
+be mistaken for document-content search. Live-verified with a dedicated
+test that a query only findable in a hypothetical extracted PDF body does
+*not* match. No existing entity type's search behavior, ranking tier, or
+exact-match semantics was touched — `test_search_group_entity_types_are_
+within_the_approved_set` (a real end-to-end HTTP test) was updated to add
+`research_document` to its allowed set, the only change to that test.
+
+**Environment/deployment**: `SUPABASE_STORAGE_BUCKET=nexus-research-documents`
+set in local `.env` (gitignored); the same value must be set on Railway
+before production upload/download works — tracked explicitly in the
+deployment-discipline record below, not assumed. `python-multipart`
+added as a new backend dependency (required by FastAPI for multipart
+form parsing — not previously needed anywhere in this codebase). No new
+secret: Storage auth reuses the existing `SUPABASE_SERVICE_KEY`,
+backend-only, never exposed via `VITE_` variables (frontend has zero
+Supabase dependency, confirmed by inspection).
+
+**Tests**: 42 new backend tests (13 unit — PDF
+magic-byte validation, size limit, filename sanitization, storage-key
+generation; 6 integration — repository CRUD/filtering/archive idempotency;
+10 integration — service-layer upload orchestration incl. the
+compensating-delete-on-DB-failure path, metadata update audit
+before/after state, archive idempotency, signed-URL minting/
+force-download; 9 route-level `TestClient` tests — multipart shape
+validation, 404s, all following `test_alerts_routes.py`'s established
+"never mutate the live shared schema at this layer" convention; 4
+integration — Universal Search's new `research_document` group, its
+document_type tokenization, its archived-exclusion, and its
+extracted-text-non-reference). 21 new frontend tests (`ResearchDocumentsSection`:
+empty/populated states, restricted chip, view/download/archive
+interactions; `ResearchDocumentUploadPage`: disabled-until-valid, client-side
+PDF rejection, issuer-scoped submission; `ResearchDocumentsWorkspacePage`:
+loading/error/empty/populated states, issuer linking, view action; 3
+updated/added `Layout` tests for the new nav item and position, plus a
+mobile-drawer test). 587/587 backend tests
+pass total, 211/211 frontend tests pass total (28 files). `ruff`/`black`/
+`mypy` clean; `eslint`/`prettier`/`tsc` clean; both production builds
+succeed; both backend (`uvicorn`) and frontend (`vite`) confirmed booting
+locally.
+
+**Migration verification**: `alembic upgrade head` applied live against
+the shared Supabase project (outside the 10 PM ET nightly-ingestion
+window, confirmed via `date -u` before running); `alembic check` confirms
+zero drift after both migration `0017` and migration `0018`, each
+verified independently immediately after its own `upgrade head`.
+
+**Regression verification**: purely additive — one new table, one column
+added to an existing table (`raw_provider_payload.size_bytes`, nullable),
+one new column added to `research_document` itself in a follow-up
+migration, new repository/service/schema/route/storage files, new
+frontend components/pages, and `Layout.tsx`'s nav list plus
+`search_service`'s group list (both additive single-line insertions).
+Nothing in the nightly scheduler, SEC/CourtListener/OpenFIGI/FRED
+ingestion, AI routing, Morning Research Brief, Watchlists, Alerts Center,
+Research Universes, Distress Timeline, Research Notes/versioning/audit
+behavior, or any existing Universal Search entity type's ranking/
+exact-match/search behavior was touched — confirmed by the full existing
+test suite passing unmodified (only `test_search_group_entity_types_are_
+within_the_approved_set`'s allowed-set literal was extended, no other
+existing test assertion changed).
+
+**Anthropic application calls**: **0**, confirmed by design (no `app.ai`
+import anywhere in any new/changed 10B file) and by inspection of
+`ai_call_log` (unchanged row count before/after). AI development/test
+cost: **$0**. No uploaded document's bytes or extracted content was ever
+sent to Anthropic or any other AI provider — 10B performs no extraction,
+no summarization, no chat, no agent, and no embedding of any kind.
+
+**Explicitly not built in 10B** (per direct instruction): PDF text
+extraction, OCR, chunking, embeddings, pgvector writes/search, semantic
+retrieval, RAG, document summarization, "chat with PDF," Research
+Copilot, autonomous agents. `research_document.extracted_text` exists as
+a reserved, nullable slot per PLAN.md §4.10's own sketch and is never
+populated. The `embedding` table (§4.9) already has the generic
+`source_table`/`source_id` shape a future `document_chunk` embedding
+would need — no schema change required there when that milestone is
+eventually authorized; a future document-intelligence milestone will
+separately decide whether the canonical path is `research_document` →
+`document_extraction` → `document_chunk` → `embedding` (for page-aware
+citations like "Credit Agreement.pdf — page 47") rather than a single
+whole-document text column, per the explicit instruction not to decide
+that now.
+
+**Technical debt**: new **TD-026** (no malware/AV scanning for uploaded
+research documents — no such capability exists in this stack; a real,
+honestly-documented residual risk for untrusted file uploads), **TD-027**
+(`research_document.confidentiality_classification` captured but not
+enforced — identical reasoning to TD-025, deferred to the same future
+real-auth milestone), **TD-028** (no physical Storage cleanup/
+reconciliation process for archived documents, and a rare orphaned-
+Storage-object risk if a compensating delete itself fails after a
+database write failure — both explicitly deferred, "design later if
+required" per direct instruction), **TD-029** (no ASGI/proxy-level
+maximum-request-body-size limit — Starlette's own multipart parser has
+no such cap, so the 25 MB check in `research_documents.py` runs only
+after Starlette has already spooled the full request body; a true
+streaming-abort defense against a very large request would need a
+Railway/reverse-proxy-level limit, not implemented in 10B).
+
+No ADR was written — this is additive implementation of already-approved
+architecture (PLAN.md §4.10, and the row-9 slicing this document's own
+build order anticipated), following the identical no-new-ADR precedent
+10A and 12A both set for additive milestones within already-approved
+architecture.

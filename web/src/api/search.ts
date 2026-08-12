@@ -1,10 +1,12 @@
 import { apiFetch } from "./client";
 
 /**
- * Universal Search (PLAN.md 4.13, 8; Milestone 12A). Deliberately excludes
- * research_evidence, research_note_version, audit_event, docket_document,
- * and all of 10B — see backend/app/repositories/search_repository.py's
- * module docstring for the full rationale.
+ * Universal Search (PLAN.md 4.13, 8; Milestone 12A, extended by Milestone
+ * 10B-5 for research_document). Deliberately excludes research_evidence,
+ * research_note_version, audit_event, and docket_document — see
+ * backend/app/repositories/search_repository.py's module docstring for the
+ * full rationale. `research_document` search is title/metadata only — no
+ * PDF content search exists.
  */
 export type SearchEntityType =
   | "issuer"
@@ -14,6 +16,7 @@ export type SearchEntityType =
   | "court_docket_entry"
   | "collection"
   | "research_note"
+  | "research_document"
   | "sec_filing";
 
 export interface SearchResultItem {

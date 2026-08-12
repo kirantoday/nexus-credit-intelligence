@@ -36,6 +36,7 @@ import { CourtDocketSection } from "../components/CourtDocketSection";
 import { DistressTimeline } from "../components/DistressTimeline";
 import { ProvenanceBadge } from "../components/ProvenanceBadge";
 import { ResearchNotesSection } from "../components/ResearchNotesSection";
+import { ResearchDocumentsSection } from "../components/ResearchDocumentsSection";
 import { SyntheticDataBadge } from "../components/SyntheticDataBadge";
 import { useCapitalStructure } from "../queries/useCapitalStructure";
 import { useIssuerDetail } from "../queries/useIssuerDetail";
@@ -368,6 +369,10 @@ export function IssuerPage(): ReactElement {
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <ResearchNotesSection issuerId={issuer.issuer_id} />
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <ResearchDocumentsSection issuerId={issuer.issuer_id} />
       </Paper>
 
       <Paper id="securities-section" variant="outlined" sx={{ p: 2 }}>

@@ -18,6 +18,7 @@ from app.api.routes.issuer import router as issuer_router
 from app.api.routes.issuer_timeline import router as issuer_timeline_router
 from app.api.routes.market_context import router as market_context_router
 from app.api.routes.morning_brief import router as morning_brief_router
+from app.api.routes.research_documents import router as research_documents_router
 from app.api.routes.research_evidence import router as research_evidence_router
 from app.api.routes.research_notes import router as research_notes_router
 from app.api.routes.research_universes import router as research_universes_router
@@ -63,4 +64,5 @@ app.include_router(court_dockets_router)
 app.include_router(issuer_timeline_router)
 app.include_router(watchlists_router)
 app.include_router(research_notes_router)
+app.include_router(research_documents_router)
 app.include_router(search_router)

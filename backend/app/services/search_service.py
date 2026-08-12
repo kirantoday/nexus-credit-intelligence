@@ -37,6 +37,7 @@ _GROUP_FUNCTIONS: list[tuple[SearchEntityType, _SearchFn]] = [
     (SearchEntityType.COURT_DOCKET_ENTRY, search_repository.search_court_docket_entries),
     (SearchEntityType.COLLECTION, search_repository.search_collections),
     (SearchEntityType.RESEARCH_NOTE, search_repository.search_research_notes),
+    (SearchEntityType.RESEARCH_DOCUMENT, search_repository.search_research_documents),
     (SearchEntityType.SEC_FILING, search_repository.search_sec_filings),
 ]
 

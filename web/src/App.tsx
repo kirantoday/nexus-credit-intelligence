@@ -7,6 +7,8 @@ import { CreditUniversePage } from "./pages/CreditUniversePage";
 import { IssuerPage } from "./pages/IssuerPage";
 import { MorningResearchBriefPage } from "./pages/MorningResearchBriefPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+import { ResearchDocumentUploadPage } from "./pages/ResearchDocumentUploadPage";
+import { ResearchDocumentsWorkspacePage } from "./pages/ResearchDocumentsWorkspacePage";
 import { ResearchNoteEditorPage } from "./pages/ResearchNoteEditorPage";
 import { ResearchNotePage } from "./pages/ResearchNotePage";
 import { ResearchNotesWorkspacePage } from "./pages/ResearchNotesWorkspacePage";
@@ -22,7 +24,12 @@ export function App(): ReactElement {
         <Route path="/" element={<CreditUniversePage />} />
         <Route path="/issuers/:issuerId" element={<IssuerPage />} />
         <Route path="/issuers/:issuerId/research-notes/new" element={<ResearchNoteEditorPage />} />
+        <Route
+          path="/issuers/:issuerId/research-documents/new"
+          element={<ResearchDocumentUploadPage />}
+        />
         <Route path="/research-notes" element={<ResearchNotesWorkspacePage />} />
+        <Route path="/research-documents" element={<ResearchDocumentsWorkspacePage />} />
         <Route path="/research-notes/:noteId" element={<ResearchNotePage />} />
         <Route path="/research-notes/:noteId/edit" element={<ResearchNoteEditorPage />} />
         <Route path="/research-universes" element={<ResearchUniversesPage />} />

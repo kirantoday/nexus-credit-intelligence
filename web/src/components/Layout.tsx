@@ -37,6 +37,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Watchlists", path: "/watchlists", enabled: true },
   { label: "Alerts", path: "/alerts", enabled: true },
   { label: "Research Notes", path: "/research-notes", enabled: true },
+  { label: "Research Documents", path: "/research-documents", enabled: true },
   { label: "Search", path: "/search", enabled: true },
   { label: "About Nexus", path: "/about", enabled: true },
   { label: "Dashboard", path: "/dashboard", enabled: false },

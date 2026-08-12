@@ -487,6 +487,10 @@ class AuditEventType(StrEnum):
     RESEARCH_NOTE_CREATED = "research_note_created"
     RESEARCH_NOTE_UPDATED = "research_note_updated"
     RESEARCH_NOTE_ARCHIVED = "research_note_archived"
+    # --- Milestone 10B: Research Documents ---
+    RESEARCH_DOCUMENT_UPLOADED = "research_document_uploaded"
+    RESEARCH_DOCUMENT_METADATA_UPDATED = "research_document_metadata_updated"
+    RESEARCH_DOCUMENT_ARCHIVED = "research_document_archived"
 
 
 # --- Milestone 12A: Universal Search ---
@@ -507,3 +511,28 @@ class SearchEntityType(StrEnum):
     COLLECTION = "collection"
     RESEARCH_NOTE = "research_note"
     SEC_FILING = "sec_filing"
+    RESEARCH_DOCUMENT = "research_document"
+
+
+# --- Milestone 10B: Research Documents + Storage ---
+
+
+class ResearchDocumentType(StrEnum):
+    """`research_document.document_type` (PLAN.md 4.10; Milestone 10B).
+
+    A restrained, distressed-credit-research-relevant taxonomy — not
+    exhaustive by design (`OTHER` is the deliberate escape hatch). Text+CHECK
+    per ADR-014: adding an eleventh type later is an ordinary migration, not
+    a schema-altering `ALTER TYPE`.
+    """
+
+    CREDIT_AGREEMENT = "credit_agreement"
+    AMENDMENT = "amendment"
+    EARNINGS_PRESENTATION = "earnings_presentation"
+    INVESTOR_PRESENTATION = "investor_presentation"
+    RESTRUCTURING_PRESENTATION = "restructuring_presentation"
+    LENDER_PRESENTATION = "lender_presentation"
+    BANKRUPTCY_COURT_DOCUMENT = "bankruptcy_court_document"
+    FINANCIAL_MODEL_ANALYSIS = "financial_model_analysis"
+    INTERNAL_RESEARCH_MEMO = "internal_research_memo"
+    OTHER = "other"

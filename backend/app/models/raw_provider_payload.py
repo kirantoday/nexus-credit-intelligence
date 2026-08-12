@@ -5,6 +5,13 @@ intentional circular FK per the schema — see PLAN.md 4.1/4.4). `use_alter=True
 tells Alembic/SQLAlchemy to create this table's FK as a separate `ALTER TABLE
 ... ADD CONSTRAINT` after both tables exist, rather than failing to resolve a
 create-order cycle.
+
+`size_bytes` (Milestone 10B) is a generic byte-size column added for every
+large payload this table stores (admin-uploaded research documents today;
+filings/court documents/TRACE extracts whenever those start recording it too)
+— kept here rather than duplicated on any one consumer table, since "how big
+is this blob" is a property of the raw payload, not of any particular
+canonical entity that references it.
 """
 
 from __future__ import annotations
@@ -13,7 +20,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Text, text
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -48,6 +55,7 @@ class RawProviderPayload(Base):
     retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     checksum: Mapped[str] = mapped_column(Text, nullable=False)
     content_type: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     provenance_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True),
         ForeignKey("provenance.id", use_alter=True, name="fk_raw_provider_payload_provenance_id"),

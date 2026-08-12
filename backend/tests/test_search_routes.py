@@ -48,7 +48,9 @@ def test_search_group_entity_types_are_within_the_approved_set(client: TestClien
     real response may ever be research_evidence, research_note_version,
     audit_event, or docket_document — those have no repository function
     and no `SearchEntityType` member at all, but this test proves it end
-    to end through the real route, not just by code inspection."""
+    to end through the real route, not just by code inspection.
+    `research_document` was added (title/metadata only) in Milestone
+    10B-5."""
     allowed = {
         "issuer",
         "security",
@@ -57,6 +59,7 @@ def test_search_group_entity_types_are_within_the_approved_set(client: TestClien
         "court_docket_entry",
         "collection",
         "research_note",
+        "research_document",
         "sec_filing",
     }
     response = client.get("/api/search", params={"q": "the", "limit": 5})
