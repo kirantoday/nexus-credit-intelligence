@@ -6755,7 +6755,7 @@ the precedent set by Milestone 9/Alerts and Milestone 8/Watchlists.
 
 **Commit Hash**
 
-(pending — see PLAN.md for the same placeholder, filled in once committed)
+`fbf5da4`
 
 **Approximate Time Spent**
 
