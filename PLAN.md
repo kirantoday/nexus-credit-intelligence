@@ -69,13 +69,13 @@ the milestone-by-milestone stop-and-wait workflow.
 
 | Field | Value |
 |---|---|
-| **Overall Progress** | ~57% — 12 of 20 milestone units complete (16 numbered milestones + 6.5, 7.5, 7.5.1, 7.5.2 inserted, 7.5.3 planned; 1–7, 6.5, 7.5, 7.5.1, and 7.5.2 done; Milestone 15 also completed early, discovered already-satisfied) |
-| **Current Milestone** | Milestone 7.5.3 (Historical Discovery Coverage Repair) — zero-AI historical ingestion complete; AI review of deferred bundles intentionally still separate/not yet authorized; normal daily production research cycle now active |
-| **Current Status** | Milestone 7.5.2 is complete (see prior entries). Milestone 7.5.3's AI cost-control layer (`app/ai/model_router.py`, `ai_call_log` table/migration `0014`, hard per-run budgets, zero-AI mode, pre-run cost estimation) was built and tested (35 new tests, 418/418 backend tests passing) after two live CourtListener `Retry-After` stalls paused the milestone. With that control layer in place, the user separately authorized a **zero-AI** (`--ai-mode zero`, $0 Anthropic spend) re-run of the 2026-01-01→2026-08-06 historical window (to pick up TD-014's corrected SEC `forms` behavior) purely to measure real coverage before any paid AI review — this ran across 5 live attempts between 2026-08-09 and 2026-08-10 (4 crashed on real, honestly-diagnosed infrastructure issues — see TD-022 — and were safely resumed via existing `(cik, accession_no)`/`rule_version` idempotency; the 5th completed with 0 errors) and is now **complete**: production gained real data (issuer 787→2,652, `sec_filing` 7,243→28,170, `research_evidence` 6,239→22,252, `alert_event` 2,212→3,123, `market_discovery_candidate` 891→4,727), confirmed $0 Anthropic spend throughout (`ai_call_log` unchanged at 8 rows across all 5 attempts). AI review of the resulting deferred bundles (bundles that needed model judgment but got none, per zero-AI mode's design — reachable by a future AI-enabled run via the same `bundle_key` idempotency check) remains a **separate, still-deferred** effort, not run by this pass and not authorized to run automatically. Normal daily production operation (the `run_market_discovery --mode delta` cycle) resumed 2026-08-10 — see the Aug 10 daily cycle entry below. Full detail in `BUILD_LOG.md`. |
-| **Last Updated** | 2026-08-10 |
+| **Overall Progress** | ~59% — Milestones 1–8, 6.5, 7.5, 7.5.1, 7.5.2, 7.5.3, 9 (Alerts), 15 complete; Milestone 9/row 9 (Research Notes/Documents) split — 10A (Research Notes + Audit Trail) complete, 10B (Documents/Storage) not started, awaiting separate approval |
+| **Current Milestone** | Milestone 10A (Research Notes + Audit Trail) — complete. 10B (Research Documents + Supabase Storage) explicitly deferred, awaiting separate approval; Universal Search also not started |
+| **Current Status** | Milestone 10A implements PLAN.md row 9's Research Notes half only, per explicit user direction to split the original "Research notes/documents + audit events" milestone into two controlled sub-phases. `research_note`/`research_note_version` (full-snapshot-per-edit versioning, "Version 1 → Version 2 → Version 3" all independently renderable) + `audit_event` (the app's first audited-write path) shipped, migrated (`0015`), and verified live against the shared `nexus` schema. No `user`/`role`/`user_role` tables built — genuinely no 10A functional need; `AUTH_ENABLED=false` unchanged; identity fields (`author_user_id`, `edited_by`, `audit_event.user_id`) are nullable `text`, mirroring `collection.owner_user_id`'s Milestone 8 precedent, never fabricated per-user ownership. Issuer Detail gained an "Analyst Research Notes" section beneath the Distress Timeline, a create/edit form, a note detail page with clickable version history and an audit trail panel. A real, idempotently-seeded Demo Research Note on Trinseo PLC (3 real dated versions citing real `alert_event` evidence: covenant stress → going concern → Chapter 11) was built through the app's own `research_note_service`, not a bypassing script. A real ordering bug was live-caught and fixed before commit: `occurred_at`/`edited_at` used `now()` (transaction-frozen) rather than `clock_timestamp()` (real per-statement time), which could produce unstable audit/version ordering within one transaction — migration `0015` corrected and re-verified with zero drift. 511/511 backend tests pass (16 new; 2 pre-existing unrelated live-FRED `502`s confirmed transient on retry), 164/164 frontend tests pass (17 new). Zero Anthropic calls. Full live-browser production walkthrough completed. Full detail in §24.12 and `BUILD_LOG.md`. |
+| **Last Updated** | 2026-08-12 |
 | **Current Git Branch** | main |
-| **Latest Commit** | `bc7afd0` — Milestone 7.5.3: AI cost control, observability, and Haiku/Sonnet routing |
-| **Next Milestone** | Milestone 7.5.4/7.6/Milestone 8 and the deferred historical AI-review pass all remain not-yet-authorized — none begin until explicitly approved |
+| **Latest Commit** | (pending — see BUILD_LOG.md for this milestone's commit hash) |
+| **Next Milestone** | 10B (Research Documents + Supabase Storage) and Universal Search both remain not-yet-authorized — neither begins until explicitly approved |
 
 ---
 
@@ -101,7 +101,7 @@ milestone completes; it is not itself a log (see `BUILD_LOG.md` for that).
 | 7.5.3 | Historical Discovery Coverage Repair (inserted) | Zero-AI historical ingestion Complete; AI review of deferred bundles intentionally still deferred/not authorized | `bc7afd0` (AI cost control), — (zero-AI re-run itself, see `BUILD_LOG.md`) | — | Re-runs the 2026-01-01→2026-08-06 historical discovery window with TD-014's corrected SEC full-text-search `forms` behavior active. Two early live attempts (Aug 9) hit a CourtListener `Retry-After` defect that stalled the batch for 4+ hours on an uncapped `time.sleep()` — root-caused via `py-spy`, fixed (RFC 7231-correct parsing + a hard wait ceiling, TD-020). The user then paused the milestone to require AI cost control, observability, and Haiku/Sonnet model routing before any further backfill; that control layer (`app.ai.model_router`, `ai_call_log` table/migration `0014`, hard per-run budgets, zero-AI mode, pre-run cost estimation) was built and tested (35 new tests, 418/418 backend tests passing), with live quality validation fixing a Haiku markdown-fence parsing bug and confirming definitive/high-impact categories (Chapter 11, bankruptcy, plan-confirmed) always route straight to Sonnet. With that control layer in place, the user separately authorized a **zero-AI** (`--ai-mode zero`, $0 Anthropic spend) re-run of the historical window purely to measure real coverage before any paid AI review. Across 5 live attempts (2026-08-09→10), 4 crashed on genuine infrastructure issues (two more SEC-side transient `500`s hitting the same undefended top-level query-loop gap as the original Retry-After incident's sibling bug, plus two previously-undocumented stall types — a DB idle-in-transaction hang and an SEC-document-fetch hang, both killed and safely resumed via existing `(cik, accession_no)`/`rule_version` idempotency — see TD-022); the 5th attempt completed with 0 errors. Final state: 2,652 issuers (from 787), 28,170 SEC filings (from 7,243), 22,252 research evidence rows (from 6,239), 3,123 alerts (from 2,212), confirmed $0 Anthropic spend throughout (`ai_call_log` unchanged at 8 rows across all 5 attempts). AI review of the resulting deferred bundles remains separate, still-deferred work — not run by this pass, not auto-triggered by anything. Full detail in `BUILD_LOG.md`. |
 | 7.5.3-daily | Resumption of normal daily production research cycle (inserted) | Complete | — | — | See the 2026-08-10 daily-cycle `BUILD_LOG.md` entry. A side effect of the historical re-run above was discovered and corrected: `market_discovery_repository.get_latest_successful_run` (used by `delta` mode to compute its own resume watermark) does not exclude `mode=backfill` runs by design (unlike `get_latest_successful_daily_run`, which does, for Morning Brief display purposes only) — so the backfill's own completion timestamp became the resume point for the next `delta` run, which would have silently skipped Sunday 2026-08-09's SEC activity entirely (Saturday 2026-08-08 was already covered by the prior real delta). Corrected with one explicit `--mode backfill --start 2026-08-09 --end 2026-08-10` catch-up run (same pipeline, same idempotency, not counted as a Morning Brief research day since backfill mode is excluded from the daily-run boundary) followed by a normal self-computing `--mode delta` run, which idempotently found the catch-up's work already done and correctly recorded itself as the `2026-08-10` daily research day. See TD-023 for the underlying watermark-computation note (not fixed — a one-time manual correction was sufficient and lower-risk than changing shared watermark logic mid-task). A second, more consequential bug was found and fixed the same day: Morning Research Brief's `new_developments`/`historical_intelligence` split (and `RunDetails`' `new_sec_filings`/`new_court_events`/`new_research_evidence` counters) relied solely on `alert_event.is_backfill` (an ingestion-mode flag) rather than each record's real-world event/source date — so the catch-up run's 225 genuinely-current alerts were mechanically mislabeled historical. Fixed by classifying purely on `as_of_date`/`filing_date`/`entry_date` relative to the `(preceding_research_day, latest_research_day]` research-cycle boundary; `is_backfill` itself is untouched, still exposed as ingestion provenance. Verified against real production data: `issuers_with_developments` 0→191, `no_material_changes` true→false. 9 new regression tests. Full detail in `BUILD_LOG.md`. |
 | 8 | Watchlists (personal tracking lists, `collection_type=watchlist`) | Complete | 2026-08-11 | `9899007` | Reused the existing `collection`/`collection_membership` schema per ADR-016 — zero migration needed. New `watchlist_service.py` (create/rename/delete Watchlist, add/remove issuer) + `GET/POST /api/watchlists`, `GET/PATCH/DELETE /api/watchlists/{id}`, `POST/DELETE .../issuers[/{issuer_id}]`. "New developments" reuses `morning_brief_service.resolve_research_cycle`/`is_new_development` verbatim — no second definition of "new." Batched repository functions (`list_alerts_by_issuers`, `count_securities_by_issuers`, `list_collections_with_membership_for_issuers`) avoid N+1 across a Watchlist's issuers. Frontend: Watchlists landing page, Watchlist detail (desktop table / mobile cards via the existing `DataTable` pattern), and one reusable `AddToWatchlistButton` wired into Issuer Detail. A real "CFO Demo Watchlist" was created via the application's own service (not a fixture) with 6 real, currently-tracked issuers spanning active Chapter 11 (Trinseo, EchoStar), post-emergence (Diebold Nixdorf), covenant/default pressure (Community Health Systems), refinancing risk (Lumen Technologies), and liability management (iHeartMedia). §14's original "ten coverage + one benchmark Watchlists" vision predates ADR-016's Research-Universes/Watchlists split and is superseded by it — see §14 and §24.1. No per-user auth exists yet (TD-002); every Watchlist is `scope=personal`/`owner_user_id=NULL` in a single shared analyst workspace, by explicit design, documented as a known limitation. 481 backend tests pass (21 new, covering Watchlist CRUD, duplicate/idempotent membership, deletion isolation, latest-development/research-cycle/severity aggregation, and the Watchlist-vs-Research-Universe "current status" boundary), 130 frontend tests pass (17 new, covering the landing page, detail page incl. mobile cards, and the reusable Add to Watchlist component). Zero Anthropic calls — Watchlists never construct AI prompts. |
-| 9 | Research notes/documents + audit events | Not Started | — | — | |
+| 9 | Research notes/documents + audit events | 10A (Research Notes + Audit Trail) Complete; 10B (Documents/Storage) Not Started, awaiting separate approval | 2026-08-12 | (pending — see BUILD_LOG.md) | Split into two approved sub-phases by explicit user direction — see §24.12 for the full 10A design record. `research_note`/`research_note_version` (full-snapshot-per-edit versioning) + `audit_event` (first audited-write path in the app) live-migrated (`0015`) and verified against the shared `nexus` schema. No `user`/`role`/`user_role` tables built — genuinely no 10A functional need, `AUTH_ENABLED=false` unchanged, identity fields nullable text mirroring `collection.owner_user_id`'s Milestone 8 precedent. A real Demo Research Note (Trinseo PLC, 3 real dated versions: covenant stress → going concern → Chapter 11, all citing real `alert_event` evidence) seeded idempotently via the app's own service. 511/511 backend tests pass (16 new), 164/164 frontend tests pass (17 new). Zero Anthropic calls. 10B (Documents, Supabase Storage, `research_document`) explicitly deferred, not started. |
 | 10 | Alerts (Alerts Center — analyst inbox over existing `alert_event`, not a new rule engine) | Complete | 2026-08-11 | `7c43e3d` | Completed ahead of Milestone 9 (Research notes/documents) by explicit user direction — the incoming brief was explicitly numbered "Milestone 9" by the user even though this row is PLAN.md's original §18 build-order slot for Alerts; row numbers are left as originally assigned rather than renumbered, to avoid invalidating other cross-references in this document. See §24.11 for the full design: reused `alert_event`/`alerts.py`/`alert_repository.py` (already canonical since Milestone 6.5's ADR-018 pipeline, not the `alert_rule`/`alert_engine.py` design originally sketched in §12), zero migration, new `watchlist_id` filter + `/api/alerts/summary` + `/api/alerts/issuers` search, a new `AlertsPage.tsx` analyst-inbox UI, and two live-caught regressions fixed (`universe_names` leaking Watchlist names; incorrect pagination `total` for multi-issuer collection filters — both existed before this milestone but were only reachable once real Watchlists existed). Zero Anthropic calls. 23 new backend tests, 25 new/extended frontend tests. |
 | 11 | TRACE adapter/sample | Not Started | — | — | |
 | 12 | Universal Search | Not Started | — | — | |
@@ -143,6 +143,7 @@ already made in §1–23; will grow with genuine shortcuts taken during implemen
 | TD-022 | `market_discovery_service.run_discovery`'s top-level SEC full-text-search query loop has no per-query `try`/`except` (only per-candidate/per-issuer processing inside it is isolated) — a single transient SEC-side `500` on any one query kills the entire process, leaving its `market_discovery_run` row permanently stuck at `status='running'` (never reaches error handling, so `errors_count` stays `0` and the row must be recognized as abandoned by inspection, not by its own recorded status). Observed 4 times total: twice during the January–August 2026 zero-AI historical re-run (2026-08-09/10, ~3h09m into each of two multi-hour runs) and once more during the smaller 2026-08-09→10 daily catch-up window (crashed almost immediately, 8 candidates in). A second, previously-undocumented stall pattern was also observed twice during the historical re-run: a child worker going idle-in-transaction on Postgres with dead `CloseWait` TCP sockets to a remote HTTPS endpoint for 30+ minutes with zero progress (not the already-fixed CourtListener Retry-After defect, TD-020 — no `Retry-After` sleep was in progress either time) — killed and safely resumed both times via existing `(cik, accession_no)`/`rule_version` idempotency, zero duplicate rows or corruption confirmed via direct query each time. Explicitly not redesigned into automatic per-query retry/circuit-breaking this pass, per direct instruction to leave the historical-backfill pipeline's reliability design alone; low real risk for the normal single-day `delta` window (~40 queries, as observed in the real Aug 7→8 run) vs. the much larger historical backfill (87+ queries against much larger result sets) where all 4 occurrences happened | Medium | Add a per-query `try`/`except` in `run_discovery`'s top-level query loop (log and continue to the next query, matching the per-candidate isolation pattern already used one level down) if a future pass needs the historical/large-window path to be more resilient; investigate the idle-in-transaction stall's root cause (possibly a missing read-timeout on one of the SEC document-fetch/OpenFIGI/CourtListener HTTP calls) if it recurs on the much-lower-volume daily path | Open (deferred by explicit direction, `backend/app/services/market_discovery_service.py`) |
 | TD-023 | `market_discovery_repository.get_latest_successful_run` (which `delta` mode uses to compute its own resume watermark) does not exclude `mode=backfill` runs — by design, since a backfill genuinely does perform real SEC full-text-search queries as of its actual execution time and the next `delta` run should not blindly re-examine what was just examined. This is a different function from `get_latest_successful_daily_run` (which *does* exclude `backfill`, for Morning Brief display purposes only, per Milestone 7.5.2) and was left unchanged by that fix intentionally. The gap: a `backfill` run's `resulting_watermark` is stamped with its own real completion time (`datetime.now(UTC)`), not derived from its declared `window_end_date` — so if a backfill's declared window ends well in the past (e.g. `2026-08-06`) but the run doesn't actually *complete* until days later, the next `delta` run's self-computed `resolved_start` silently jumps to the backfill's completion date, skipping any calendar days between the backfill's declared window end and its real completion. Live-observed 2026-08-10: the Jan–Aug historical re-run's declared window ended `2026-08-06`, but it didn't finish until `2026-08-10`, which would have caused a bare `--mode delta` invocation to skip Sunday `2026-08-09` entirely. Worked around this time with one explicit `--mode backfill --start 2026-08-09 --end 2026-08-10` catch-up run rather than changing the shared watermark-resolution function under time pressure; not expected to recur under normal nightly operation (a `backfill`-mode run stamping `resulting_watermark` with its own completion time is *usually* correct — the gap only appears when a backfill's declared window and its real completion time diverge, which is specific to how long-running historical work happens to be) | Low | If a future long-running `backfill` (declared window far in the past, real completion much later) precedes a `delta` run again, either recompute the gap manually (as done here) or consider having `run_discovery` derive `resulting_watermark` for `backfill` mode from `window_end_date` instead of `datetime.now(UTC)` — a genuine design tradeoff (declared-window-end is more conservative/correct for `delta`'s resume point, but `datetime.now(UTC)` is more conservative for "don't re-examine what a backfill just, in real wall-clock time, actually checked") that deserves its own explicit decision, not a reflexive change | Open (discovered 2026-08-10, `backend/app/services/market_discovery_service.py`, `backend/app/repositories/market_discovery_repository.py`) |
 | TD-024 | ~~Market Context's SOFR/HY OAS values had gone stale (SOFR showing `2026-08-05`, HY OAS `2026-08-04`, on `2026-08-11`).~~ **Resolved 2026-08-11.** Root cause: `app.providers.fred.provider.sync_series` — the only function that fetches new FRED observations — had never been invoked by any recurring job, route, or script since its one-time Milestone 5 seed (`fred_series_registry.last_synced_at` was `2026-08-06 14:20 UTC` for both series, unchanged since). Not a provider error, not a caching/TTL bug (`compute_freshness` correctly showed `cached`, derived from `retrieved_at` as designed — it was never lying), and not a wrong-row-selection bug (`get_latest_observation`'s `ORDER BY obs_date DESC LIMIT 1` was already correct) — purely a missing recurring trigger. Live FRED confirmed the real latest observations were `SOFR=3.63` (`2026-08-10`) and `BAMLH0A0HYM2=2.70` (`2026-08-07`). Fixed in two parts: (1) an immediate one-time manual refresh via the existing, unmodified `sync_series`, verified live in production; (2) `app.scripts.run_nightly_scheduled_discovery` now also refreshes exactly these two series on every correct-hour (10 PM ET) trigger, independent of the market-discovery research-cycle duplicate-check (a different cadence, a different data source) and isolated per-series (one series' failure never blocks the other or the research cycle). No historical discovery, SEC backfill, CourtListener sync, or Anthropic call involved in this fix. 4 new tests (skip-without-key, per-series failure isolation, correct-hour triggers refresh, wrong-hour trigger does not) | — | `backend/app/scripts/run_nightly_scheduled_discovery.py` | **Resolved** — still pending KI-002 (Railway cron trigger creation itself) to run automatically in production; the code path is proven and tested |
+| TD-025 | `research_note.access_classification` (`standard`/`restricted`, Milestone 10A) is captured on every note and shown in the UI but not enforced by any route dependency — deliberately distinct from `DataClassification`/`policy_check`, which governs licensed *external* data, not an analyst-authored note's internal visibility | Low | Wire real enforcement once TD-002 (Supabase Auth JWT validation, `user`/`role`/`user_role`) exists — enforcement without real identity would be theater, not a control | Open (deferred by design, `backend/app/schemas/research.py`, `backend/app/api/routes/research_notes.py`) |
 | TD-021 | Model non-determinism on nested-subsidiary issuer attribution: live quality-validation during Milestone 7.5.3 re-reviewed a real production alert (EchoStar Corporation 8-K disclosing Chapter 11 filings by subsidiaries HSSC/HNS Americas) through both a fresh Haiku call and a fresh Sonnet call — both independently returned `issuer_is_subject=true`, disagreeing with the original stored value (`false`, from an earlier Sonnet review of the identical excerpt). This is *not* a Haiku-specific reliability gap (a fresh Sonnet call reproduced the same disagreement) — it appears to be genuine model non-determinism on a hard, legitimately ambiguous judgment call (a subsidiary filing vs. "the issuer and its consolidated subsidiaries acting together") of exactly the kind Milestone 7.5.1's audit was built around. The routing policy correction this milestone made (high-impact categories always go to Sonnet, never Haiku) is still the right conservative default, but does not fully close this — the underlying instability exists in Sonnet's own judgment on repeated fresh calls too | Medium | Consider a stricter human-review gate specifically for subsidiary/nested-entity Chapter 11 attribution (e.g. never auto-upgrade `verified` membership on this evidence type without an explicit second confirmation), or accept the existing `partial`/upgrade-only design as sufficient mitigation — a product decision, not purely an engineering one | Open (discovered during Milestone 7.5.3's live quality validation, not guessed) |
 
 ---
@@ -583,6 +584,28 @@ leaking Watchlist names (fixed by splitting into `universe_names`/
 unfiltered page was being post-filtered in Python, under-reporting
 `total` and silently dropping rows). Both fixed at the SQL level. Zero
 migration, zero Anthropic calls. See §24.11 for the full design record.
+
+**Milestone 10A (Research Notes + Audit Trail — PLAN.md row 9's Research
+Notes half) is complete**, built as the first of two explicitly approved
+sub-phases of row 9 — 10B (Research Documents + Supabase Storage) remains
+deferred and not started. `research_note`/`research_note_version` (full-
+snapshot-per-edit versioning) and `audit_event` (the app's first audited-
+write path) are live, migrated (`0015`), and integrated into Issuer Detail
+beneath the Distress Timeline, per the requested `Issuer → Distress
+Timeline → Analyst Research Notes` hierarchy. No `user`/`role`/`user_role`
+tables were built — a pre-implementation schema-design check found no
+genuine 10A functional need for them, and `collection.owner_user_id`
+(Milestone 8/ADR-016) had already established the nullable-identity
+pattern this milestone reuses. A real Demo Research Note on Trinseo PLC
+(3 versions, dated to Trinseo's real covenant-stress → going-concern →
+Chapter 11 timeline, citing real `alert_event` evidence by reference) was
+seeded idempotently through the app's own `research_note_service`. A real
+ordering bug (`now()` vs. `clock_timestamp()` for audit/version
+timestamps, live-caught by an integration test before the first commit)
+was found and fixed, with the migration corrected and re-verified with
+zero drift. This was additive implementation of already-approved
+architecture (§4.10/§4.12), not a new architectural decision, so no ADR
+was written. See §24.12 for the full design record.
 
 ---
 
@@ -2304,3 +2327,231 @@ re-fetch, acknowledge, dismiss, issuer link, source link, watchlist chip
 rendering, pagination; `AlertCard.tsx`: category chip, Watchlist chip
 distinction; `WatchlistDetailPage.tsx`/`IssuerPage.tsx`: View Alerts link
 targets; `Layout.tsx`: nav position).
+
+---
+
+## 24.12 Milestone 10A — Research Notes + Audit Trail (Milestone 9/row 9 slice — complete, 2026-08-12)
+
+**Scope**: PLAN.md row 9 ("Research notes/documents + audit events") split
+into two approved sub-phases by explicit user direction. This section
+covers **10A only** — `research_note`/`research_note_version` +
+`audit_event`. Documents/Supabase Storage (10B) are explicitly deferred and
+not started; `research_document` does not exist yet.
+
+**Pre-implementation schema-design check**: no material architectural
+conflict found with deferring real auth, deferring 10B, or building these
+three concepts now — `collection.owner_user_id` (Milestone 8/ADR-016) had
+already established the precedent this milestone reuses: a plain nullable
+`text` identity column, no FK to a `user` table that doesn't exist, no
+fabricated per-user ownership. `user`/`role`/`user_role` (§4.12) are **not
+built** — genuinely no 10A functional requirement needs them, and building
+them now would be exactly the "unused schema" the user asked to avoid; they
+remain scaffolded only as a documented future dependency of TD-002.
+
+**Schema (migration `0015`)**: `research_note` (id, issuer_id, security_id
+nullable, title, thesis_status, conviction nullable, bull_case/base_case/
+bear_case/catalysts/risks/invalidation_conditions all nullable text,
+`evidence_refs` JSONB, access_classification, author_user_id nullable text,
+`is_demo`, `current_version_number`, `is_archived`/`archived_at`/
+`archived_by`, timestamps); `research_note_version` (full snapshot of the
+same content fields plus `version_number`, `edited_by`, `edited_at`,
+unique on `(research_note_id, version_number)`); `audit_event` (id,
+`user_id` nullable text, `event_type`, `entity_table`, `entity_id`,
+`before_state`/`after_state` JSONB, `occurred_at`). One deliberate
+refinement of §4.10's original sketch: no generic `body_markdown` field —
+the structured sections the user explicitly asked for (bull/base/bear
+case, catalysts, risks, invalidation conditions) **are** the note's
+content, so a parallel free-text body would just duplicate it. Live-applied
+against the shared `nexus` schema; `alembic check` confirms zero drift
+both before and after a mid-implementation correction (see below).
+
+**`audit_event.event_type`/`entity_table` are plain, unconstrained `text`**
+— every other new enum-shaped column in this milestone (`thesis_status`,
+`conviction`, `access_classification`) uses the project's standard
+text+CHECK pattern, but `audit_event` is deliberately the one exception:
+§4.12 already scopes future audited actions across many unrelated
+milestones (watchlist changes, alert-rule changes, entitlement changes,
+admin actions, AI queries touching restricted data) that don't exist yet,
+and a CHECK constraint listing only the three values 10A emits
+(`research_note_created`/`updated`/`archived`) would force a migration
+every time a later milestone adds a new audited action — the same
+reasoning already applied to `sec_filing.form_type`.
+
+**Note/version architecture**: every save — the initial create and every
+material edit — produces one immutable, standalone `research_note_version`
+snapshot of the *resulting* state, numbered sequentially from 1, so
+"Version 1 → Version 2 → Version 3" always means three real, independently
+-renderable states, the last of which is also the note's current live
+content (never a diff-only or pre-image-only scheme). An edit is
+"material" — and thus version-worthy — exactly when it changes any content
+field; a save that changes nothing is a no-op (no new version, no audit
+event), verified by both a unit test suite for the pure `_merge_fields`
+comparison and an integration test. Within one edit's transaction, the
+version row is written before the live `research_note` row is updated —
+literal execution-order compliance with §4.10/§11's "snapshot before
+applying the update," even though the snapshot's *content* is the
+resulting state, not the pre-image (a deliberate choice favoring the more
+intuitive Notion/Google-Docs-style "every version is a real, viewable
+state" model the user's demo narrative explicitly calls for, over a
+pre-image scheme that would leave the current live state un-numbered until
+its next edit).
+
+**A real bug was found and fixed during test-writing, before the first
+commit**: `occurred_at`/`edited_at` initially used Postgres `now()` as
+their `server_default`, which is frozen at *transaction* start, not
+per-statement — two audit events (or two version snapshots) written inside
+one transaction got an identical timestamp and an unstable relative
+`ORDER BY occurred_at DESC` order. Live-caught by an integration test
+reusing one savepoint-scoped session across a create-then-update sequence
+(the same pattern this codebase's other integration tests use). Fixed by
+switching both columns to `clock_timestamp()` (real per-statement wall-clock
+time) — required downgrading migration `0015`, correcting the two `server_
+default` values, and re-upgrading against the live schema before the
+migration was considered final; `alembic check` re-confirmed zero drift
+after the fix. This has no effect on normal production usage (each real
+API request is its own transaction with its own start time), but makes the
+audit trail's ordering guarantee correct even under a single multi-write
+transaction, which is the more defensible property for an audit log to
+have unconditionally.
+
+**Audit-event architecture**: deliberately a separate concept from
+versioning per the user's explicit instruction — a version reconstructs
+*what the note said*; an audit event records *that a write happened, by
+whom, when, and its before/after state* (as two named JSONB columns, not
+one opaque `detail` blob, so "what changed" is inspectable without agreeing
+on an internal shape first). `research_note_service` writes one audit event
+per create/update/archive, always via the same service functions a real
+UI action calls — never a bypassing script. No hard delete exists: archive
+is the only "removal" path, so a note's own version/audit history can never
+be destroyed along with it; archiving is idempotent (re-archiving an
+already-archived note is a no-op, confirmed by a dedicated test asserting
+exactly one `research_note_archived` audit event survives two calls).
+
+**Shared-workspace/auth posture**: `AUTH_ENABLED` stays `false`;
+`author_user_id`/`edited_by`/`archived_by`/`audit_event.user_id` are all
+plain nullable `text` — a free-text "Your name (optional)" field in the UI,
+attributed honestly to the audit trail, never a fabricated per-user
+identity. `access_classification` (`standard`/`restricted`) is captured on
+every note but **not enforced** by any route dependency this milestone —
+deliberately distinct from `DataClassification`/`policy_check` (which
+governs licensed *external* data, a different concept from an
+analyst-authored note's internal visibility). Recorded as new TD-025 below
+rather than silently left unexplained.
+
+**APIs** (`backend/app/api/routes/research_notes.py`, prefix
+`/api/research-notes`): `GET ?issuer_id=&include_archived=` (list),
+`POST` (create), `GET /{id}` , `PATCH /{id}` (update — 409 if archived),
+`POST /{id}/archive`, `GET /{id}/versions`, `GET /{id}/versions/{n}`,
+`GET /{id}/audit-events`. Thin per §3 — all logic lives in
+`research_note_service`.
+
+**Frontend**: `ResearchNotesSection` (compact card list — title, thesis-
+status/conviction badges, Demo badge, "Write Research Note" button)
+embedded directly beneath the Distress Timeline on Issuer Detail, per the
+requested `Issuer → Distress Timeline → Analyst Research Notes` hierarchy
+— never overwhelming the timeline, a deliberate click-through to
+`ResearchNotePage` for full content. `ResearchNoteEditorPage` (one
+component, two routes — `/issuers/:issuerId/research-notes/new` and
+`/research-notes/:noteId/edit`) renders the full structured form (Base/
+Bull/Bear Case, Catalysts, Key Risks, Invalidation Conditions, an
+add-by-reference Sources/Evidence list); an archived note routed to `/edit`
+shows a read-only message instead of the form, matching the backend's 409.
+
+**Version-history behavior**: `ResearchNotePage`'s right-rail Version
+History list shows every version's number/timestamp/thesis-status/
+conviction; clicking a non-current version loads its full standalone
+content into the main panel behind a persistent "Viewing historical
+Version N — read-only" banner with a one-click "Back to current," verified
+live in the browser (Version 1's original `monitoring`/`low conviction`
+content rendered correctly, distinct from the current `invalidated`/`high
+conviction` state).
+
+**Access-classification behavior**: stored and displayed (a Standard/
+Restricted selector in the editor) but not gated — see TD-025. Consistent
+with "keep identity nullable and honest," this milestone does not fabricate
+enforcement it can't actually back with real identity/roles.
+
+**Demo example**: `app.scripts.seed_demo_research_note` (idempotent, safe
+to re-run) creates one real, permanently-committed Demo Research Note on
+Trinseo PLC (`is_demo=true`, titled "Demo Research Note: ..." so the UI
+always renders it as clearly synthetic provenance) with three real, dated
+versions built through `research_note_service.create_note`/`update_note` —
+the same service path a real analyst's UI action uses, not raw SQL. Every
+evidence reference (`evidence_refs`, pointing at real `alert_event` rows by
+id, never copying their content) and every underlying fact (covenant
+stress 2026-02-17, explicit going-concern doubt 2026-03-13, the exchange-
+offer/NYSE-delisting restructuring stretch through 2026-04-27, the
+prepackaged Chapter 11 petition 2026-05-26, DIP financing 2026-06-01) is a
+real, already-ingested row, live-queried against the `nexus` schema before
+being written into the script — the analyst *conclusions* (thesis status,
+conviction, bull/base/bear case, catalysts, risks, invalidation conditions)
+are this script's own construction, written the way a real analyst
+plausibly would given that evidence, never fabricated as though a real
+Stonehill analyst wrote them. Version 1 (`monitoring`/`low`) → Version 2
+(`active`/`medium`, going-concern doubt now explicit) → Version 3
+(`invalidated`/`high`, Chapter 11 filed — the v2 invalidation condition was
+met) reproduces exactly the demo narrative requested.
+
+**Tests**: 6 new unit tests (`test_research_note_service.py`:
+`_merge_fields` — `None`-means-unchanged, `""`/`[]` explicit-clear,
+thesis-status transition, no-op-detection equality). 10 new integration
+tests against the live `nexus` schema (create writes version 1 + audit
+event; material update creates version 2 + before/after-state audit event;
+no-op update writes neither; update of nonexistent/archived note; archive
+idempotency and exactly-one audit event; archive of nonexistent note;
+issuer listing respects `include_archived`; specific-version fetch;
+`is_demo` persistence). 17 new frontend tests (`ResearchNotesSection`:
+empty state, badges, Demo badge, create/detail link targets;
+`ResearchNotePage`: structured-section rendering, 404, version-history
+list/current-marker, historical-version switch, audit-trail rendering,
+archive action, archived-note action-hiding; `ResearchNoteEditorPage`:
+scoped create, disabled-until-titled, edit-mode hydration, update
+submission, archived-note read-only message). Full existing suites
+re-verified green: 511/511 backend (2 pre-existing, unrelated live-FRED
+`502`s confirmed transient on immediate retry — 3/3 passed), 164/164
+frontend.
+
+**Migration verification**: `alembic upgrade head` applied live against the
+shared Supabase project; `alembic check` confirms zero drift (twice — once
+before, once after the `clock_timestamp()` correction above). No other
+schema touched; no cross-contamination of the other application's objects.
+
+**Production walkthrough**: real backend (`uvicorn`) + frontend (`vite
+dev`) boot verified, then a full live-browser pass — Issuer Detail's new
+Analyst Research Notes section renders beneath the Distress Timeline;
+clicking into the Demo Research Note shows full structured content,
+correct Version History (3 entries) and Audit Trail (3 entries); clicking
+Version 1 correctly swaps in its historical, read-only content; a fresh
+note was created end-to-end via "Write Research Note," then archived via
+the Archive button (audit trail updated to "Note archived," Edit/Archive
+buttons correctly hidden thereafter, note correctly excluded from the
+issuer's active-notes list) — this test note was the only non-idempotent
+write made during verification and was left archived (not deleted) so its
+own audit trail stands as a real, honest artifact rather than being
+scrubbed.
+
+**Regression verification**: none found — this milestone is purely
+additive (two new tables, one new route file, one new frontend section/two
+new pages); nothing in the nightly scheduler, SEC/CourtListener/OpenFIGI/
+FRED ingestion, AI routing, Morning Research Brief, Watchlists, Alerts
+Center, Research Universes, Credit Universe, or Distress Timeline was
+touched.
+
+**Anthropic application calls**: **0**, confirmed by design (no `app.ai`
+import anywhere in the new/changed files) and by inspection of
+`ai_call_log` (unchanged row count before/after). AI-generated thesis
+content was explicitly out of scope for this milestone.
+
+**Technical debt**: new **TD-025** — `research_note.access_classification`
+is captured and displayed but not enforced by any route dependency;
+correctly deferred until TD-002 (real auth/roles) makes enforcement
+meaningful, not a 10A gap. Minor, undocumented-as-TD limitation (judged too
+small to warrant its own row): `ResearchNoteUpdate.conviction` cannot be
+explicitly reset to unset once set — a `None` in a PATCH always means "no
+change," not "clear it," since no 10A workflow needs to unset conviction
+once assigned.
+
+No ADR was written — this is additive implementation of already-approved
+architecture (§4.10/§4.12, and the row-9 slicing this document's own build
+order anticipated), not a new architectural decision, matching the
+precedent set by Milestone 9/Alerts (§24.11) and Milestone 8/Watchlists.

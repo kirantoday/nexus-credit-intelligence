@@ -35,6 +35,7 @@ import { CapitalStructureStack } from "../components/CapitalStructureStack";
 import { CourtDocketSection } from "../components/CourtDocketSection";
 import { DistressTimeline } from "../components/DistressTimeline";
 import { ProvenanceBadge } from "../components/ProvenanceBadge";
+import { ResearchNotesSection } from "../components/ResearchNotesSection";
 import { SyntheticDataBadge } from "../components/SyntheticDataBadge";
 import { useCapitalStructure } from "../queries/useCapitalStructure";
 import { useIssuerDetail } from "../queries/useIssuerDetail";
@@ -363,6 +364,10 @@ export function IssuerPage(): ReactElement {
           <Alert severity="error">Could not load the distress timeline.</Alert>
         )}
         {timelineQuery.data && <DistressTimeline timeline={timelineQuery.data} />}
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <ResearchNotesSection issuerId={issuer.issuer_id} />
       </Paper>
 
       <Paper id="securities-section" variant="outlined" sx={{ p: 2 }}>

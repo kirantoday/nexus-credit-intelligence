@@ -19,6 +19,7 @@ from __future__ import annotations
 from app.models import (  # noqa: F401
     ai_call_log,
     alert,
+    audit,
     capital_structure,
     collection,
     court_docket,
@@ -35,6 +36,7 @@ from app.models import (  # noqa: F401
     market_discovery_run,
     provenance,
     raw_provider_payload,
+    research,
     research_evidence,
     sec_filing,
     security,

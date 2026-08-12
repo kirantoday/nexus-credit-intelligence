@@ -6611,3 +6611,155 @@ Live-verified via `curl` and a real Chrome browser session:
 incl. the two live-caught regression fixes, frontend AlertsPage and
 Watchlist/Issuer Detail integration, full test/lint/type/build/alembic
 suite, documentation).
+
+---
+
+## 2026-08-12 — Milestone 10A: Research Notes + Audit Trail
+
+**Summary**
+
+PLAN.md row 9 ("Research notes/documents + audit events") split into two
+approved sub-phases by explicit user direction. This entry covers **10A
+only** — `research_note`/`research_note_version` + `audit_event`. 10B
+(Research Documents, Supabase Storage) is explicitly deferred, not
+started. Full design record in PLAN.md §24.12; this entry summarizes what
+was built, the one real bug found and fixed, and verification.
+
+**Pre-implementation schema-design check**
+
+No material architectural conflict found with: deferring real auth,
+deferring 10B, or building `research_note`/`research_note_version`/
+`audit_event` now. `collection.owner_user_id` (Milestone 8/ADR-016) had
+already established the precedent this milestone reuses — a plain
+nullable `text` identity column, no FK to a `user` table, no fabricated
+per-user ownership. `user`/`role`/`user_role` (§4.12) were **not built** —
+no genuine 10A functional requirement needs them; building them now would
+have been exactly the unused schema the user asked to avoid.
+
+**What was built**
+
+- Backend: `core/types.py` (`ThesisStatus`, `Conviction`,
+  `AccessClassification`, `AuditEventType`), `models/research.py`
+  (`ResearchNote`, `ResearchNoteVersion`), `models/audit.py`
+  (`AuditEvent`), matching `domain/`, `repositories/` (function-style,
+  flush-not-commit, per this project's established convention), and
+  `services/research_note_service.py` (create/update/archive
+  orchestration — versioning + audit-event writing, both always via this
+  one service path, never a bypassing script). `schemas/research.py` +
+  `api/routes/research_notes.py` (`GET`/`POST /api/research-notes`,
+  `GET`/`PATCH /{id}`, `POST /{id}/archive`, `GET /{id}/versions[/{n}]`,
+  `GET /{id}/audit-events`) registered in `main.py`. Migration `0015`
+  applied live against the shared `nexus` schema.
+- One deliberate refinement of §4.10's original sketch: no generic
+  `body_markdown` field — the structured sections requested (bull/base/
+  bear case, catalysts, risks, invalidation conditions) are the note's
+  content; a parallel free-text body would just duplicate it.
+- Frontend: `api/researchNote.ts`, `queries/useResearchNotes.ts`,
+  `components/ResearchNotesSection.tsx` (embedded in `IssuerPage.tsx`
+  directly beneath the Distress Timeline, per the requested `Issuer →
+  Distress Timeline → Analyst Research Notes` hierarchy),
+  `components/ThesisStatusBadge.tsx`/`ConvictionBadge.tsx`,
+  `pages/ResearchNotePage.tsx` (full structured content, a clickable
+  Version History rail, and an Audit Trail panel), `pages/
+  ResearchNoteEditorPage.tsx` (one component serving both
+  `/issuers/:issuerId/research-notes/new` and `/research-notes/:noteId
+  /edit` — an archived note routed to `/edit` shows a read-only message
+  instead of the form, matching the backend's 409). Three new routes
+  registered in `App.tsx`.
+- `app.scripts.seed_demo_research_note` (idempotent) — one real Demo
+  Research Note on Trinseo PLC, `is_demo=true`, titled "Demo Research
+  Note: ..." so the UI always renders it as clearly synthetic provenance.
+  Three real, dated versions built through `research_note_service.
+  create_note`/`update_note` (the same service path a real analyst's UI
+  action uses): Version 1 (`monitoring`/`low`, as of the 2026-02-17
+  covenant-breach 8-K) → Version 2 (`active`/`medium`, the 2026-03-13
+  going-concern doubt and subsequent exchange-offer/NYSE-delisting
+  restructuring stretch) → Version 3 (`invalidated`/`high`, the
+  2026-05-26 prepackaged Chapter 11 petition and 2026-06-01 DIP
+  financing). Every underlying fact and every `evidence_refs` pointer is a
+  real, already-ingested `alert_event` row, live-queried against `nexus`
+  before being written into the script; the analyst *conclusions* are the
+  script's own construction, written the way a real analyst plausibly
+  would, never fabricated as though a real Stonehill analyst wrote them.
+
+**A real bug was found and fixed before the first commit**
+
+`occurred_at`/`edited_at` initially defaulted to Postgres `now()`, which
+is frozen at *transaction* start — an integration test that reused one
+savepoint-scoped session across a create-then-update sequence (this
+project's standard test pattern) caught two audit events getting an
+identical timestamp with unstable relative ordering. Root-caused as
+`now()`'s transaction-scoped semantics, not a logic bug; fixed by
+switching both columns to `clock_timestamp()` (true per-statement wall-
+clock time). Required downgrading migration `0015`, correcting the two
+`server_default` values in both the model and the migration file, and
+re-upgrading against the live shared schema; `alembic check` confirmed
+zero drift both before this fix and after. No production impact (each
+real API request is already its own transaction with a distinct start
+time), but the fix makes the audit trail's ordering guarantee correct
+unconditionally rather than only in the common case.
+
+**Verification**
+
+- 511/511 backend tests pass (16 new: 6 unit for `_merge_fields`'s pure
+  merge/no-op-detection logic, 10 integration against the live `nexus`
+  schema covering create/update/archive/versioning/audit-trail behavior).
+  2 pre-existing, unrelated tests (`test_fred_live_ingestion.py`) failed
+  on a transient live `502 Bad Gateway` from `api.stlouisfed.org` during
+  the full-suite run; confirmed transient by immediate retry (3/3
+  passed) — not a regression from this milestone.
+- 164/164 frontend tests pass (17 new, across `ResearchNotesSection`,
+  `ResearchNotePage`, `ResearchNoteEditorPage`).
+- `ruff`/`black`/`mypy` clean on backend; `eslint`/`prettier`/`tsc` clean
+  on frontend; both production builds succeed.
+- `alembic upgrade head` applied live against the shared Supabase
+  project; `alembic check` confirms zero drift.
+- Full live production walkthrough: backend (`uvicorn`) + frontend
+  (`vite dev`) both boot cleanly; Issuer Detail (Trinseo PLC) shows the
+  new Analyst Research Notes section beneath the Distress Timeline;
+  opening the Demo Research Note shows full structured content plus a
+  correct 3-entry Version History and 3-entry Audit Trail; clicking
+  Version 1 correctly swaps in its historical, read-only content
+  (`monitoring`/`low conviction`, distinct from the current
+  `invalidated`/`high conviction` state) behind a persistent banner with
+  a working "Back to current"; a fresh note was created end-to-end via
+  "Write Research Note," then archived via the Archive button (audit
+  trail updated, Edit/Archive buttons hidden, note correctly excluded
+  from the issuer's active-notes list) — left archived rather than
+  deleted so its own audit trail stands as a real artifact.
+- Regression-checked: nothing in the nightly scheduler, SEC/
+  CourtListener/OpenFIGI/FRED ingestion, AI routing, Morning Research
+  Brief, Watchlists, Alerts Center, Research Universes, Credit Universe,
+  or Distress Timeline was touched — this milestone is purely additive.
+
+**AI cost**
+
+Zero Anthropic calls — confirmed by inspection (no `app.ai` import
+anywhere in the new/changed files) and by `ai_call_log`'s unchanged row
+count before/after. AI-generated thesis content was explicitly out of
+scope for this milestone.
+
+**Technical debt recorded**
+
+New TD-025: `research_note.access_classification` is captured/displayed
+but not enforced by any route dependency — correctly deferred until
+TD-002 (real auth/roles) makes enforcement meaningful. See PLAN.md
+Technical Debt table and §24.12 for full detail, including one smaller,
+undocumented-as-TD limitation (`conviction` cannot be explicitly unset
+once set via `PATCH`).
+
+**No ADR was written** — this is additive implementation of already-
+approved architecture (§4.10/§4.12, and the row-9 slicing this document's
+own build order anticipated), not a new architectural decision, matching
+the precedent set by Milestone 9/Alerts and Milestone 8/Watchlists.
+
+**Commit Hash**
+
+(pending — see PLAN.md for the same placeholder, filled in once committed)
+
+**Approximate Time Spent**
+
+~4 hours (schema-design check, backend models/domain/repositories/
+service/schemas/routes/migration, frontend section/pages/routes, the
+live-caught `clock_timestamp()` ordering fix, full test/lint/type/build/
+migration suite, live browser production walkthrough, documentation).

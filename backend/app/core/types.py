@@ -428,3 +428,62 @@ class AiOperation(StrEnum):
 
     EVIDENCE_REVIEW = "evidence_review"
     RECLASSIFY_ISSUER_IS_SUBJECT = "reclassify_issuer_is_subject"
+
+
+# --- Milestone 10A: Research Notes + Audit Trail ---
+
+
+class ThesisStatus(StrEnum):
+    """`research_note.thesis_status` / `research_note_version.thesis_status`
+    (PLAN.md 4.10). `INVALIDATED` is the status an analyst sets when their
+    own `invalidation_conditions` have actually been met — a deliberate
+    analyst judgment call, never inferred automatically from other data."""
+
+    DRAFT = "draft"
+    ACTIVE = "active"
+    MONITORING = "monitoring"
+    INVALIDATED = "invalidated"
+    RESOLVED = "resolved"
+
+
+class Conviction(StrEnum):
+    """`research_note.conviction` / `research_note_version.conviction`
+    (PLAN.md 4.10)."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class AccessClassification(StrEnum):
+    """`research_note.access_classification` (PLAN.md 4.10).
+
+    Deliberately distinct from `DataClassification` (`provenance.classification`,
+    what `policy_check` gates): that concept governs *licensed external data*
+    entitlements, while this one describes who within the firm should see an
+    *analyst-authored* note. Captured now so the field exists and is visible
+    in the UI; not enforced by any route dependency in this milestone —
+    Milestone 10A ships with `AUTH_ENABLED=false` and no `user`/`role` tables,
+    so there is no identity to enforce it against yet. Enforcement is future
+    work for the real-auth milestone, not a Milestone 10A gap.
+    """
+
+    STANDARD = "standard"
+    RESTRICTED = "restricted"
+
+
+class AuditEventType(StrEnum):
+    """Application-level enum for `audit_event.event_type` values this
+    milestone actually emits. Unlike other CHECK-constrained enums in this
+    file, `audit_event.event_type`/`entity_table` are left as unconstrained
+    `text` columns in the schema (see `models/audit.py`) — PLAN.md 4.12
+    already scopes future audited actions across many unrelated milestones
+    (watchlist changes, alert-rule changes, entitlement changes, admin
+    actions, AI queries touching restricted data), and constraining the
+    column now to only the values Milestone 10A emits would force a
+    migration every time a later milestone adds a new audited action. Same
+    reasoning as `sec_filing.form_type` staying free text."""
+
+    RESEARCH_NOTE_CREATED = "research_note_created"
+    RESEARCH_NOTE_UPDATED = "research_note_updated"
+    RESEARCH_NOTE_ARCHIVED = "research_note_archived"
