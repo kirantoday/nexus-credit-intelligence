@@ -6921,3 +6921,75 @@ immutability fix, backend test suite, frontend component/page/routing
 implementation, the live-caught `accession_no` noise fix, frontend test
 suite, full test/lint/type/build/migration verification, live browser
 production walkthrough, documentation).
+
+---
+
+## 2026-08-12 — Production deployment gap: Milestones 10A and 12 were committed but never pushed
+
+**What happened**
+
+The user reported that `nexus-credit-intelligence.vercel.app` was missing
+Research Notes (Milestone 10A) and Universal Search (Milestone 12)
+entirely — no `Search` nav item, no header search box, sidebar showing
+only the pre-10A item set. Both milestones had been reported complete,
+tested, and committed earlier the same day.
+
+**Root cause**: `git commit` was run for both milestones (`fbf5da4`/
+`707f4b0` for 10A, `b0c14eb`/`4840634` for 12), but `git push` was never
+run. Local `main` sat 4 commits ahead of `origin/main` with nothing in
+either milestone's workflow, or in Claude's own completion reports,
+flagging that the work was local-only. Vercel and Railway both deploy via
+their standard GitHub integration against `origin/main` — since the
+remote never advanced past `111477e` (the last commit of Milestone 9),
+neither service ever saw the new code. Confirmed directly: `git ls-tree
+origin/main` had none of the new files; the live Railway backend's
+`/api/search` and `/api/research-notes` both returned `404`; `origin/
+main`'s `web/src/components/Layout.tsx` nav list was byte-for-byte the
+six items the user reported seeing live.
+
+**A real, separate finding surfaced during the investigation**: the
+shared production Supabase database was *not* stale — migrations `0015`
+and `0016` had been applied directly against the live `DATABASE_URL`/
+`DIRECT_DATABASE_URL` from local dev during both milestones' work
+(`nexus.alembic_version` read `0016` live), per this project's
+established one-shared-database-across-all-environments pattern. But
+`origin/main`'s newest migration file was `0014` — so for a window of
+time, the live database carried schema (three new tables, seven new
+generated columns) that *no deployed code, frontend or backend,* knew
+existed. Both migrations are additive only (no column renamed/dropped/
+retyped) and this codebase's convention of explicit column selection
+(never `SELECT *`) meant the old deployed backend was never at real risk
+of breaking against the newer schema — but it was a genuine, live
+asymmetry worth recording, not a hypothetical one.
+
+**Fix**: `git push origin main` (user-authorized). `origin/main` now
+matches local `HEAD` (`4840634`) exactly. Both Railway and Vercel
+auto-deployed within minutes of the push — verified live: `GET /api/
+search?q=Trinseo` and `GET /api/research-notes` both return real,
+correct data on the Railway production URL; the `Search` nav item,
+header `GlobalSearch` box, and a live grouped-dropdown search for
+"Trinseo" all render correctly on the Vercel production URL.
+
+**Process gap, stated plainly**: committing is not deploying. Both
+milestone completion reports listed a commit hash and described a "live
+browser production walkthrough," which was real but was performed
+against a local dev server, not the actual production deployment — the
+reports should have distinguished "verified locally" from "verified in
+production" explicitly, and should have surfaced that the commits hadn't
+been pushed. Neither CLAUDE.md's milestone workflow nor this session's
+own practice treated "push" as a required, distinct step from "commit" —
+worth the user's explicit decision on whether to formalize that going
+forward, rather than Claude silently assuming push-on-commit or silently
+continuing to separate them without flagging it each time.
+
+**Commit Hash**
+
+No new commit — this entry documents a `git push` of already-committed
+work (`fbf5da4`, `707f4b0`, `b0c14eb`, `4840634`), not new code.
+
+**Approximate Time Spent**
+
+~25 minutes (investigation: git/remote/branch comparison, live endpoint
+probing on both Railway and Vercel, Supabase migration-state check; the
+push itself; post-push verification via live backend endpoints and a
+live browser walkthrough on the actual production URL).
