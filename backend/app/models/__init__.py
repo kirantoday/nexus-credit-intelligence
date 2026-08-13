@@ -26,6 +26,8 @@ from app.models import (  # noqa: F401
     court_docket_entry,
     court_docket_link_attempt,
     docket_document,
+    document_chunk,
+    document_extraction,
     entitlement,
     filing_monitor_run,
     financial_fact,

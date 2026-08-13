@@ -1,0 +1,85 @@
+{
+  "manifest_version": "1",
+  "fixtures": [
+    {
+      "id": "credit_agreement_excerpt",
+      "file": "fixtures/credit_agreement_excerpt.pdf",
+      "document_type": "credit_agreement",
+      "expected_page_count": 2,
+      "expected_needs_ocr": false,
+      "expected_min_chunks": 4,
+      "expected_headings_present": ["CREDIT AGREEMENT", "ARTICLE VI", "ARTICLE VII"],
+      "expected_table_count": 0,
+      "phrase_to_page": [
+        {"phrase": "First Lien Leverage Ratio", "expected_page": 1},
+        {"phrase": "Restricted Payment", "expected_page": 2}
+      ]
+    },
+    {
+      "id": "lender_presentation_excerpt",
+      "file": "fixtures/lender_presentation_excerpt.pdf",
+      "document_type": "lender_presentation",
+      "expected_page_count": 1,
+      "expected_needs_ocr": false,
+      "expected_min_chunks": 2,
+      "expected_headings_present": [],
+      "expected_table_count": 1,
+      "expected_table_contains": ["First Lien Term Loan B", "SOFR+450"],
+      "phrase_to_page": [
+        {"phrase": "Senior Secured Notes", "expected_page": 1}
+      ]
+    },
+    {
+      "id": "earnings_presentation_excerpt",
+      "file": "fixtures/earnings_presentation_excerpt.pdf",
+      "document_type": "earnings_presentation",
+      "expected_page_count": 1,
+      "expected_needs_ocr": false,
+      "expected_min_chunks": 2,
+      "expected_headings_present": ["Segment Performance"],
+      "expected_table_count": 1,
+      "expected_table_contains": ["North America", "23.1%"],
+      "phrase_to_page": [
+        {"phrase": "Adjusted EBITDA", "expected_page": 1}
+      ]
+    },
+    {
+      "id": "restructuring_presentation_excerpt",
+      "file": "fixtures/restructuring_presentation_excerpt.pdf",
+      "document_type": "restructuring_presentation",
+      "expected_page_count": 1,
+      "expected_needs_ocr": false,
+      "expected_min_chunks": 2,
+      "expected_headings_present": ["Restructuring Overview"],
+      "expected_table_count": 0,
+      "expected_list_chunk_present": true,
+      "phrase_to_page": [
+        {"phrase": "DIP-to-exit facility", "expected_page": 1}
+      ]
+    },
+    {
+      "id": "bankruptcy_court_filing_excerpt",
+      "file": "fixtures/bankruptcy_court_filing_excerpt.pdf",
+      "document_type": "bankruptcy_court_document",
+      "expected_page_count": 1,
+      "expected_needs_ocr": false,
+      "expected_min_chunks": 1,
+      "expected_headings_present": [],
+      "expected_table_count": 0,
+      "phrase_to_page": [
+        {"phrase": "DIP Facility", "expected_page": 1}
+      ]
+    },
+    {
+      "id": "scanned_like_blank_page",
+      "file": "fixtures/scanned_like_blank_page.pdf",
+      "document_type": "other",
+      "expected_page_count": 1,
+      "expected_needs_ocr": true,
+      "expected_min_chunks": 0,
+      "expected_headings_present": [],
+      "expected_table_count": 0,
+      "phrase_to_page": []
+    }
+  ]
+}

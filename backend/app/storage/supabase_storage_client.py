@@ -57,6 +57,17 @@ class SupabaseStorageClient:
                 f"upload failed for key {key!r}: {response.status_code} {response.text[:500]}"
             )
 
+    def download(self, *, key: str) -> bytes:
+        try:
+            response = self._client.get(f"{self._storage_base}/object/{self._bucket}/{key}")
+        except httpx.HTTPError as exc:
+            raise StorageError(f"download request failed for key {key!r}: {exc}") from exc
+        if response.status_code >= 400:
+            raise StorageError(
+                f"download failed for key {key!r}: {response.status_code} {response.text[:500]}"
+            )
+        return response.content
+
     def delete(self, *, key: str) -> None:
         try:
             response = self._client.delete(f"{self._storage_base}/object/{self._bucket}/{key}")

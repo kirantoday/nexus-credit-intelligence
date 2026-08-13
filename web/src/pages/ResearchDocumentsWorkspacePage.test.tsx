@@ -134,6 +134,17 @@ describe("ResearchDocumentsWorkspacePage", () => {
     expect(link).toHaveAttribute("href", "/issuers/issuer-42");
   });
 
+  it("links a document's title to its detail page", async () => {
+    vi.spyOn(researchDocumentApi, "fetchResearchDocuments").mockResolvedValue({
+      documents: [makeDocument()],
+    });
+
+    renderWithProviders();
+
+    const titleLink = await screen.findByRole("link", { name: "Amended Credit Agreement" });
+    expect(titleLink).toHaveAttribute("href", "/research-documents/doc-1");
+  });
+
   it("fetches without an issuer_id filter (cross-issuer)", async () => {
     const fetchSpy = vi
       .spyOn(researchDocumentApi, "fetchResearchDocuments")

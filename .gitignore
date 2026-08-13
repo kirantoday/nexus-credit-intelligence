@@ -30,3 +30,7 @@ dist/
 
 # Logs
 *.log
+
+# Document Intelligence eval run output (Milestone 10C) — the corpus
+# manifest/fixtures/runner are version-controlled; per-run results are not.
+backend/eval/document_intelligence/results/

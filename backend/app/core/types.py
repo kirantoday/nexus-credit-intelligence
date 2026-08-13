@@ -491,6 +491,8 @@ class AuditEventType(StrEnum):
     RESEARCH_DOCUMENT_UPLOADED = "research_document_uploaded"
     RESEARCH_DOCUMENT_METADATA_UPDATED = "research_document_metadata_updated"
     RESEARCH_DOCUMENT_ARCHIVED = "research_document_archived"
+    # --- Milestone 10C: Document Intelligence ---
+    DOCUMENT_EXTRACTION_REQUESTED = "document_extraction_requested"
 
 
 # --- Milestone 12A: Universal Search ---
@@ -536,3 +538,62 @@ class ResearchDocumentType(StrEnum):
     FINANCIAL_MODEL_ANALYSIS = "financial_model_analysis"
     INTERNAL_RESEARCH_MEMO = "internal_research_memo"
     OTHER = "other"
+
+
+# --- Milestone 10C: Document Intelligence ---
+
+
+class DocumentExtractionStatus(StrEnum):
+    """`document_extraction.status` (Milestone 10C).
+
+    `NEEDS_OCR` is a distinct, intentional terminal state — a scanned/
+    image-only source that the extractor genuinely cannot read is not the
+    same condition as a parser crash (`FAILED`), and must not be retried
+    the same way. See `app.services.document_extraction_service`'s
+    validation/heuristic docstring.
+    """
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    NEEDS_OCR = "needs_ocr"
+
+
+class DocumentExtractionSourceType(StrEnum):
+    """`document_extraction.source_type` (Milestone 10C).
+
+    A discriminator, not a polymorphic FK — mirrors `research_evidence.
+    evidence_provider` (ADR-018): one real nullable per-source FK column
+    exists today (`research_document_id`); a future SEC/court source adds
+    its own nullable FK column and its own member here, never a generic
+    `source_id` association.
+    """
+
+    RESEARCH_DOCUMENT = "research_document"
+
+
+class DocumentExtractionErrorClass(StrEnum):
+    """`document_extraction.error_classification` (Milestone 10C).
+
+    Decides retry eligibility (PLAN.md's "do not repeat the unbounded-
+    retry-assumption mistake" instruction, post-2026-08-13 incident):
+    `TRANSIENT` (Storage/network hiccup) is retried up to the bounded
+    attempt cap; `DETERMINISTIC` (corrupt/unsupported PDF, parser
+    rejection) is never retried automatically — re-attempting it would
+    reliably fail again and just burn worker cycles.
+    """
+
+    TRANSIENT = "transient"
+    DETERMINISTIC = "deterministic"
+
+
+class DocumentChunkElementType(StrEnum):
+    """`document_chunk.element_type` (Milestone 10C) — a restrained set,
+    not exhaustive by design (deliberately no `OTHER`/escape hatch: every
+    chunk chunking_v1 produces is unambiguously one of these four)."""
+
+    TEXT = "text"
+    HEADING = "heading"
+    TABLE = "table"
+    LIST = "list"

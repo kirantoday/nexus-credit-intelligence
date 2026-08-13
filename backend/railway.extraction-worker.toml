@@ -1,0 +1,7 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "python -m app.scripts.run_document_extraction_worker"
+cronSchedule = "*/5 * * * *"

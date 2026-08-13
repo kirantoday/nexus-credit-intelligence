@@ -33,6 +33,14 @@ class StorageClient(Protocol):
         based path) — this method never needs upsert semantics."""
         ...
 
+    def download(self, *, key: str) -> bytes:
+        """Returns the raw bytes stored at `key`. Raises `StorageError` if
+        the object doesn't exist or the request fails. Added in Milestone
+        10C — every 10B call site only ever needed a signed URL for the
+        *browser* to fetch; the extraction worker is this codebase's first
+        caller that needs the bytes themselves, server-side."""
+        ...
+
     def delete(self, *, key: str) -> None:
         """Deletes the object at `key`. Raises `StorageError` on failure —
         callers using this for compensating cleanup must catch and log

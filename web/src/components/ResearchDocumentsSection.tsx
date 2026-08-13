@@ -101,7 +101,7 @@ function ResearchDocumentCard({ document }: { document: ResearchDocument }): Rea
       <CardContent>
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
           <Typography variant="subtitle1" sx={{ mr: 1 }}>
-            {document.title}
+            <RouterLink to={`/research-documents/${document.id}`}>{document.title}</RouterLink>
           </Typography>
           <ResearchDocumentTypeBadge documentType={document.document_type} />
           {document.confidentiality_classification === "restricted" && (

@@ -12,6 +12,10 @@ from app.api.routes.alerts import router as alerts_router
 from app.api.routes.capital_structure import router as capital_structure_router
 from app.api.routes.court_dockets import router as court_dockets_router
 from app.api.routes.credit_universe import router as credit_universe_router
+from app.api.routes.document_extraction import (
+    document_extraction_router,
+    research_document_extractions_router,
+)
 from app.api.routes.filing_monitor import router as filing_monitor_router
 from app.api.routes.health import router as health_router
 from app.api.routes.issuer import router as issuer_router
@@ -65,4 +69,6 @@ app.include_router(issuer_timeline_router)
 app.include_router(watchlists_router)
 app.include_router(research_notes_router)
 app.include_router(research_documents_router)
+app.include_router(research_document_extractions_router)
+app.include_router(document_extraction_router)
 app.include_router(search_router)

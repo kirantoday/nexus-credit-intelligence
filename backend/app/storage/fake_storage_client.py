@@ -22,6 +22,7 @@ class FakeStorageClient:
     fail_next_upload: bool = False
     fail_next_delete: bool = False
     fail_next_sign: bool = False
+    fail_next_download: bool = False
     deleted_keys: list[str] = field(default_factory=list)
 
     def upload(self, *, key: str, content: bytes, content_type: str) -> None:
@@ -29,6 +30,14 @@ class FakeStorageClient:
             self.fail_next_upload = False
             raise StorageError(f"simulated upload failure for key {key!r}")
         self.objects[key] = content
+
+    def download(self, *, key: str) -> bytes:
+        if self.fail_next_download:
+            self.fail_next_download = False
+            raise StorageError(f"simulated download failure for key {key!r}")
+        if key not in self.objects:
+            raise StorageError(f"cannot download missing key {key!r}")
+        return self.objects[key]
 
     def delete(self, *, key: str) -> None:
         if self.fail_next_delete:

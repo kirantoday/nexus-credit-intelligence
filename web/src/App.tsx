@@ -3,10 +3,12 @@ import { Route, Routes } from "react-router";
 import { Layout } from "./components/Layout";
 import { AboutPage } from "./pages/AboutPage";
 import { AlertsPage } from "./pages/AlertsPage";
+import { ChunkInspectorPage } from "./pages/ChunkInspectorPage";
 import { CreditUniversePage } from "./pages/CreditUniversePage";
 import { IssuerPage } from "./pages/IssuerPage";
 import { MorningResearchBriefPage } from "./pages/MorningResearchBriefPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+import { ResearchDocumentDetailPage } from "./pages/ResearchDocumentDetailPage";
 import { ResearchDocumentUploadPage } from "./pages/ResearchDocumentUploadPage";
 import { ResearchDocumentsWorkspacePage } from "./pages/ResearchDocumentsWorkspacePage";
 import { ResearchNoteEditorPage } from "./pages/ResearchNoteEditorPage";
@@ -30,6 +32,8 @@ export function App(): ReactElement {
         />
         <Route path="/research-notes" element={<ResearchNotesWorkspacePage />} />
         <Route path="/research-documents" element={<ResearchDocumentsWorkspacePage />} />
+        <Route path="/research-documents/:documentId" element={<ResearchDocumentDetailPage />} />
+        <Route path="/document-extractions/:extractionId/chunks" element={<ChunkInspectorPage />} />
         <Route path="/research-notes/:noteId" element={<ResearchNotePage />} />
         <Route path="/research-notes/:noteId/edit" element={<ResearchNoteEditorPage />} />
         <Route path="/research-universes" element={<ResearchUniversesPage />} />

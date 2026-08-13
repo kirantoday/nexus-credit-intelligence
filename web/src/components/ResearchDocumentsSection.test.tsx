@@ -102,6 +102,17 @@ describe("ResearchDocumentsSection", () => {
     expect(screen.queryByText("Restricted")).not.toBeInTheDocument();
   });
 
+  it("links a document's title to its detail page", async () => {
+    vi.spyOn(researchDocumentApi, "fetchResearchDocuments").mockResolvedValue({
+      documents: [makeDocument()],
+    });
+
+    renderWithProviders();
+
+    const titleLink = await screen.findByRole("link", { name: "Amended Credit Agreement" });
+    expect(titleLink).toHaveAttribute("href", "/research-documents/doc-1");
+  });
+
   it("links Upload Document to the issuer-scoped upload route", async () => {
     vi.spyOn(researchDocumentApi, "fetchResearchDocuments").mockResolvedValue({ documents: [] });
 
