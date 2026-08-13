@@ -7272,3 +7272,150 @@ across two workflows (issuer-scoped + global workspace); the live-caught
 TypeScript build bug; frontend test suite across three new test files
 plus `Layout` updates; full test/lint/type/build/migration verification;
 local boot verification; documentation).
+
+## 2026-08-13 — Production incident: `nexus-nightly-10pm-edt` reported "Crashed"; unretried SEC EDGAR transient 5xx; Aug 12 research day recovered; KI-004, TD-030/031/032
+
+**What happened**
+
+Railway emailed a crash notification for `nexus-nightly-10pm-edt`.
+Morning Research Brief was stuck at `latest_research_day: 2026-08-11`
+one day past when it should have advanced.
+
+**Root cause**: not an application crash. The 2026-08-12 22:00 ET
+nightly run (`market_discovery_run` id `3791920e-...`) executed the full
+~65-minute `run_market_discovery.py --mode delta` pipeline successfully
+end to end — 731 filings examined, 183 new issuers resolved, 300
+Anthropic evidence-review calls — but one of 39 SEC full-text-search
+queries (`efts.sec.gov`) returned a bare, transient `500`. The per-query
+`try/except` in `market_discovery_service.run_discovery` correctly
+isolated the failure and continued, but `errors_count=1` set
+`status=completed_with_errors`, which per `market_discovery_service.py`'s
+watermark policy leaves `resulting_watermark` unadvanced, and per
+`run_market_discovery.py`'s `success_statuses` causes a non-zero process
+exit — which Railway's cron-job monitor reports as "Crashed." No
+migration, environment variable, database, or recent-milestone (10A/10B/
+Universal Search) involvement — confirmed by full call-graph inspection;
+the crashed code path never touches `research_document`, Storage, or
+search.
+
+**Investigation discipline**: no rerun was attempted before root cause,
+date-semantics, and idempotency were fully traced against the actual
+code (not assumed). Key finding: `morning_brief_service.py`'s
+`research_day = market_discovery_run.window_start_date`, and
+`get_latest_successful_daily_run` excludes `mode=backfill` by design —
+so recovering a day already one calendar day in the past required a
+plain `--mode delta` rerun (which resumes from the stalled watermark,
+naturally producing `window_start_date=2026-08-12`), not a `--mode
+backfill` window, which would recover the missing data but never carry
+the "daily research day" label per that exclusion.
+
+**Two recovery attempts before the actual fix**: a first plain `--mode
+delta` rerun (via `railway run`, production env, no code change) hit a
+*different* SEC full-text-search query returning a transient 500
+(`"chapter 7 bankruptcy"`), again leaving `status=completed_with_errors`
+and the watermark unadvanced — 272 evidence rows/96 alerts were still
+durably committed (per-candidate/per-issuer commit boundaries; no
+rollback). Two consecutive failures on the identical, previously-unseen
+failure shape (an unretried `500` from SEC's full-text-search index) was
+treated as a real, reproducible pattern, not bad luck — `run_market_
+discovery.py`'s SEC `ThrottledHttpClient` had **zero** retry
+configuration (`retry_on_status`/`max_retries` default to none), unlike
+`app/providers/courtlistener/client.py`'s already-production-proven
+`retry_on_status=frozenset({429}), max_retries=2` (the TD-020 fix from
+the 2026-08-09 CourtListener incident).
+
+**Fix** (commit `2924f3e`): reused that exact, already-tested
+`ThrottledHttpClient` retry mechanism — `retry_on_status=frozenset({500,
+502, 503, 504}), max_retries=2` — on the market-discovery script's SEC
+client only (scoped to the one call path actually implicated; other SEC
+call sites — `run_overnight_filing_monitor.py`, `seed_research_
+universes.py`, the disabled-in-production manual-trigger route — were
+deliberately left unchanged, see TD-030). Four new unit tests added to
+the existing `tests/unit/test_http_client_retry_after.py` (mirroring its
+429 tests exactly): 500-then-success is retried and returns 200;
+retry-exhaustion on repeated 500s still raises `HTTPStatusError`; a
+status outside the configured retry set (404) raises immediately with no
+retry; the default client (no retry config, every other existing caller)
+is unaffected. 13/13 tests in that file pass; 591 backend tests total
+(590 passed, 1 pre-existing-assumption failure — see TD-032); `ruff`/
+`black`/`mypy` clean. Committed, pushed to `origin/main`
+(`499fd2e..2924f3e`), remote HEAD verified byte-identical to local.
+Railway auto-deployed the fix to both `nexus-nightly-10pm-edt`
+(`c27f8b07`, `SUCCESS`) and `nexus-nightly-10pm-est` (`81ef90a6`,
+`SUCCESS`) within ~90 seconds of the push.
+
+**Recovery**: a third `--mode delta` run (fix in place) completed
+`status=success, errors_count=0` in 51.6s — only 5 new evidence rows/2
+new alerts/3 Anthropic calls ($0.0136), confirming the two prior partial
+attempts had already durably captured nearly everything (idempotent
+dedup by `(cik, accession_no)` + `rule_version`, `sec_filing.
+accession_no` uniqueness, bundle-key alert idempotency — no reprocessing,
+no duplicates). `resulting_watermark` advanced to `2026-08-13T14:22:07Z`;
+`window_start_date=2026-08-12` → `research_day=2026-08-12`.
+
+**Verification**: production API confirmed `latest_research_day:
+2026-08-12`, `preceding_research_day: 2026-08-11`; the specific Aug-11
+alert captured before recovery (`1e3adbfb-...`, LB Pharmaceuticals)
+verified byte-identical after recovery — Aug 11 data untouched, no
+duplicate created for that issuer despite three separate run attempts
+touching overlapping windows; Watchlists/Research Universes/Universal
+Search/Research Notes/Research Documents/`/health` all returned healthy
+responses. Live browser verification on
+`nexus-credit-intelligence.vercel.app/research-brief` confirmed: "Latest
+research day: Aug 12, 2026 · Compared with: Aug 11, 2026," 237 issuers
+with developments (107 high/23 medium/112 low), real alerts rendering
+correctly. `railway status` confirmed both nightly cron services
+`● Online` with the fix deployed, next scheduled runs on track (~11-12
+hours out at investigation time), unaffected by any of this — tonight's
+Aug 13 trigger will compute a clean `2026-08-13..2026-08-13` window from
+the now-current watermark.
+
+**AI usage across the full incident** (three attempts, real Anthropic
+spend, no artificial suppression): 430 total calls (300 + 127 + 3),
+$1.4790 estimated cost (crashed run $0.9193 + failed rerun $0.5461 +
+successful recovery $0.0136).
+
+**New Known Issue / Technical Debt** (see `PLAN.md`):
+- **KI-004** (resolved by this entry): the crash itself.
+- **TD-030**: SEC EDGAR call sites other than market discovery's
+  (`run_overnight_filing_monitor.py`, `seed_research_universes.py`, the
+  production-disabled manual-trigger route) still construct
+  `ThrottledHttpClient` with no 5xx retry — left unchanged since they
+  weren't implicated in this incident and aren't on the live nightly
+  path, but the same gap exists there.
+- **TD-031**: a `completed_with_errors` run (by design, to avoid
+  stranding the watermark on a single transient failure) still causes a
+  non-zero exit code, which Railway reports as a full "Crashed"
+  deployment/email even when the run was mostly successful and
+  committed real data — operationally noisy/misleading; a genuine
+  design tradeoff, not fixed here per explicit instruction not to make
+  a speculative change to get one run through.
+- **TD-032**: `tests/integration/test_morning_brief_service.py::
+  test_no_material_changes_when_nothing_new` asserts `new_developments
+  == []` against the live shared `nexus` schema's real "today" state —
+  correct and passing for the project's entire history until this
+  incident's own approved, legitimate same-day recovery run created real
+  alerts that violated its unstated assumption. Not modified during this
+  incident (out of scope, would be an unrelated change); worth scoping
+  more defensively (e.g. filtering to synthetic/fixture-only issuer ids)
+  later.
+- **Noted, not filed as a TD**: `market_discovery_service.run_discovery`'s
+  `DELTA` branch computes `resolved_start = previous_watermark.date()`
+  on the stored UTC-aware timestamp directly, not converted to
+  `America/New_York` first — in this incident it happened to still
+  produce the correct date (the watermark's UTC calendar date and its
+  true ET business date coincided), but that is not guaranteed in
+  general. Worth a closer look if a future delta window is ever observed
+  starting one day off from the intended ET business date.
+
+**Commit Hash**
+
+`2924f3e`
+
+**Approximate Time Spent**
+
+~2.5 hours (investigation and code-level date/idempotency tracing before
+any action; two production recovery attempts; root-cause-driven retry
+fix with tests; full regression suite; commit/push/deploy verification;
+third recovery attempt and full production/browser verification;
+documentation).
