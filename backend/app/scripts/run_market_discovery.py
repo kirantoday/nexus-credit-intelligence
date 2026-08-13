@@ -287,7 +287,18 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     http_client = ThrottledHttpClient(
-        user_agent=settings.sec_user_agent, min_interval_seconds=_DISCOVERY_MIN_INTERVAL_SECONDS
+        user_agent=settings.sec_user_agent,
+        min_interval_seconds=_DISCOVERY_MIN_INTERVAL_SECONDS,
+        # 2026-08-12/13 incident: SEC's full-text-search index
+        # (efts.sec.gov) returned a bare, transient 500 on one query in
+        # two consecutive production runs (different query each time) —
+        # zero retries meant one flaky upstream response aborted an
+        # otherwise-successful ~40-query run and stalled the daily-run
+        # watermark. Reuses the same retry mechanism already proven for
+        # CourtListener's 429s (`app.providers.courtlistener.client`),
+        # just against SEC's transient-5xx set instead of a rate limit.
+        retry_on_status=frozenset({500, 502, 503, 504}),
+        max_retries=2,
     )
     enrichment_clients = _build_enrichment_clients(settings, http_client)
     courtlistener_configured = "yes" if enrichment_clients.courtlistener else "no (unavailable)"

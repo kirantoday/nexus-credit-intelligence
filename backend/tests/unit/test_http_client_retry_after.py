@@ -110,3 +110,83 @@ def test_repeated_429_exhausts_retries_and_raises_http_status_error() -> None:
 
     with pytest.raises(httpx.HTTPStatusError):
         client.get("http://example.test/x")
+
+
+def _client_with_transient_5xx_retry(**kwargs: object) -> ThrottledHttpClient:
+    """Mirrors `run_market_discovery.py`'s SEC discovery client config
+    (2026-08-12/13 incident: an unretried, transient `efts.sec.gov` 500
+    aborted two consecutive production runs) — same generic retry
+    mechanism `_client()` above already proves for 429, just against the
+    transient-5xx set instead of a rate-limit status."""
+    return ThrottledHttpClient(
+        user_agent="test",
+        retry_on_status=frozenset({500, 502, 503, 504}),
+        max_retries=2,
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+def test_sec_500_is_retried_then_succeeds() -> None:
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return httpx.Response(500)
+        return httpx.Response(200, json={"ok": True})
+
+    client = _client_with_transient_5xx_retry()
+    client._client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    response = client.get("http://example.test/x")
+    assert response.status_code == 200
+    assert calls["count"] == 2
+
+
+def test_sec_500_retry_exhaustion_still_surfaces_the_failure() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500)
+
+    client = _client_with_transient_5xx_retry()
+    client._client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    with pytest.raises(httpx.HTTPStatusError):
+        client.get("http://example.test/x")
+
+
+def test_non_retryable_status_is_unaffected_by_5xx_retry_config() -> None:
+    """A status outside the configured `retry_on_status` set (e.g. a plain
+    404) must still raise immediately, in a single call — enabling 5xx
+    retry for transient SEC errors must not change behavior for genuinely
+    non-retryable responses."""
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        return httpx.Response(404)
+
+    client = _client_with_transient_5xx_retry()
+    client._client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    with pytest.raises(httpx.HTTPStatusError):
+        client.get("http://example.test/x")
+    assert calls["count"] == 1
+
+
+def test_default_client_still_raises_immediately_on_500_when_retry_not_configured() -> None:
+    """Every existing caller that doesn't opt into `retry_on_status` (e.g.
+    OpenFIGI/FRED, and SEC EDGAR's non-discovery call sites) must keep
+    raising on the first non-2xx exactly as before — this fix is scoped to
+    the discovery script's SEC client, not a global default change."""
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        return httpx.Response(500)
+
+    client = ThrottledHttpClient(user_agent="test")
+    client._client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    with pytest.raises(httpx.HTTPStatusError):
+        client.get("http://example.test/x")
+    assert calls["count"] == 1
