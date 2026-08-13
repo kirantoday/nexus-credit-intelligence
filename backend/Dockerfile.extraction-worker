@@ -1,0 +1,35 @@
+# Dedicated container entrypoint for the Document Intelligence extraction
+# worker (Milestone 10C, `nexus-document-extraction-worker`).
+#
+# Identical build (Python version, dependency install) to the main
+# `Dockerfile` — differs only in the final command. A separate Dockerfile,
+# not a Railway Start Command override, is deliberate: Railway's
+# service-config API (`update_service`'s `start_command` field) was
+# proven, across three independent deployments, to display the correct
+# override in the dashboard/API summary while the container actually
+# launched by the Dockerfile's own `CMD` at deploy time regardless — an
+# explicit entrypoint in its own Dockerfile removes that ambiguity
+# entirely rather than depending on a Railway override mechanism that
+# didn't reliably apply for this service. Selected via the
+# `RAILWAY_DOCKERFILE_PATH` service variable (Railway's documented custom-
+# Dockerfile-path mechanism — https://docs.railway.com/builds/dockerfiles
+# — not the `dockerfile_path` API field, which is what silently failed to
+# apply here), never the web service's `Dockerfile` or the nightly
+# services' `startCommand`-based config, both of which stay untouched.
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+COPY pyproject.toml ./
+RUN pip install --upgrade pip && pip install .
+
+COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini ./
+
+CMD ["python", "-m", "app.scripts.run_document_extraction_worker"]
