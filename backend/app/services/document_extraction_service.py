@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -228,6 +229,13 @@ def process_one(db: Session, storage_client: StorageClient) -> DocumentExtractio
 
     assert extraction.research_document_id is not None
     research_document_id = extraction.research_document_id
+    job_started = time.monotonic()
+    logger.info(
+        "extraction_claimed extraction_id=%s research_document_id=%s attempt=%d",
+        extraction.id,
+        research_document_id,
+        extraction.attempt_count,
+    )
 
     try:
         document = research_document_repository.get_document(db, research_document_id)
@@ -243,6 +251,11 @@ def process_one(db: Session, storage_client: StorageClient) -> DocumentExtractio
             "document_intelligence.storage_download", extraction_id=extraction.id
         ):
             source_bytes = storage_client.download(key=payload.storage_object_path)
+        logger.info(
+            "extraction_source_downloaded extraction_id=%s size_bytes=%d",
+            extraction.id,
+            len(source_bytes),
+        )
 
         with document_intelligence_span(
             "document_intelligence.extract",
@@ -253,6 +266,12 @@ def process_one(db: Session, storage_client: StorageClient) -> DocumentExtractio
             span.set_attribute("extractor_provider", result.extractor_provider)
             span.set_attribute("extractor_version", result.extractor_version)
             span.set_attribute("page_count", result.page_count)
+        logger.info(
+            "extraction_text_extracted extraction_id=%s page_count=%d elapsed_s=%.1f",
+            extraction.id,
+            result.page_count,
+            time.monotonic() - job_started,
+        )
 
         if detect_needs_ocr(result):
             with document_intelligence_span(
@@ -267,6 +286,12 @@ def process_one(db: Session, storage_client: StorageClient) -> DocumentExtractio
                 page_count=result.page_count,
             )
             db.commit()
+            logger.warning(
+                "extraction_needs_ocr extraction_id=%s page_count=%d elapsed_s=%.1f",
+                extraction.id,
+                result.page_count,
+                time.monotonic() - job_started,
+            )
             return completed
 
         with document_intelligence_span(
@@ -338,6 +363,15 @@ def process_one(db: Session, storage_client: StorageClient) -> DocumentExtractio
                 db, extraction.id, research_document_id=research_document_id
             )
         db.commit()
+        logger.info(
+            "extraction_completed extraction_id=%s page_count=%d chunk_count=%d table_count=%d "
+            "elapsed_s=%.1f",
+            extraction.id,
+            result.page_count,
+            len(drafts),
+            table_count,
+            time.monotonic() - job_started,
+        )
         return promoted
 
     except Exception as exc:  # noqa: BLE001 - classified and persisted, never silent

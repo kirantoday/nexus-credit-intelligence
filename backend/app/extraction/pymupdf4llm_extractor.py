@@ -22,7 +22,7 @@ import tempfile
 from importlib.metadata import version as package_version
 from pathlib import Path
 
-import pymupdf4llm  # type: ignore[import-untyped]
+import pymupdf4llm  # type: ignore[import-untyped,unused-ignore]
 
 from app.extraction.base import ExtractedPage, ExtractionFailure, ExtractionResult
 

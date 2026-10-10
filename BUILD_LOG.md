@@ -7419,3 +7419,31 @@ any action; two production recovery attempts; root-cause-driven retry
 fix with tests; full regression suite; commit/push/deploy verification;
 third recovery attempt and full production/browser verification;
 documentation).
+
+---
+
+## 2026-10-10 — Milestone 10C recovery: stale job cancelled, worker diagnostic logging added (production NOT verified)
+
+**What was done**
+
+- Re-verified read-only, then cancelled the one stale `document_extraction` job `40a9bb1d-6999-4978-920f-9c63e4964aa4` (research_document `265d8ae2-77c1-4e78-aacf-ecbdd023b622`; created 2026-08-13, `pending`, `attempt_count=0`, not current, no chunks/artifact). Method: a single transaction with `UPDATE ... WHERE id=... AND status='pending' AND attempt_count=0 AND is_current=false AND research_document_id=...`, required exactly one affected row (else rollback), set `status='failed'`, `error_classification='deterministic'`, an explicit operator-cancellation reason and `completed_at`, plus audit event `document_extraction_cancelled` (new `AuditEventType`; `audit_event.event_type` is unconstrained text, no migration). The uploaded document, `raw_provider_payload`, provenance and Storage object were not touched; no other job was touched. Verified afterwards: job `failed`, 0 jobs pending/processing, audit history = `requested` + `cancelled`, 0 chunks, 2 research documents / 2 admin_upload payloads unchanged. This was a one-off, explicitly approved production operation, not a supported lifecycle feature (TD-035).
+- Diagnosed the extraction worker (KI-005). Established: it has never queried the database (`pg_stat_statements`), produces no log output on Railway, and the web service on the same image imports the same libraries fine. Also found its Railway build used `backend/Dockerfile` rather than `Dockerfile.extraction-worker`, and that the worker never configured Python logging. **Root cause is not proven** — this entry does not claim a fix.
+- Rewrote `app/scripts/run_document_extraction_worker.py` to log through `logging` (stdout, line-buffered) before any heavy import: `worker_started`, `config_validated`, `extraction_modules_imported`, `database_connected`, `stale_jobs_reclaimed`, `worker_finished outcome=<no_eligible_job|processed|config_error|db_connection_error|unhandled_error>`, a SIGTERM logger and `faulthandler`. `document_extraction_service.process_one` gained `extraction_claimed`/`source_downloaded`/`text_extracted`/`completed`/`needs_ocr` lines with timings. Logs carry identifiers, counts, durations and error categories only. The queue, `FOR UPDATE SKIP LOCKED`, retry limits, stale recovery, status lifecycle and promotion are unchanged.
+- Removed the obsolete `# type: ignore[import-untyped]` on `import pymupdf4llm` (the pinned 1.28.x ships types; `mypy app` clean, 209 files).
+
+**Tests**
+
+- 274 unit tests pass (including 6 new DB-free worker entry-point tests) with `DATABASE_URL` forced to an unreachable address. 18 route tests fail only with connection errors against that address (they require the real DB). `ruff` and `black` clean on changed files; `mypy app` clean.
+- DB-backed integration tests were **not run** (TD-033): no isolated database is available inside the approved stack, and they act on the shared production-adjacent `nexus` schema (rolled-back transactions only).
+
+**Not verified (do not treat 10C as production-verified)**: any real extraction in production; real-PDF page/section/table accuracy; large-PDF (300 page) time/memory; the worker running on Railway; integration-test coverage after this change.
+
+**Decisions**: No ADR — no architectural decision was made (Option A used an existing status; a `cancelled` status was deliberately deferred as TD-035).
+
+**Zero** Anthropic, embedding or other LLM calls; $0 AI cost.
+
+**Remaining before 10C can be called verified**: deploy the logging build, read the next cron run's logs, fix the proven cause, then run (with approval) a small text-native public credit agreement followed by a full-length one, measuring size, pages, time, memory, chunk/section/table/page accuracy and search quality. 10D blockers: TD-034 (stale chunk classification), no chunk content hash for incremental reindexing, `source_type` limited to `research_document`.
+
+**Commit Hash**
+
+See `git log` (the commit titled "Milestone 10C recovery: cancel stale job, worker diagnostic logging").

@@ -493,6 +493,7 @@ class AuditEventType(StrEnum):
     RESEARCH_DOCUMENT_ARCHIVED = "research_document_archived"
     # --- Milestone 10C: Document Intelligence ---
     DOCUMENT_EXTRACTION_REQUESTED = "document_extraction_requested"
+    DOCUMENT_EXTRACTION_CANCELLED = "document_extraction_cancelled"
 
 
 # --- Milestone 12A: Universal Search ---

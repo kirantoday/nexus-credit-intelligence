@@ -415,6 +415,16 @@ sit on top of:
 - Every extraction is wrapped in an OpenTelemetry span
   (`app.observability.tracing.document_intelligence_span`).
 
+> **Validation status (2026-10-10): implemented, not production-verified.** No extraction has
+> ever completed in production and `document_chunk` has zero rows. The extraction worker has
+> never reached the database since it was deployed (PLAN.md KI-005 — root cause under
+> investigation; diagnostic structured logging was added to the worker entry point). Treat the
+> chunker and extractor as proven only against synthetic fixtures until a real document has been
+> processed end to end. The worker now logs `worker_started` → `config_validated` →
+> `database_connected` → claim/`no_eligible_job` → `worker_finished outcome=…` (identifiers,
+> counts and durations only — never document text or credentials). Cancellation is not a
+> supported lifecycle operation (TD-035).
+
 This gives the future RAG milestone exactly what it needs: real, chunked,
 structure-aware, citable text with a stable identity (`extraction_id`,
 `document_chunk` rows) to embed — without that milestone having to build its
