@@ -37,6 +37,10 @@ Design decisions:
   A timeout or connection failure after the request was sent is ambiguous
   and may have been billed; this module cannot know, and no exactly-once or
   spending-ceiling guarantee is made.
+- **Retry-After** is parsed by `app.embeddings.scheduling.parse_retry_after`
+  (numeric seconds or an HTTP-date, resolved against an injected clock) and
+  returned **uncapped** on `EmbeddingRateLimitError`; whether to schedule or
+  hold is the scheduler's policy, not the adapter's.
 - **Fixed endpoint, no redirects.** The URL is a module constant; there is no
   endpoint setting, and a redirect is treated as a configuration error
   instead of being followed (the key is never sent to another host).
@@ -78,7 +82,8 @@ Design decisions:
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from datetime import datetime
 from types import TracebackType
 from typing import Any
 
@@ -96,6 +101,7 @@ from app.embeddings.errors import (
     EmbeddingResponseError,
     EmbeddingTransientError,
 )
+from app.embeddings.scheduling import parse_retry_after, utc_now
 
 OPENAI_PROVIDER_NAME = "openai"
 OPENAI_MODEL_ID = "text-embedding-3-large"
@@ -127,7 +133,6 @@ MAX_TIMEOUT_SECONDS = 300.0
 # rounding; a vector outside it is rejected, never rescaled.
 UNIT_NORM_TOLERANCE = 0.01
 
-_MAX_RETRY_AFTER_SECONDS = 3600.0
 _QUOTA_ERROR_CODES = frozenset(
     {
         "insufficient_quota",
@@ -149,6 +154,7 @@ class OpenAIEmbeddingProvider:
         max_batch_size: int = 64,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         client: httpx.Client | None = None,
+        clock: Callable[[], datetime] = utc_now,
     ) -> None:
         key = api_key.strip() if isinstance(api_key, str) else ""
         if not key or not key.isprintable() or any(ch.isspace() for ch in key):
@@ -177,6 +183,8 @@ class OpenAIEmbeddingProvider:
         self._timeout_seconds = float(timeout_seconds)
         self._client = client
         self._owns_client = client is None
+        # Injected only to resolve an HTTP-date `Retry-After` in tests.
+        self._clock = clock
 
     # --- EmbeddingProvider protocol -------------------------------------------------
 
@@ -343,7 +351,9 @@ class OpenAIEmbeddingProvider:
                 return EmbeddingAuthError("OpenAI quota or spend limit reached (HTTP 429)")
             return EmbeddingRateLimitError(
                 "OpenAI rate limit reached (HTTP 429)",
-                retry_after_seconds=_retry_after_seconds(response),
+                retry_after_seconds=parse_retry_after(
+                    response.headers.get("retry-after"), now=self._clock()
+                ),
             )
         if status == 408 or status >= 500:
             return EmbeddingTransientError(f"OpenAI server or timeout error (HTTP {status})")
@@ -434,19 +444,6 @@ def _error_code_and_type(response: httpx.Response) -> tuple[str | None, str | No
         code if isinstance(code, str) else None,
         error_type if isinstance(error_type, str) else None,
     )
-
-
-def _retry_after_seconds(response: httpx.Response) -> float | None:
-    raw = response.headers.get("retry-after")
-    if raw is None:
-        return None
-    try:
-        seconds = float(raw)
-    except ValueError:
-        return None  # an HTTP-date form is deliberately not parsed
-    if not math.isfinite(seconds) or seconds < 0:
-        return None
-    return min(seconds, _MAX_RETRY_AFTER_SECONDS)
 
 
 def _is_count(value: Any) -> bool:

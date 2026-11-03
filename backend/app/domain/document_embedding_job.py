@@ -49,3 +49,13 @@ class DocumentEmbeddingJob(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     created_at: datetime
+    # Scheduling (10D.2 scheduling increment). `retry_not_before` is UTC-aware
+    # and meaningful only while `pending`; `provider_wide` marks a delay or
+    # hold that applies to the whole provider/model queue, not just this job.
+    retry_not_before: datetime | None = None
+    provider_wide: bool = False
+    # Operator-hold evidence. Kept after release: it is history, not state.
+    hold_reason: str | None = None
+    held_at: datetime | None = None
+    released_at: datetime | None = None
+    released_by: str | None = None

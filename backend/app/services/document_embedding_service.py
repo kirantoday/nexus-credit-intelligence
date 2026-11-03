@@ -22,9 +22,12 @@ text, document titles, queries, vectors, or raw vendor/driver messages.
 from __future__ import annotations
 
 import logging
+import random
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -57,6 +60,7 @@ from app.embeddings.processor import (
     ProcessorConfig,
     run_job,
 )
+from app.embeddings.scheduling import Clock, Jitter, plan_transient_retry, utc_now
 from app.repositories import (
     audit_repository,
     document_chunk_embedding_repository,
@@ -78,11 +82,78 @@ from app.retrieval.eligibility import (
 logger = logging.getLogger(__name__)
 
 _ENTITY_TABLE = "document_embedding_job"
+_WORKER_RUN_TABLE = "embedding_worker_run"
 _CALCULATION_METHOD = "document_chunk_embedding"
+
+# Value the provider's policy acknowledgement must equal, by provider. A
+# provider absent from this table has no acknowledgement requirement (`fake`).
+_REQUIRED_ACKNOWLEDGEMENT = {"openai": "openai:text-embedding-3-large"}
 
 
 class DocumentExtractionNotFoundError(Exception):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyObservation:
+    """What the process *observed*, never what the owner *accepted*.
+
+    - `acknowledgement_observed` is the configured environment string.
+    - `acknowledgement_matches_required` is a string comparison, nothing more.
+    - `policy_reference_observed` is an identifier or hash of a durable owner
+      policy record, copied from configuration; it is **not verified** here.
+    - `asserted_actor` is a free-text name given on the command line. There is
+      no authentication, so it is recorded as unverified.
+    An audit event holding these facts is evidence, not permission.
+    """
+
+    provider: str
+    model_id: str
+    nexus_config_version: str
+    dimension: int
+    acknowledgement_required: bool
+    acknowledgement_observed: str | None
+    acknowledgement_matches_required: bool
+    policy_reference_observed: str | None
+    asserted_actor: str | None
+
+
+def policy_observation(
+    settings: Any, spec: EmbeddingModelSpec, *, asserted_actor: str | None
+) -> PolicyObservation:
+    required = _REQUIRED_ACKNOWLEDGEMENT.get(spec.provider)
+    observed = getattr(settings, "embedding_external_policy_approval", None) or None
+    reference = (getattr(settings, "embedding_policy_reference", None) or "").strip() or None
+    return PolicyObservation(
+        provider=spec.provider,
+        model_id=spec.model_id,
+        nexus_config_version=spec.model_version,
+        dimension=spec.dimension,
+        acknowledgement_required=required is not None,
+        acknowledgement_observed=observed,
+        acknowledgement_matches_required=required is not None and observed == required,
+        policy_reference_observed=reference,
+        asserted_actor=asserted_actor,
+    )
+
+
+def _policy_fields(policy: PolicyObservation) -> dict[str, object]:
+    """Audit fields only: no key, text, vector, URL or response body."""
+    return {
+        "provider": policy.provider,
+        "embedding_model": policy.model_id,
+        "nexus_config_version": policy.nexus_config_version,
+        "dimension": policy.dimension,
+        "policy_acknowledgement_required": policy.acknowledgement_required,
+        "policy_acknowledgement_observed": policy.acknowledgement_observed,
+        "policy_acknowledgement_matches_required": policy.acknowledgement_matches_required,
+        "policy_acknowledgement_source": "environment_variable",
+        "policy_reference_observed": policy.policy_reference_observed,
+        "policy_reference_verified": False,
+        "owner_acceptance_verified": False,
+        "asserted_actor": policy.asserted_actor,
+        "identity_verified": False,
+    }
 
 
 class DocumentNotEligibleError(Exception):
@@ -102,11 +173,17 @@ def enqueue_embedding(
     spec: EmbeddingModelSpec,
     requested_by: str | None,
     scope: RetrievalScope = PUBLIC_ALLOWLIST_SCOPE,
+    policy: PolicyObservation | None = None,
 ) -> DocumentEmbeddingJob:
     """Eligibility check #1 of 4 (enqueue). Idempotent: if an active job
     already exists for this (extraction, model, version) it is returned
     instead of creating a second one — the partial unique index enforces
-    the same rule in the database."""
+    the same rule in the database.
+
+    When `policy` is given, its observed provider/model/version/dimension and
+    policy facts are written to the audit event **in the same transaction as
+    the job**: if the audit write fails the exception propagates and the
+    caller rolls back, so no job is left queued without its audit record."""
     extraction = document_extraction_repository.get_extraction(db, document_extraction_id)
     if extraction is None or extraction.research_document_id is None:
         raise DocumentExtractionNotFoundError(
@@ -155,6 +232,63 @@ def enqueue_embedding(
                 "document_extraction_id": str(document_extraction_id),
                 "embedding_model": spec.model_id,
                 "embedding_model_version": spec.model_version,
+                **(_policy_fields(policy) if policy is not None else {}),
+            },
+        ),
+    )
+    return job
+
+
+def record_worker_started(
+    db: Session,
+    *,
+    run_id: uuid.UUID,
+    policy: PolicyObservation,
+    limits: dict[str, object],
+) -> None:
+    """Audit event written **and committed** before any provider request.
+    `commit()` returning means the row is durable; if it raises, the caller
+    must make no provider call. Records observations only (see
+    `PolicyObservation`)."""
+    try:
+        audit_repository.create_event(
+            db,
+            AuditEventCreate(
+                user_id=policy.asserted_actor,
+                event_type=AuditEventType.EMBEDDING_WORKER_STARTED.value,
+                entity_table=_WORKER_RUN_TABLE,
+                entity_id=None,
+                before_state=None,
+                after_state={"run_id": str(run_id), "limits": limits, **_policy_fields(policy)},
+            ),
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
+def release_held_job(db: Session, *, job_id: uuid.UUID, released_by: str) -> DocumentEmbeddingJob:
+    """Explicit operator release of a held job. Sends no request. The audit
+    event is written in the same transaction as the release; the caller
+    commits. `released_by` is an asserted, unverified name."""
+    held = document_embedding_job_repository.get_job(db, job_id)
+    job = document_embedding_job_repository.release_held(db, job_id, released_by=released_by)
+    audit_repository.create_event(
+        db,
+        AuditEventCreate(
+            user_id=released_by,
+            event_type=AuditEventType.EMBEDDING_JOB_RELEASED.value,
+            entity_table=_ENTITY_TABLE,
+            entity_id=job.id,
+            before_state={"status": "held", "hold_reason": held.hold_reason if held else None},
+            after_state={
+                "status": job.status.value,
+                "provider": job.embedding_provider,
+                "embedding_model": job.embedding_model,
+                "attempt_count": job.attempt_count,
+                "asserted_actor": released_by,
+                "identity_verified": False,
             },
         ),
     )
@@ -162,13 +296,26 @@ def enqueue_embedding(
 
 
 def reclaim_stale_jobs(
-    db: Session, *, stale_after_seconds: int, max_attempts: int
+    db: Session,
+    *,
+    stale_after_seconds: int,
+    max_attempts: int,
+    clock: Clock = utc_now,
+    jitter: Jitter = random.random,
 ) -> list[DocumentEmbeddingJob]:
-    """Called at the start of every worker invocation. A normal run with
-    nothing stale is a cheap no-op query."""
-    stale_after = datetime.now(UTC) - timedelta(seconds=stale_after_seconds)
+    """Called at the start of every worker invocation, by the holder of the
+    exclusive worker lock. A normal run with nothing stale is a cheap no-op.
+
+    A `processing` row older than the threshold belongs to a dead worker. It
+    returns to `pending` **after a backoff delay** (never immediately) unless
+    its attempts are spent. `held` jobs are not `processing` and are never
+    touched. The dead worker may already have sent a request, so recovery is
+    at-least-once: the same batch can be sent, and billed, twice."""
+    now = clock()
+    stale_after = now - timedelta(seconds=stale_after_seconds)
+    delay = plan_transient_retry(1, now=now, jitter=jitter)
     recovered = document_embedding_job_repository.reclaim_stale_processing(
-        db, stale_after=stale_after, max_attempts=max_attempts
+        db, stale_after=stale_after, max_attempts=max_attempts, retry_not_before=delay.not_before
     )
     db.commit()
     if recovered:
@@ -336,6 +483,8 @@ class SqlJobStore:
         error_message: str | None,
         note: str,
         refund_attempt: bool,
+        retry_not_before: datetime | None = None,
+        provider_wide: bool = False,
     ) -> None:
         self._db.rollback()
         document_embedding_job_repository.requeue_pending(
@@ -345,8 +494,56 @@ class SqlJobStore:
             error_message=error_message,
             note=note,
             refund_attempt=refund_attempt,
+            retry_not_before=retry_not_before,
+            provider_wide=provider_wide,
         )
         self._db.commit()
+
+    def hold(
+        self,
+        job: JobContext,
+        *,
+        reason: str,
+        provider_wide: bool,
+        error_classification: str | None,
+        error_message: str | None,
+        refund_attempt: bool,
+    ) -> None:
+        """The hold and its audit event commit together. Reason code only:
+        no provider response text is stored or audited."""
+        self._db.rollback()
+        try:
+            held = document_embedding_job_repository.hold_job(
+                self._db,
+                job.job_id,
+                reason=reason,
+                provider_wide=provider_wide,
+                error_classification=error_classification,
+                error_message=error_message,
+                refund_attempt=refund_attempt,
+            )
+            audit_repository.create_event(
+                self._db,
+                AuditEventCreate(
+                    user_id=None,
+                    event_type=AuditEventType.EMBEDDING_JOB_HELD.value,
+                    entity_table=_ENTITY_TABLE,
+                    entity_id=held.id,
+                    before_state=None,
+                    after_state={
+                        "status": held.status.value,
+                        "hold_reason": reason,
+                        "provider_wide": provider_wide,
+                        "provider": held.embedding_provider,
+                        "embedding_model": held.embedding_model,
+                        "attempt_count": held.attempt_count,
+                    },
+                ),
+            )
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
 
     def mark_failed(
         self, job: JobContext, *, error_classification: str, error_message: str
@@ -427,9 +624,17 @@ def process_next_job(
     config: ProcessorConfig,
     scope: RetrievalScope = PUBLIC_ALLOWLIST_SCOPE,
 ) -> JobResult | None:
-    """Claims and fully processes at most one pending job. `None` means
-    nothing was pending (the normal, expected outcome most invocations)."""
-    claimed = document_embedding_job_repository.claim_next_pending(db)
+    """Claims and fully processes at most one *due* pending job for this
+    worker's provider/model/version. `None` means nothing was claimable: no
+    pending job, every pending job is delayed, or a provider-wide delay or hold
+    applies (the normal, expected outcome most invocations)."""
+    claimed = document_embedding_job_repository.claim_next_pending(
+        db,
+        provider=spec.provider,
+        model=spec.model_id,
+        model_version=spec.model_version,
+        now=config.clock(),
+    )
     if claimed is None:
         db.commit()
         return None

@@ -96,6 +96,11 @@ class Settings(BaseSettings):
     # this provider/model/data-handling policy. Unset (the default) keeps live
     # use blocked. It is a guard, not an audit record.
     embedding_external_policy_approval: str | None = None
+    # Identifier or content hash of the owner-accepted policy record (for
+    # example the accepted ADR-021 id or its digest). The application cannot
+    # verify it: it is recorded in audit events as *observed*, and its absence
+    # blocks the real provider. It is never an approval by itself.
+    embedding_policy_reference: str | None = None
 
     @field_validator(
         "embedding_dimension",

@@ -497,6 +497,11 @@ class AuditEventType(StrEnum):
     PUBLIC_DOCUMENT_APPROVED = "public_document_approved"
     PUBLIC_DOCUMENT_APPROVAL_REVOKED = "public_document_approval_revoked"
     DOCUMENT_EMBEDDING_REQUESTED = "document_embedding_requested"
+    # Policy/ownership audit (10D.2 scheduling increment). Facts about what the
+    # worker observed or an operator asserted; none of these grants permission.
+    EMBEDDING_WORKER_STARTED = "embedding_worker_started"
+    EMBEDDING_JOB_HELD = "embedding_job_held"
+    EMBEDDING_JOB_RELEASED = "embedding_job_released"
 
 
 # --- Milestone 12A: Universal Search ---
@@ -622,6 +627,10 @@ class EmbeddingJobStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     BLOCKED_INELIGIBLE = "blocked_ineligible"
+    # Operator hold: never claimable and never reclaimed by stale recovery.
+    # Entered on credential/quota/configuration/over-long-delay conditions;
+    # left only through the explicit release action.
+    HELD = "held"
 
 
 class EmbeddingInputType(StrEnum):

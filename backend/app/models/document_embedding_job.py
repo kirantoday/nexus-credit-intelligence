@@ -24,7 +24,16 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, Text, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -45,6 +54,18 @@ class DocumentEmbeddingJob(Base):
         ),
         CheckConstraint("dimension > 0", name="ck_document_embedding_job_dimension"),
         CheckConstraint("attempt_count >= 0", name="ck_document_embedding_job_attempt_count"),
+        CheckConstraint(
+            "status <> 'held' OR hold_reason IS NOT NULL",
+            name="ck_document_embedding_job_held_has_reason",
+        ),
+        CheckConstraint(
+            "retry_not_before IS NULL OR status = 'pending'",
+            name="ck_document_embedding_job_delay_only_when_pending",
+        ),
+        CheckConstraint(
+            "NOT provider_wide OR status IN ('pending', 'held')",
+            name="ck_document_embedding_job_provider_wide_only_pending_or_held",
+        ),
         Index("ix_document_embedding_job_status", "status"),
         Index("ix_document_embedding_job_document_extraction_id", "document_extraction_id"),
         Index("ix_document_embedding_job_research_document_id", "research_document_id"),
@@ -54,7 +75,13 @@ class DocumentEmbeddingJob(Base):
             "embedding_model",
             "embedding_model_version",
             unique=True,
-            postgresql_where=text("status IN ('pending', 'processing')"),
+            postgresql_where=text("status IN ('pending', 'processing', 'held')"),
+        ),
+        Index(
+            "ix_document_embedding_job_provider_wide",
+            "embedding_provider",
+            "embedding_model",
+            postgresql_where=text("provider_wide AND status IN ('pending', 'held')"),
         ),
     )
 
@@ -92,6 +119,21 @@ class DocumentEmbeddingJob(Base):
 
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Scheduling. `retry_not_before` is a UTC-aware earliest-claim time, set
+    # only while `pending`; NULL means "no delay". `provider_wide` extends a
+    # delay or hold to every job for the same provider and model. Hold
+    # evidence (`hold_reason`, `held_at`, `released_*`) is never cleared.
+    retry_not_before: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    provider_wide: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    hold_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    held_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    released_by: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("clock_timestamp()")
     )

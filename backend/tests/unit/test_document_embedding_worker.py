@@ -53,10 +53,21 @@ class _FakeService:
         self.process_calls = 0
         self.enqueue_error: Exception | None = None
         self.reclaims = 0
+        self.worker_started: list[dict[str, Any]] = []
+        self.audit_error: Exception | None = None
 
     def reclaim_stale_jobs(self, db: Any, **_: Any) -> list[Any]:
         self.reclaims += 1
         return []
+
+    def policy_observation(self, settings: Any, spec: Any, **_: Any) -> Any:
+        return SimpleNamespace(provider=spec.provider)
+
+    def record_worker_started(self, db: Any, **kwargs: Any) -> None:
+        self.worker_started.append(kwargs)
+        if self.audit_error is not None:
+            raise self.audit_error
+        db.commit()
 
     def process_next_job(self, db: Any, **_: Any) -> JobResult | None:
         self.process_calls += 1

@@ -44,11 +44,13 @@ that is what the gated integration tests are for.
 
 from __future__ import annotations
 
+import random
 import time
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from app.core.types import EmbeddingInputType
@@ -60,6 +62,7 @@ from app.embeddings.errors import (
     EmbeddingConfigurationError,
     EmbeddingDimensionMismatchError,
     EmbeddingError,
+    EmbeddingOwnershipLostError,
     EmbeddingPersistenceError,
     EmbeddingRateLimitError,
     classify,
@@ -67,6 +70,16 @@ from app.embeddings.errors import (
 )
 from app.embeddings.fingerprint import build_embedding_input, compute_fingerprint, estimate_tokens
 from app.embeddings.pricing import estimate_cost_usd
+from app.embeddings.scheduling import (
+    HOLD_PROVIDER_CONFIGURATION,
+    HOLD_PROVIDER_CREDENTIALS_OR_QUOTA,
+    HOLD_PROVIDER_SPEC_MISMATCH,
+    Clock,
+    Jitter,
+    plan_rate_limit_retry,
+    plan_transient_retry,
+    utc_now,
+)
 from app.retrieval.eligibility import EligibilityDecision
 
 _PendingItem = tuple["ChunkToEmbed", str, str]
@@ -144,7 +157,22 @@ class JobStore(Protocol):
         error_message: str | None,
         note: str,
         refund_attempt: bool,
+        retry_not_before: datetime | None = None,
+        provider_wide: bool = False,
     ) -> None: ...
+
+    def hold(
+        self,
+        job: JobContext,
+        *,
+        reason: str,
+        provider_wide: bool,
+        error_classification: str | None,
+        error_message: str | None,
+        refund_attempt: bool,
+    ) -> None:
+        """Operator hold: never claimable until explicitly released."""
+        ...
 
     def mark_failed(
         self, job: JobContext, *, error_classification: str, error_message: str
@@ -158,12 +186,17 @@ class JobOutcome(StrEnum):
     REQUEUED = "requeued"
     FAILED = "failed"
     BLOCKED_INELIGIBLE = "blocked_ineligible"
+    HELD = "held"
 
 
 @dataclass(frozen=True, slots=True)
 class ProcessorConfig:
     batch_size: int
     max_attempts: int
+    # Injected so retry timing is deterministic in tests; production uses the
+    # real UTC clock and `random.random` (jitter in [0, 1)).
+    clock: Clock = field(default=utc_now)
+    jitter: Jitter = field(default=random.random)
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +214,10 @@ class JobResult:
     # a numeric `Retry-After`. Informational only: the job queue has no
     # "not before" field, so nothing durable enforces this delay.
     retry_after_seconds: float | None = None
+    # When a requeue was scheduled (UTC), and why a job was held. Informational
+    # copies of what was persisted.
+    retry_not_before: datetime | None = None
+    hold_reason: str | None = None
 
 
 def process_job(
@@ -198,14 +235,20 @@ def process_job(
         spec.model_version,
         spec.dimension,
     ):
-        store.requeue(
+        store.hold(
             job,
+            reason=HOLD_PROVIDER_SPEC_MISMATCH,
+            provider_wide=True,
             error_classification="deterministic",
             error_message="provider identity does not match the job's model spec",
-            note="provider_spec_mismatch",
             refund_attempt=True,
         )
-        return JobResult(JobOutcome.REQUEUED, note="provider_spec_mismatch", abort_run=True)
+        return JobResult(
+            JobOutcome.HELD,
+            note="provider_spec_mismatch",
+            abort_run=True,
+            hold_reason=HOLD_PROVIDER_SPEC_MISMATCH,
+        )
 
     decision = store.check_eligibility(job)
     if not decision.eligible:
@@ -470,56 +513,124 @@ def _failure(
     unchanged: int,
     tokens_used: int,
 ) -> JobResult:
+    """Disposition of a failed attempt. Credentials, quota and configuration
+    problems are provider-wide and not this job's fault: the job is **held**
+    for an operator (attempt refunded; the failed request is in the call log),
+    never left claimable. Rate limits delay the provider queue by the later of
+    the vendor's delay and backoff, never earlier, or hold when the vendor
+    delay is beyond the automatic limit. Other transient errors delay this job
+    only, with backoff, up to the attempt cap. Everything else fails."""
     classification = classify(exc)
     summary = safe_summary(exc)
 
-    # Credentials/configuration problems are not this job's fault and the
-    # whole run should stop; do not burn the job's attempts on them.
-    if isinstance(exc, EmbeddingAuthError | EmbeddingConfigurationError):
-        store.requeue(
-            job,
-            error_classification=classification,
-            error_message=summary,
-            note="provider_unavailable",
-            refund_attempt=True,
-        )
+    def result(outcome: JobOutcome, **extra: Any) -> JobResult:
         return JobResult(
-            JobOutcome.REQUEUED,
-            note="provider_unavailable",
-            abort_run=True,
+            outcome,
             embedded=embedded,
             replaced=replaced,
             unchanged=unchanged,
             tokens_used=tokens_used,
+            **extra,
         )
 
+    if isinstance(exc, EmbeddingOwnershipLostError):
+        # No request was made. Not the job's fault: refund, end the run.
+        store.requeue(
+            job,
+            error_classification=None,
+            error_message=None,
+            note="worker_ownership_lost",
+            refund_attempt=True,
+        )
+        return result(JobOutcome.REQUEUED, note="worker_ownership_lost", abort_run=True)
+
+    if isinstance(exc, EmbeddingAuthError):
+        return _hold(
+            job, store, summary, classification, HOLD_PROVIDER_CREDENTIALS_OR_QUOTA, True, result
+        )
+    if isinstance(exc, EmbeddingConfigurationError):
+        return _hold(job, store, summary, classification, HOLD_PROVIDER_CONFIGURATION, True, result)
+
     if classification == "transient" and job.attempt_count < config.max_attempts:
+        now = config.clock()
+        if isinstance(exc, EmbeddingRateLimitError):
+            plan = plan_rate_limit_retry(
+                job.attempt_count,
+                vendor_delay_seconds=exc.retry_after_seconds,
+                now=now,
+                jitter=config.jitter,
+            )
+            if plan.hold:
+                assert plan.hold_reason is not None
+                return _hold(
+                    job,
+                    store,
+                    summary,
+                    classification,
+                    plan.hold_reason,
+                    False,  # a request was made and rate limited: the attempt stays consumed
+                    result,
+                    retry_after_seconds=exc.retry_after_seconds,
+                )
+            store.requeue(
+                job,
+                error_classification=classification,
+                error_message=summary,
+                note="transient_failure_requeued",
+                refund_attempt=False,
+                retry_not_before=plan.not_before,
+                provider_wide=True,
+            )
+            return result(
+                JobOutcome.REQUEUED,
+                note="transient_failure_requeued",
+                abort_run=True,
+                retry_after_seconds=exc.retry_after_seconds,
+                retry_not_before=plan.not_before,
+            )
+        plan = plan_transient_retry(job.attempt_count, now=now, jitter=config.jitter)
         store.requeue(
             job,
             error_classification=classification,
             error_message=summary,
             note="transient_failure_requeued",
             refund_attempt=False,
+            retry_not_before=plan.not_before,
+            provider_wide=False,
         )
-        return JobResult(
+        return result(
             JobOutcome.REQUEUED,
             note="transient_failure_requeued",
-            abort_run=isinstance(exc, EmbeddingRateLimitError),
-            retry_after_seconds=(
-                exc.retry_after_seconds if isinstance(exc, EmbeddingRateLimitError) else None
-            ),
-            embedded=embedded,
-            replaced=replaced,
-            unchanged=unchanged,
-            tokens_used=tokens_used,
+            retry_not_before=plan.not_before,
         )
 
     store.mark_failed(job, error_classification=classification, error_message=summary)
-    return JobResult(
-        JobOutcome.FAILED,
-        note=summary,
-        embedded=embedded,
-        replaced=replaced,
-        unchanged=unchanged,
-        tokens_used=tokens_used,
+    return result(JobOutcome.FAILED, note=summary)
+
+
+def _hold(
+    job: JobContext,
+    store: JobStore,
+    summary: str,
+    classification: str,
+    reason: str,
+    refund_attempt: bool,
+    result: Callable[..., JobResult],
+    *,
+    retry_after_seconds: float | None = None,
+) -> JobResult:
+    store.hold(
+        job,
+        reason=reason,
+        provider_wide=True,
+        error_classification=classification,
+        error_message=summary,
+        refund_attempt=refund_attempt,
+    )
+    return result(
+        JobOutcome.HELD,
+        note=f"held:{reason}",
+        abort_run=True,
+        hold_reason=reason,
+        retry_after_seconds=retry_after_seconds,
     )

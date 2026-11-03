@@ -63,7 +63,7 @@ SPEC = EmbeddingModelSpec(
 )
 
 
-# --- network tripwire ---------------------------------------------------------------
+# --- network tripwire ---
 
 
 def _blocked(*_args: object, **_kwargs: object) -> Any:
@@ -84,7 +84,7 @@ def test_tripwire_blocks_a_direct_connection_attempt() -> None:
         socket.create_connection(("127.0.0.1", 9))
 
 
-# --- helpers ------------------------------------------------------------------------
+# --- helpers ---
 
 
 def _unit(position: int) -> list[float]:
@@ -157,7 +157,7 @@ def _ok_for(texts_count: int) -> Callable[[httpx.Request], httpx.Response]:
     return lambda _req: _json_response(200, _ok_body(texts_count))
 
 
-# --- request construction -----------------------------------------------------------
+# --- request construction ---
 
 
 def test_document_request_uses_the_approved_model_width_encoding_and_fixed_url() -> None:
@@ -202,7 +202,7 @@ def test_provider_exposes_the_embedding_provider_contract() -> None:
     assert provider.max_batch_size == 64
 
 
-# --- successful response handling ---------------------------------------------------
+# --- successful response handling ---
 
 
 def test_results_are_reassembled_in_input_order_from_response_indices() -> None:
@@ -223,7 +223,7 @@ def test_integer_valued_numbers_are_accepted_and_returned_as_floats() -> None:
     assert result.vectors[0][0] == 1.0 and isinstance(result.vectors[0][0], float)
 
 
-# --- response validation (fail closed) ----------------------------------------------
+# --- response validation (fail closed) ---
 
 
 def _post_with_body(body: Any = None, *, raw: bytes | None = None, count: int = 2) -> None:
@@ -320,7 +320,7 @@ def test_vectors_that_are_not_unit_length_are_rejected_not_rescaled() -> None:
         _post_with_body(_ok_body(2, vectors=[half, _unit(1)]))
 
 
-# --- usage ---------------------------------------------------------------------------
+# --- usage ---
 
 
 @pytest.mark.parametrize(
@@ -368,7 +368,7 @@ def test_absent_usage_key_is_unknown() -> None:
     assert provider.embed_documents(["a", "b"]).input_tokens is None
 
 
-# --- error mapping ------------------------------------------------------------------
+# --- error mapping ---
 
 
 def _status(status: int, body: Any = None, headers: dict[str, str] | None = None) -> Any:
@@ -410,7 +410,7 @@ def test_plain_rate_limit_is_retryable_and_carries_retry_after() -> None:
 
 @pytest.mark.parametrize(
     ("header", "expected"),
-    [("abc", None), ("-3", None), ("nan", None), ("99999", 3600.0), (None, None)],
+    [("abc", None), ("-3", None), ("nan", None), ("99999", 99999.0), (None, None)],
 )
 def test_retry_after_is_parsed_defensively(header: str | None, expected: float | None) -> None:
     headers = {"Retry-After": header} if header is not None else None
@@ -500,7 +500,7 @@ def test_diagnostics_never_contain_content_keys_bodies_or_vectors() -> None:
     assert FAKE_KEY not in repr(provider) and "redacted" in repr(provider)
 
 
-# --- local input validation (no request is sent) -----------------------------------
+# --- local input validation (no request is sent) ---
 
 
 @pytest.mark.parametrize(
@@ -547,7 +547,7 @@ def test_provider_side_input_rejection_is_terminal_and_never_truncates() -> None
     assert rec.payload()["input"] == ["a long but locally acceptable passage"]  # sent unchanged
 
 
-# --- construction, credentials, lifecycle -------------------------------------------
+# --- construction, credentials, lifecycle ---
 
 
 @pytest.mark.parametrize("key", ["", "   ", "has space", "line\nbreak", "tab\tkey"])
@@ -636,7 +636,7 @@ def test_per_request_timeout_is_explicit_and_finite() -> None:
     assert seen == {"connect": 9.0, "read": 9.0, "write": 9.0, "pool": 9.0}
 
 
-# --- factory and settings -----------------------------------------------------------
+# --- factory and settings ---
 
 
 class _Cfg:
@@ -651,6 +651,7 @@ class _Cfg:
         self.embedding_api_key: Any = FAKE_KEY
         self.embedding_request_timeout_seconds = 30.0
         self.embedding_external_policy_approval: str | None = OPENAI_POLICY_APPROVAL_VALUE
+        self.embedding_policy_reference: str | None = "adr-021-accepted-sha256-test"
         self.openai_api_key = "sk-LLM-KEY-MUST-NEVER-BE-USED"
         for name, value in overrides.items():
             setattr(self, name, value)
@@ -742,7 +743,7 @@ def test_settings_defaults_keep_embeddings_off_and_secrets_absent(
     assert "sk-hidden-value" not in repr(keyed) and "sk-hidden-value" not in str(keyed)
 
 
-# --- pricing ------------------------------------------------------------------------
+# --- pricing ---
 
 
 def test_openai_price_is_the_standard_synchronous_rate_in_usd_per_million_tokens() -> None:
@@ -766,7 +767,7 @@ def test_openai_price_is_the_standard_synchronous_rate_in_usd_per_million_tokens
     )
 
 
-# --- processor integration with the real adapter on a mock transport ------------------
+# --- processor integration with the real adapter on a mock transport ---
 
 
 def _config() -> ProcessorConfig:
@@ -864,14 +865,16 @@ def test_a_provider_rejection_is_terminal_but_still_counts_as_an_attempted_reque
     [_status(401), _status(429, {"error": {"code": "insufficient_quota"}})],
     ids=["auth", "quota-429"],
 )
-def test_credential_and_quota_failures_stop_the_run_without_retrying(responder: Any) -> None:
+def test_credential_and_quota_failures_hold_the_job_and_stop_the_run(responder: Any) -> None:
+    # Superseded behavior: these used to return the job to claimable `pending`.
     provider, rec = _provider(responder)
     store = InMemoryJobStore(chunks=make_chunks(2))
     result = _run(store, provider)
-    assert result.outcome is JobOutcome.REQUEUED
+    assert result.outcome is JobOutcome.HELD
     assert result.abort_run is True
     assert rec.count == 1
-    assert store.requeues[0]["refund_attempt"] is True  # not the job's fault
+    assert store.holds[0]["refund_attempt"] is True  # not the job's fault
+    assert store.holds[0]["provider_wide"] is True and store.requeues == []
 
 
 def test_rate_limit_aborts_the_run_after_a_single_request() -> None:
@@ -896,7 +899,7 @@ def test_bounded_attempts_across_layers_one_request_per_job_attempt() -> None:
     assert store.failures and store.failures[-1]["classification"] == "transient"
 
 
-# --- ineligible states: zero transmission -------------------------------------------
+# --- ineligible states: zero transmission ---
 
 _SHA = "a" * 64
 _OK = EligibilityFacts(

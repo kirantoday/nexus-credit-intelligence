@@ -74,6 +74,12 @@ class EmbeddingDimensionMismatchError(EmbeddingError):
     corrupt retrieval, so the batch is rejected."""
 
 
+class EmbeddingOwnershipLostError(EmbeddingError):
+    """The exclusive worker lock cannot be shown to be held. Raised before a
+    provider request is made, so no request was sent and nothing is billed;
+    the processor requeues the job (attempt refunded) and ends the run."""
+
+
 class EmbeddingResponseError(EmbeddingError):
     """The vendor answered, but the response is not usable: not JSON, wrong
     shape, an invalid or duplicated index, non-numeric or non-finite values,

@@ -229,3 +229,20 @@ or network access.
   `.env` change, no database/Supabase/storage/migration/integration action, no
   dependency or schema change, no Git write, push or deployment. The review used
   documentation already obtained earlier; nothing external was needed.
+
+---
+
+## Update dated 2026-11-02 (scheduling increment)
+
+Historical text above is kept. Superseded by
+`10D2-scheduling-audit-and-push-readiness-2026-11-02.md`:
+
+- §4 "the delay is not durable" and the retry-not-before *proposal*: implemented
+  locally as `retry_not_before` / `provider_wide` / `held` in the unapplied
+  draft `0023` and the repository claim query, with a database-backed
+  single-worker lock. Its behavior against a real database is **unverified**
+  until integration tests; live use stays blocked.
+- §6 audit-event *proposal*: implemented locally using the existing audit
+  facility (observed vs accepted vs asserted fields, no new audit schema).
+- Credential/quota failures no longer return the job to claimable `pending`;
+  they put it on an operator hold released only by an explicit action.

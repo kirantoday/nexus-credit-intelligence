@@ -205,7 +205,9 @@ def test_claim_increments_attempts_and_a_refunded_requeue_gives_it_back(
             dimension=_DIM,
         ),
     )
-    claimed = document_embedding_job_repository.claim_next_pending(db)
+    claimed = document_embedding_job_repository.claim_next_pending(
+        db, provider="fake", model="fake-embedding", model_version="fake-1"
+    )
     assert claimed is not None and claimed.status is EmbeddingJobStatus.PROCESSING
     assert claimed.attempt_count == 1
 

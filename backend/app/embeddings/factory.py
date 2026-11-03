@@ -57,6 +57,7 @@ class EmbeddingSettings(Protocol):
     embedding_api_key: object
     embedding_request_timeout_seconds: float
     embedding_external_policy_approval: str | None
+    embedding_policy_reference: str | None
 
 
 def get_embedding_provider(
@@ -131,6 +132,14 @@ def _build_openai(
             "the owner's external-processing policy for "
             f"{OPENAI_POLICY_APPROVAL_VALUE!r} is not recorded "
             "(EMBEDDING_EXTERNAL_POLICY_APPROVAL); live use stays blocked"
+        )
+    # An identifier of the durable owner-accepted policy record must also be
+    # configured. Its presence is not verification; it makes the audit events
+    # carry a reference and keeps a bare environment flag from being enough.
+    if not (settings.embedding_policy_reference or "").strip():
+        raise EmbeddingConfigurationError(
+            "EMBEDDING_POLICY_REFERENCE is not set; live use stays blocked until an "
+            "accepted policy record exists and is referenced"
         )
     # A dedicated key only: never fall back to the LLM credential.
     api_key = _secret_value(settings.embedding_api_key)

@@ -51,7 +51,7 @@ def test_drafts_are_not_in_the_discovered_versions_directory() -> None:
     discovered = {p.name for p in _VERSIONS.glob("*.py")}
     for filename in _DRAFT_FILES.values():
         assert filename not in discovered
-    assert not any(name.startswith(("0021", "0022")) for name in discovered)
+    assert not any(name.startswith(("0021", "0022", "0023")) for name in discovered)
 
 
 def test_discovered_head_is_still_0020() -> None:

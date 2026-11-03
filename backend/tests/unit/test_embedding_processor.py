@@ -56,7 +56,7 @@ def _run(store: InMemoryJobStore, provider: FakeEmbeddingProvider, **kwargs: obj
     return process_job(store=store, provider=provider, **params)  # type: ignore[arg-type]
 
 
-# --- idempotency ---------------------------------------------------------
+# --- idempotency ---
 
 
 def test_first_run_embeds_every_chunk_and_completes() -> None:
@@ -92,7 +92,7 @@ def test_a_provider_must_not_be_called_when_there_is_nothing_to_embed() -> None:
     assert provider.call_count == 0
 
 
-# --- changed inputs ------------------------------------------------------
+# --- changed inputs ---
 
 
 def test_changed_document_title_replaces_vectors_in_place() -> None:
@@ -152,7 +152,7 @@ def test_previous_vector_survives_when_persisting_the_replacement_fails() -> Non
     assert {k: v.fingerprint for k, v in store.embeddings.items()} == snapshot
 
 
-# --- partial completion and retry ---------------------------------------
+# --- partial completion and retry ---
 
 
 def test_partial_failure_keeps_completed_batches_and_resume_only_does_the_rest() -> None:
@@ -269,7 +269,7 @@ def test_unknown_token_usage_is_logged_as_none_but_still_budgeted() -> None:
     assert budget.tokens_used > 0  # estimated, so the budget still bites
 
 
-# --- provider output validation -----------------------------------------
+# --- provider output validation ---
 
 
 @pytest.mark.parametrize(
@@ -296,14 +296,16 @@ def test_provider_identity_must_match_the_job_spec_before_any_work() -> None:
     store = InMemoryJobStore(chunks=make_chunks(2))
     mismatched = _provider(model_version="fake-9")
     result = _run(store, mismatched)
-    assert result.outcome is JobOutcome.REQUEUED
+    # A configuration problem is held for an operator, not left claimable.
+    assert result.outcome is JobOutcome.HELD
     assert result.abort_run is True
     assert result.note == "provider_spec_mismatch"
+    assert store.holds[0]["reason"] == "provider_spec_mismatch" and store.requeues == []
     assert mismatched.call_count == 0
     assert store.eligibility_checks == 0
 
 
-# --- eligibility ---------------------------------------------------------
+# --- eligibility ---
 
 
 def test_ineligible_document_blocks_the_job_with_no_provider_call() -> None:
@@ -346,7 +348,7 @@ def test_a_delayed_job_for_a_revoked_document_never_reaches_the_provider() -> No
     assert provider.call_count == 0
 
 
-# --- budget --------------------------------------------------------------
+# --- budget ---
 
 
 def test_budget_stop_requeues_without_consuming_an_attempt_and_without_a_call() -> None:
@@ -401,19 +403,20 @@ def test_cost_ceiling_with_an_unpriced_model_refuses_before_any_call() -> None:
     assert provider.call_count == 0
 
 
-# --- provider-wide failures ---------------------------------------------
+# --- provider-wide failures ---
 
 
-def test_auth_error_requeues_with_the_attempt_refunded_and_aborts_the_run() -> None:
+def test_auth_error_holds_the_job_with_the_attempt_refunded_and_aborts_the_run() -> None:
+    # Superseded behavior: this used to requeue the job as claimable `pending`.
     store = InMemoryJobStore(chunks=make_chunks(2))
     provider = _provider()
     provider.fail_next(EmbeddingAuthError("bad key"))
     result = _run(store, provider, job=make_job(attempt_count=3))
-    assert result.outcome is JobOutcome.REQUEUED
+    assert result.outcome is JobOutcome.HELD
     assert result.abort_run is True
-    assert result.note == "provider_unavailable"
-    assert store.requeues[0]["refund_attempt"] is True
-    assert store.failures == []
+    assert result.note == "held:provider_credentials_or_quota"
+    assert store.holds[0]["refund_attempt"] is True and store.holds[0]["provider_wide"] is True
+    assert store.requeues == [] and store.failures == []
 
 
 def test_rate_limit_requeues_and_aborts_the_run_without_failing_the_job() -> None:
@@ -427,7 +430,7 @@ def test_rate_limit_requeues_and_aborts_the_run_without_failing_the_job() -> Non
     assert store.failures == []
 
 
-# --- concurrency semantics ----------------------------------------------
+# --- concurrency semantics ---
 
 
 def test_two_writers_with_a_stale_view_converge_on_one_row_per_chunk() -> None:
@@ -446,7 +449,7 @@ def test_two_writers_with_a_stale_view_converge_on_one_row_per_chunk() -> None:
     assert all(e.revision == 1 for e in store.embeddings.values())
 
 
-# --- backstop ------------------------------------------------------------
+# --- backstop ---
 
 
 def test_run_job_records_an_exception_that_escapes_the_processor() -> None:

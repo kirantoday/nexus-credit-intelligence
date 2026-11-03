@@ -13,6 +13,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from app.core.types import EmbeddingInputType
 from app.embeddings.dimensions import EmbeddingModelSpec
@@ -69,6 +70,7 @@ class InMemoryJobStore:
     completed_total: int | None = None
     blocked_reason: str | None = None
     requeues: list[dict[str, object]] = field(default_factory=list)
+    holds: list[dict[str, object]] = field(default_factory=list)
     failures: list[dict[str, str]] = field(default_factory=list)
     # Test hook: serve a stale view of stored fingerprints to simulate a
     # second worker that read before the first one persisted.
@@ -150,6 +152,8 @@ class InMemoryJobStore:
         error_message: str | None,
         note: str,
         refund_attempt: bool,
+        retry_not_before: datetime | None = None,
+        provider_wide: bool = False,
     ) -> None:
         self.status = "pending"
         self.requeues.append(
@@ -157,6 +161,29 @@ class InMemoryJobStore:
                 "classification": error_classification,
                 "message": error_message,
                 "note": note,
+                "refund_attempt": refund_attempt,
+                "retry_not_before": retry_not_before,
+                "provider_wide": provider_wide,
+            }
+        )
+
+    def hold(
+        self,
+        job: JobContext,
+        *,
+        reason: str,
+        provider_wide: bool,
+        error_classification: str | None,
+        error_message: str | None,
+        refund_attempt: bool,
+    ) -> None:
+        self.status = "held"
+        self.holds.append(
+            {
+                "reason": reason,
+                "provider_wide": provider_wide,
+                "classification": error_classification,
+                "message": error_message,
                 "refund_attempt": refund_attempt,
             }
         )

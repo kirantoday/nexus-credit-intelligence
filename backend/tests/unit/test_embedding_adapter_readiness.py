@@ -77,7 +77,7 @@ def _usage_ok(per_input: int = 11):
     return responder
 
 
-# --- adapter evidence on errors -------------------------------------------------------
+# --- adapter evidence on errors ---
 
 
 def test_errors_before_any_request_carry_no_exposure_evidence() -> None:
@@ -179,7 +179,7 @@ def test_a_non_json_200_is_possibly_billed_with_unknown_usage() -> None:
     assert info.value.reported_input_tokens is None
 
 
-# --- outcome / accounting matrix through the processor --------------------------------
+# --- outcome / accounting matrix through the processor ---
 
 
 def _run_job(store: InMemoryJobStore, provider: Any, budget: EmbeddingRunBudget | None = None):
@@ -320,32 +320,56 @@ def test_partial_run_preserves_earlier_usage_when_a_later_request_fails_ambiguou
     assert len(store.embeddings) == 2
 
 
-# --- retry delays: trace through result, worker and attempt cap ---------------------------
+# --- retry delays: trace through result, worker and attempt cap ---
 
 
-def test_retry_after_is_carried_on_the_result_but_the_requeue_is_not_delayed() -> None:
+def test_rate_limit_schedules_the_provider_queue_at_the_later_of_vendor_delay_and_backoff() -> None:
+    # Superseded behavior: the delay used to be dropped and the job requeued
+    # with no "not before" time. Injected clock and jitter: no real time used.
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime(2026, 11, 2, 12, 0, 0, tzinfo=UTC)
     body = {"error": {"code": "rate_limit_exceeded"}}
-    provider, rec = _provider(_status(429, body, {"Retry-After": "9"}))
+    provider, rec = _provider(_status(429, body, {"Retry-After": "90"}))
     store = InMemoryJobStore(chunks=make_chunks(2))
-    result, _budget = _run_job(store, provider)
-    assert result.outcome is JobOutcome.REQUEUED
-    assert result.abort_run is True and result.retry_after_seconds == 9.0
-    assert rec.count == 1
-    # The requeue passes no "not before" time: nothing durable expresses the
-    # delay, so another invocation may claim the job immediately (see report).
-    assert store.requeues[0]["refund_attempt"] is False
-    assert set(store.requeues[0]) == {"classification", "message", "note", "refund_attempt"}
+    result = process_job(
+        make_job(attempt_count=1),
+        store=store,
+        provider=provider,
+        spec=SPEC,
+        budget=EmbeddingRunBudget(max_tokens=1_000_000),
+        config=ProcessorConfig(batch_size=2, max_attempts=3, clock=lambda: now, jitter=lambda: 0.0),
+    )
+    assert result.outcome is JobOutcome.REQUEUED and result.abort_run is True
+    assert result.retry_after_seconds == 90.0 and rec.count == 1
+    expected = now + timedelta(seconds=90)  # 90 s vendor delay > 30 s backoff
+    assert result.retry_not_before == expected
+    assert store.requeues[0]["retry_not_before"] == expected
+    assert store.requeues[0]["provider_wide"] is True
+    assert store.requeues[0]["refund_attempt"] is False  # the attempt stays consumed
 
 
-@pytest.mark.parametrize("header", [None, "soon", "-1", "Wed, 21 Oct 2026 07:28:00 GMT"])
-def test_missing_invalid_or_date_form_retry_after_yields_no_delay(header: str | None) -> None:
+@pytest.mark.parametrize("header", [None, "soon", "-1"])
+def test_missing_or_invalid_retry_after_falls_back_to_backoff(header: str | None) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime(2026, 11, 2, 12, 0, 0, tzinfo=UTC)
     headers = {"Retry-After": header} if header is not None else None
     provider, _rec = _provider(_status(429, {"error": {"code": "slow_down"}}, headers))
-    result, _budget = _run_job(InMemoryJobStore(chunks=make_chunks(2)), provider)
+    store = InMemoryJobStore(chunks=make_chunks(2))
+    result = process_job(
+        make_job(attempt_count=2),
+        store=store,
+        provider=provider,
+        spec=SPEC,
+        budget=EmbeddingRunBudget(max_tokens=1_000_000),
+        config=ProcessorConfig(batch_size=2, max_attempts=3, clock=lambda: now, jitter=lambda: 0.0),
+    )
     assert result.outcome is JobOutcome.REQUEUED and result.retry_after_seconds is None
+    assert result.retry_not_before == now + timedelta(seconds=60)  # base 30 s * 2**(2-1)
 
 
-def test_quota_and_auth_failures_have_no_retry_delay_and_refund_the_attempt() -> None:
+def test_quota_and_auth_failures_hold_the_queue_with_no_delay_and_refund_the_attempt() -> None:
     for responder in (
         _status(429, {"error": {"code": "insufficient_quota"}}, {"Retry-After": "30"}),
         _status(401),
@@ -353,8 +377,10 @@ def test_quota_and_auth_failures_have_no_retry_delay_and_refund_the_attempt() ->
         provider, rec = _provider(responder)
         store = InMemoryJobStore(chunks=make_chunks(2))
         result, _budget = _run_job(store, provider)
+        assert result.outcome is JobOutcome.HELD
         assert result.retry_after_seconds is None and result.abort_run is True
-        assert store.requeues[0]["refund_attempt"] is True and rec.count == 1
+        assert store.holds[0]["refund_attempt"] is True and rec.count == 1
+        assert store.holds[0]["provider_wide"] is True and store.requeues == []
 
 
 def test_a_deterministic_response_error_is_never_retried() -> None:
@@ -385,11 +411,14 @@ def test_rate_limited_attempts_are_capped_and_each_consumes_an_attempt() -> None
     assert all(r["refund_attempt"] is False for r in store.requeues)
 
 
-def test_worker_reports_the_requested_delay_without_claiming_it_is_enforced(
+def test_worker_reports_the_vendor_delay_and_the_persisted_next_attempt_time(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    from datetime import UTC, datetime
+
     from app.embeddings.processor import JobResult
 
+    when = datetime(2026, 11, 2, 12, 1, 30, tzinfo=UTC)
     service = _FakeService(
         results=[
             JobResult(
@@ -397,16 +426,17 @@ def test_worker_reports_the_requested_delay_without_claiming_it_is_enforced(
                 note="transient_failure_requeued",
                 abort_run=True,
                 retry_after_seconds=9.0,
+                retry_not_before=when,
             )
         ]
     )
     assert _call(["--max-tokens", "100"], service=service) == 0
     out = capsys.readouterr().out
-    assert "9s" in out and "does not enforce" in out
+    assert "9s" in out and when.isoformat() in out
     assert service.process_calls == 1  # a rate limit ends the run
 
 
-# --- input boundaries ---------------------------------------------------------------
+# --- input boundaries ---
 
 
 def _accepts(text: str) -> bool:
@@ -485,7 +515,7 @@ def test_oversized_work_never_reaches_the_provider_and_is_never_truncated() -> N
     assert result.outcome is JobOutcome.FAILED and rec.count == 0 and budget.requests_made == 0
 
 
-# --- policy and configuration safeguards -----------------------------------------------
+# --- policy and configuration safeguards ---
 
 
 class _Cfg(SimpleNamespace):
@@ -504,6 +534,7 @@ def _cfg(**overrides: Any) -> Any:
         "embedding_api_key": FAKE_KEY,
         "embedding_request_timeout_seconds": 30.0,
         "embedding_external_policy_approval": OPENAI_POLICY_APPROVAL_VALUE,
+        "embedding_policy_reference": "adr-021-accepted-sha256-test",
         "openai_api_key": "sk-LLM-KEY-MUST-NEVER-BE-USED",
     }
     values.update(overrides)
