@@ -226,6 +226,27 @@ search and download, unless noted:
   chunk creation; approval revoked; checksum mismatch; extraction `pending`,
   `processing`, `failed` or `needs_ocr`; extraction of a different document;
   never approved.
+  > **Clarification dated 2026-11-02 (supersedes the sentence above only as it
+  > applies to the download route; the sentence is kept for history).**
+  > "Every ineligible state returns 404 on all three routes" is **not** correct
+  > for signed download in its extraction-related items (superseded extraction;
+  > extraction `pending`, `processing`, `failed` or `needs_ocr`; extraction of a
+  > different document). The planned rules are:
+  > - **Chunk list and chunk search** require the document's appropriate
+  >   current, `completed` extraction that belongs to the requested document,
+  >   plus live eligibility. All states in the bullet above apply to them.
+  > - **Signed download** uses the approved source PDF/document policy: active
+  >   approval, document not archived, classification `standard`, and stored-file
+  >   checksum equal to the approved checksum. **Extraction state alone does not
+  >   deny an otherwise eligible PDF download.** Archive, classification or
+  >   reclassification, approval revocation, checksum mismatch and never-approved
+  >   still return 404 for download as specified in the §1.8 route table.
+  > - **The chunk inspection flag never grants download access** (unchanged; a
+  >   download exception would need its own separately named, separately reviewed
+  >   mechanism).
+  > The §1.8 route table already stated the download rule ("extraction state is
+  > irrelevant"); only this acceptance-test bullet was inconsistent with it.
+  > The same wording in the earlier Word reports is historical and unchanged.
 - Positive control: an approved, current, completed document is served.
 - `CHUNK_INSPECTION_ENABLED` has no effect on download; denied download makes
   no storage call and returns no signed URL.

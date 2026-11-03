@@ -210,3 +210,21 @@ def test_enqueue_success_commits_and_prints_only_an_id(capsys: pytest.CaptureFix
     assert code == 0
     assert db.commits == 1
     assert str(uuid.UUID(int=7)) in capsys.readouterr().out
+
+
+def test_a_provider_that_owns_an_http_client_is_closed_after_the_run() -> None:
+    from .embedding_support import SPEC
+
+    class _ClosableProvider:
+        closed = 0
+
+        def close(self) -> None:
+            type(self).closed += 1
+
+    provider = _ClosableProvider()
+    code = _call(
+        ["--max-tokens", "100"],
+        provider_factory=lambda _settings: (provider, SPEC),
+    )
+    assert code == 0
+    assert _ClosableProvider.closed == 1

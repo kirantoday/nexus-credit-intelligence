@@ -11,6 +11,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -68,15 +69,16 @@ class Settings(BaseSettings):
     azure_openai_api_key: str | None = None
     azure_openai_endpoint: str | None = None
     azure_openai_model: str | None = None
-    # Reserved, unused until a future milestone implements embeddings — chat/
-    # tool-calling and embeddings may end up sourced from different vendors.
+    # Chat/tool-calling and embeddings are sourced independently: this selects
+    # the embedding vendor only (`fake` in local/test, or `openai`).
     embedding_provider: str | None = None
 
     # Document embeddings (Milestone 10D.2, ADR-021). Off by default: the
-    # embedding worker refuses to run unless this is explicitly true, and no
-    # real vendor adapter exists yet — `fake` (local/test only) is the only
-    # provider the factory will build. Model and dimension are deliberately
-    # unset until the provider decision is approved; `embedding_dimension`
+    # embedding worker refuses to run unless this is explicitly true. The
+    # factory builds `fake` (local/test only) or `openai` (text-embedding-3-
+    # large; approved for local development only — selecting it also needs
+    # the dedicated key and the owner policy acknowledgement below, so
+    # enabling embeddings alone never reaches a vendor). `embedding_dimension`
     # must equal `app.embeddings.dimensions.EMBEDDING_COLUMN_DIMENSION`.
     embeddings_enabled: bool = False
     embedding_model_id: str | None = None
@@ -85,6 +87,15 @@ class Settings(BaseSettings):
     embedding_batch_size: int = 64
     embedding_job_max_attempts: int = 3
     embedding_stale_processing_after_seconds: int = 900
+    # Dedicated embedding credential — never the LLM's `openai_api_key`, and
+    # never a fallback for it. A SecretStr so it cannot appear in a repr/log.
+    embedding_api_key: SecretStr | None = None
+    embedding_request_timeout_seconds: float = 30.0
+    # Must equal "openai:text-embedding-3-large" before the openai provider can
+    # be built: a deliberate, explicit acknowledgement that the owner approved
+    # this provider/model/data-handling policy. Unset (the default) keeps live
+    # use blocked. It is a guard, not an audit record.
+    embedding_external_policy_approval: str | None = None
 
     # Model routing (PLAN.md Milestone 7.5.3 AI cost-control correction).
     # `anthropic_model` above stays the Sonnet identity (unchanged, still the

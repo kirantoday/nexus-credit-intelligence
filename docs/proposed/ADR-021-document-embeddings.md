@@ -125,3 +125,21 @@ sketch did not address:
   per-chunk presence, as authoritative — decided in 10D.3).
 - Unchanged: the `vector` extension is shared and never created, altered, or
   dropped by Nexus migrations beyond the existing `IF NOT EXISTS` in 0001.
+
+---
+
+**Amendment note, 2026-11-02 (the ADR stays `Proposed`; nothing here accepts it).**
+The owner approved a specific *engineering contract for local development
+only*: provider `openai`, model `text-embedding-3-large`, output width 1024
+requested with `dimensions=1024`, cosine as the retrieval metric direction,
+transport via the existing `httpx` dependency, embeddings disabled by default.
+This resolves the **direction** of the 1024 question for the adapter; it does
+not authorize external processing, an account or key, paid usage, database
+changes, production use or deployment, and it does not establish retrieval
+quality on credit documents (not evaluated; an optional public-document
+evaluation remains a separate decision). The migration drafts 0021/0022 stay
+unapplied and in `backend/alembic/drafts/`; their draft warnings are kept.
+Voyage `voyage-4` is a researched alternative only; using any other vendor
+needs a separate policy decision. Details: `10D2-openai-adapter-
+implementation-report-2026-11-02.md` and
+`10D2-embedding-contract-research-and-decision-2026-11-02.md`.

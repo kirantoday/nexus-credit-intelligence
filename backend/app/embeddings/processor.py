@@ -291,6 +291,20 @@ def process_job(
                 success=False,
                 error_classification=classify(exc),
             )
+            if classify(exc) == "transient":
+                # A timeout, dropped connection or 5xx is ambiguous: the vendor
+                # may have processed (and billed) the batch. Count the attempt
+                # against the run budget at the estimated size so a failing
+                # run cannot silently exceed its limits. This is a local
+                # conservative counter, not a provider-enforced spending cap.
+                budget.record(
+                    tokens=estimated_tokens,
+                    cost_usd=estimate_cost_usd(
+                        provider=spec.provider,
+                        model_id=spec.model_id,
+                        input_tokens=estimated_tokens,
+                    ),
+                )
             return _failure(job, store, config, exc, embedded, replaced, unchanged, tokens_used)
         latency_ms = _elapsed_ms(started)
 

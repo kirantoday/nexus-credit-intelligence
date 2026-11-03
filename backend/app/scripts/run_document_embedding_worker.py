@@ -183,6 +183,10 @@ def run(
         return exit_code
     finally:
         db.close()
+        # A real provider owns an HTTP client; the fake has nothing to close.
+        close_provider = getattr(provider, "close", None)
+        if callable(close_provider):
+            close_provider()
 
 
 def main(argv: list[str] | None = None) -> int:

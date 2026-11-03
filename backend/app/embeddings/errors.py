@@ -62,6 +62,14 @@ class EmbeddingDimensionMismatchError(EmbeddingError):
     corrupt retrieval, so the batch is rejected."""
 
 
+class EmbeddingResponseError(EmbeddingError):
+    """The vendor answered, but the response is not usable: not JSON, wrong
+    shape, an invalid or duplicated index, non-numeric or non-finite values,
+    an unexpected model name, or vectors that are not unit length. Re-sending
+    would not repair a contract violation, so this is deterministic and
+    carries no response content."""
+
+
 def safe_summary(exc: BaseException) -> str:
     """Content-free description of `exc`: its type name, plus the
     classification for Nexus's own embedding errors. Never `str(exc)`."""

@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.embeddings.fake import FAKE_MODEL_ID, FAKE_PROVIDER_NAME
+from app.embeddings.openai_provider import OPENAI_MODEL_ID, OPENAI_PROVIDER_NAME
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +28,15 @@ class EmbeddingPricing:
 # so its entry is an explicit, known zero — distinct from "unknown".
 _PRICING: dict[tuple[str, str], EmbeddingPricing] = {
     (FAKE_PROVIDER_NAME, FAKE_MODEL_ID): EmbeddingPricing(input_usd_per_million_tokens=0.0),
+    # USD per 1,000,000 input tokens, standard synchronous API, as published on
+    # the official pricing and model pages (read 2026-11-02; no page date is
+    # shown):
+    #   https://developers.openai.com/api/docs/pricing
+    #   https://developers.openai.com/api/docs/models/text-embedding-3-large
+    # The Batch API discount is deliberately NOT applied: the worker is
+    # synchronous. Published list price only; actual billing is the vendor's
+    # and account-specific terms may differ.
+    (OPENAI_PROVIDER_NAME, OPENAI_MODEL_ID): EmbeddingPricing(input_usd_per_million_tokens=0.13),
 }
 
 

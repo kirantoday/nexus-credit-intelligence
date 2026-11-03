@@ -62,7 +62,12 @@ def test_fake_provider_is_refused_in_deployed_environments() -> None:
             get_embedding_provider(_settings(environment=environment))
 
 
-def test_real_vendors_are_not_available_until_one_is_approved() -> None:
-    for name in ("voyage", "openai", "anthropic"):
-        with pytest.raises(EmbeddingConfigurationError, match="not implemented"):
+def test_unapproved_vendors_are_refused() -> None:
+    # Superseded wording: before the OpenAI adapter, every real vendor was
+    # "not implemented". Now only `fake` and `openai` are buildable; any other
+    # name (including Voyage, which is a researched alternative only) fails
+    # closed. `openai` is covered, with its prerequisites, in
+    # test_openai_embedding_adapter.py.
+    for name in ("voyage", "anthropic", "cohere", "OpenAI "):
+        with pytest.raises(EmbeddingConfigurationError, match="not an approved"):
             get_embedding_provider(_settings(embedding_provider=name))
