@@ -210,3 +210,27 @@ through `httpx.MockTransport`.
   comprehensive implementation review; review remains required before live use.
 - Early-exit paths in the worker that return before the run starts do not call
   `close()`; no client exists at that point because it is created lazily.
+
+---
+
+## Corrections dated 2026-11-02 (adapter readiness review)
+
+Historical text above is kept. These statements are **superseded**; see
+`10D2-adapter-readiness-review-2026-11-02.md`:
+
+- "A *transient* failure — the only ambiguous kind — adds the estimated
+  tokens/cost to the run budget. Terminal failures such as 400 and
+  authentication are not counted." Incorrect: any request that was actually
+  issued may have been billed, including provider error statuses and a 200
+  response rejected locally. The processor now counts every issued request,
+  uses the vendor's own valid usage when a rejected response carried it, and
+  does not count failures that happened before any request.
+- "At most 8,000 characters per input / 600,000 characters per request."
+  Replaced by a UTF-8 **byte** policy (8,000 per input, 300,000 per request),
+  because characters under-count tokens for non-ASCII text. Still a heuristic.
+- "135 mocked tests" / "524 total": historical counts for the checkpoint at
+  commit 21ff37b.
+- Retry delays: the vendor's `Retry-After` was parsed but not durably applied.
+  The queue has no "not before" field; this is now documented, surfaced on the
+  job result and worker output, and live use is blocked until a durable field
+  exists and is integration-tested.

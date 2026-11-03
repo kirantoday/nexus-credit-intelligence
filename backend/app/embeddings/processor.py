@@ -59,6 +59,7 @@ from app.embeddings.errors import (
     EmbeddingAuthError,
     EmbeddingConfigurationError,
     EmbeddingDimensionMismatchError,
+    EmbeddingError,
     EmbeddingPersistenceError,
     EmbeddingRateLimitError,
     classify,
@@ -67,6 +68,8 @@ from app.embeddings.errors import (
 from app.embeddings.fingerprint import build_embedding_input, compute_fingerprint, estimate_tokens
 from app.embeddings.pricing import estimate_cost_usd
 from app.retrieval.eligibility import EligibilityDecision
+
+_PendingItem = tuple["ChunkToEmbed", str, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +177,10 @@ class JobResult:
     # True when continuing to the next job in this run would be pointless or
     # harmful (bad credentials, bad configuration, vendor rate limit).
     abort_run: bool = False
+    # The vendor's requested wait after a rate limit, in seconds, when it gave
+    # a numeric `Retry-After`. Informational only: the job queue has no
+    # "not before" field, so nothing durable enforces this delay.
+    retry_after_seconds: float | None = None
 
 
 def process_job(
@@ -233,8 +240,7 @@ def process_job(
     tokens_used = 0
     batch_size = max(1, min(config.batch_size, provider.max_batch_size))
 
-    for start in range(0, len(pending), batch_size):
-        batch = pending[start : start + batch_size]
+    for batch in _plan_batches(pending, batch_size=batch_size, provider=provider):
         texts = [text for _chunk, text, _fp in batch]
 
         estimated_tokens = sum(estimate_tokens(t) for t in texts)
@@ -280,31 +286,45 @@ def process_job(
         try:
             result = provider.embed_documents(texts)
         except Exception as exc:  # noqa: BLE001 - classified; message never persisted
+            attempted, possibly_billed, reported = _request_exposure(exc)
+            reported_cost = estimate_cost_usd(
+                provider=spec.provider, model_id=spec.model_id, input_tokens=reported
+            )
+            # Persisted evidence: tokens are the vendor's own count when a
+            # rejected response carried a valid one, otherwise unknown (None).
+            # An estimate is never written here as if it were actual usage.
             store.record_call(
                 job,
                 spec=spec,
                 purpose=EmbeddingInputType.DOCUMENT,
                 batch_size=len(texts),
-                input_tokens=None,
-                estimated_cost_usd=None,
+                input_tokens=reported,
+                estimated_cost_usd=reported_cost,
                 latency_ms=_elapsed_ms(started),
                 success=False,
                 error_classification=classify(exc),
             )
-            if classify(exc) == "transient":
-                # A timeout, dropped connection or 5xx is ambiguous: the vendor
-                # may have processed (and billed) the batch. Count the attempt
-                # against the run budget at the estimated size so a failing
-                # run cannot silently exceed its limits. This is a local
-                # conservative counter, not a provider-enforced spending cap.
-                budget.record(
-                    tokens=estimated_tokens,
-                    cost_usd=estimate_cost_usd(
-                        provider=spec.provider,
-                        model_id=spec.model_id,
-                        input_tokens=estimated_tokens,
-                    ),
-                )
+            if attempted:
+                # A request was actually issued, so it counts as a request
+                # against the run budget. Tokens: the vendor's count if known;
+                # else the batch estimate if it may have been billed (a
+                # timeout after sending, a dropped connection, any HTTP error,
+                # a response rejected locally); else none (never delivered).
+                # A local conservative counter, not a provider-enforced cap.
+                if reported is not None:
+                    budget.record(tokens=reported, cost_usd=reported_cost)
+                    tokens_used += reported
+                elif possibly_billed:
+                    budget.record(
+                        tokens=estimated_tokens,
+                        cost_usd=estimate_cost_usd(
+                            provider=spec.provider,
+                            model_id=spec.model_id,
+                            input_tokens=estimated_tokens,
+                        ),
+                    )
+                else:
+                    budget.record(tokens=0, cost_usd=None)
             return _failure(job, store, config, exc, embedded, replaced, unchanged, tokens_used)
         latency_ms = _elapsed_ms(started)
 
@@ -395,6 +415,47 @@ def run_job(
         return _failure(job, store, config, exc, 0, 0, 0, 0)
 
 
+def _request_exposure(exc: BaseException) -> tuple[bool, bool, int | None]:
+    """(request attempted, possibly billed, vendor-reported tokens) for a
+    provider failure. Adapters that issued a request say so on the error. A
+    transient error from a provider that does not (a test double, a future
+    adapter) is treated as an ambiguous attempt; any other error without that
+    evidence is treated as a pre-request failure."""
+    if isinstance(exc, EmbeddingError) and exc.request_attempted:
+        return True, exc.possibly_billed, exc.reported_input_tokens
+    if classify(exc) == "transient":
+        return True, True, None
+    return False, False, None
+
+
+def _plan_batches(
+    pending: Sequence[_PendingItem], *, batch_size: int, provider: EmbeddingProvider
+) -> list[list[_PendingItem]]:
+    """Splits `pending` into batches of at most `batch_size` inputs and, when
+    the provider declares an aggregate size cap (`max_batch_input_size`, in
+    the units of its `input_size`), at most that total, so a batch is split
+    here instead of being rejected whole by the provider. An input larger
+    than the cap on its own still forms a batch of one and is rejected by the
+    provider's own check as a terminal input error."""
+    size_of = getattr(provider, "input_size", None)
+    cap = getattr(provider, "max_batch_input_size", None)
+    limit = cap if callable(size_of) and isinstance(cap, int) and cap > 0 else None
+    batches: list[list[_PendingItem]] = []
+    current: list[_PendingItem] = []
+    current_size = 0
+    for item in pending:
+        size = size_of(item[1]) if limit is not None and callable(size_of) else 0
+        over_size = limit is not None and current_size + size > limit
+        if current and (len(current) >= batch_size or over_size):
+            batches.append(current)
+            current, current_size = [], 0
+        current.append(item)
+        current_size += size
+    if current:
+        batches.append(current)
+    return batches
+
+
 def _elapsed_ms(started: float) -> int:
     return int((time.monotonic() - started) * 1000)
 
@@ -444,6 +505,9 @@ def _failure(
             JobOutcome.REQUEUED,
             note="transient_failure_requeued",
             abort_run=isinstance(exc, EmbeddingRateLimitError),
+            retry_after_seconds=(
+                exc.retry_after_seconds if isinstance(exc, EmbeddingRateLimitError) else None
+            ),
             embedded=embedded,
             replaced=replaced,
             unchanged=unchanged,

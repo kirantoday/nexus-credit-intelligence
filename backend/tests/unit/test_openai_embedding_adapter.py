@@ -510,7 +510,7 @@ def test_diagnostics_never_contain_content_keys_bodies_or_vectors() -> None:
         [""],
         ["   \n"],
         ["ok", ""],
-        ["x" * (op.MAX_INPUT_CHARS + 1)],
+        ["x" * (op.MAX_INPUT_BYTES + 1)],
         ["x"] * 3,  # exceeds a batch limit of 2 in the test below
     ],
 )
@@ -525,8 +525,8 @@ def test_non_string_input_and_aggregate_size_are_rejected_locally() -> None:
     provider, rec = _provider(_ok_for(1))
     with pytest.raises(EmbeddingInputError):
         provider.embed_documents([123])  # type: ignore[list-item]
-    big = "x" * op.MAX_INPUT_CHARS
-    needed = op.MAX_TOTAL_INPUT_CHARS // op.MAX_INPUT_CHARS + 1
+    big = "x" * op.MAX_INPUT_BYTES
+    needed = op.MAX_TOTAL_INPUT_BYTES // op.MAX_INPUT_BYTES + 1
     with pytest.raises(EmbeddingInputError):
         OpenAIEmbeddingProvider(
             api_key=FAKE_KEY,
@@ -844,13 +844,19 @@ def test_transient_failure_requeues_once_and_counts_the_ambiguous_attempt_agains
     assert result.tokens_used == 0  # but not reported as confirmed usage
 
 
-def test_deterministic_failure_is_not_counted_as_possibly_billed() -> None:
+def test_a_provider_rejection_is_terminal_but_still_counts_as_an_attempted_request() -> None:
+    # Superseded assumption (2026-11-02 readiness review): a deterministic
+    # failure was once treated as "not possibly billed". Nothing in the
+    # documentation read says an error response is free, so an HTTP request
+    # that was issued is counted conservatively, while the job still fails
+    # terminally with no retry.
     provider, rec = _provider(_status(400, {"error": {"code": "context_length_exceeded"}}))
     store = InMemoryJobStore(chunks=make_chunks(2))
     budget = EmbeddingRunBudget(max_tokens=1_000_000)
     result = _run(store, provider, budget)
     assert result.outcome is JobOutcome.FAILED
-    assert rec.count == 1 and budget.requests_made == 0
+    assert rec.count == 1 and budget.requests_made == 1 and budget.tokens_used > 0
+    assert store.calls[0].input_tokens is None  # persisted evidence stays unknown
 
 
 @pytest.mark.parametrize(

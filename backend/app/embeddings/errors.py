@@ -19,6 +19,18 @@ from typing import ClassVar
 class EmbeddingError(Exception):
     classification: ClassVar[str] = "deterministic"
 
+    # Evidence about the vendor request that preceded this error, set by a
+    # provider adapter after it actually issued an HTTP request. The defaults
+    # mean "no request was made" (for example local input validation), which
+    # is how pre-request failures stay distinguishable from attempted ones.
+    # They are facts about *exposure*, never proof of billing or of no billing:
+    # `possibly_billed` is a conservative local judgement, and
+    # `reported_input_tokens` is the vendor's own aggregate prompt-token count
+    # when a response carried a valid one, even if the response was rejected.
+    request_attempted: bool = False
+    possibly_billed: bool = False
+    reported_input_tokens: int | None = None
+
 
 class EmbeddingTransientError(EmbeddingError):
     """Network failure, timeout, or vendor 5xx — worth retrying."""

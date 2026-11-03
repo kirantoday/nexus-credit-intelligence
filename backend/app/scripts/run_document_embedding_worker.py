@@ -175,6 +175,11 @@ def run(
                 f"replaced={result.replaced} unchanged={result.unchanged} "
                 f"tokens={result.tokens_used} note={result.note}"
             )
+            if result.retry_after_seconds is not None:
+                print(
+                    f"Rate limited: the vendor asked for a {result.retry_after_seconds:g}s wait. "
+                    "The job queue does not enforce this delay; do not re-run sooner."
+                )
             if result.abort_run:
                 if result.note in _CONFIGURATION_STOP_NOTES:
                     exit_code = 1

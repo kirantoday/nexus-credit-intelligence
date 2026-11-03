@@ -11,7 +11,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -96,6 +96,24 @@ class Settings(BaseSettings):
     # this provider/model/data-handling policy. Unset (the default) keeps live
     # use blocked. It is a guard, not an audit record.
     embedding_external_policy_approval: str | None = None
+
+    @field_validator(
+        "embedding_dimension",
+        "embedding_batch_size",
+        "embedding_job_max_attempts",
+        "embedding_stale_processing_after_seconds",
+        "embedding_request_timeout_seconds",
+        mode="before",
+    )
+    @classmethod
+    def _blank_embedding_number_means_unset(cls, value: object, info: ValidationInfo) -> object:
+        # A blank `KEY=` line (as copied from .env.example) reaches pydantic as
+        # "" and would otherwise make `Settings()` raise, breaking application
+        # startup even though embeddings are disabled. Blank means "unset".
+        if isinstance(value, str) and not value.strip():
+            assert info.field_name is not None
+            return cls.model_fields[info.field_name].default
+        return value
 
     # Model routing (PLAN.md Milestone 7.5.3 AI cost-control correction).
     # `anthropic_model` above stays the Sonnet identity (unchanged, still the

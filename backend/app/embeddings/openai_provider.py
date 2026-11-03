@@ -44,10 +44,26 @@ Design decisions:
   vector width, numeric validity and unit length are all checked; nothing is
   repaired, re-ordered by guesswork, truncated, sliced or normalized.
 - **No tokenizer is installed**, so input size is checked with a deliberately
-  conservative character policy (see `MAX_INPUT_CHARS`). That is a heuristic,
-  not a guarantee: text that tokenizes unusually (for example some scripts)
-  can still exceed the model limit, in which case the vendor's rejection is a
-  terminal `EmbeddingInputError`. Inputs are never truncated.
+  conservative *UTF-8 byte* policy (see `MAX_INPUT_BYTES`). Bytes, not
+  characters, because non-ASCII text can need several tokens per character.
+  If the model's tokenizer is byte-level (it never emits a token for less than
+  one byte; the documentation read does not state the tokenizer, so this is an
+  **assumption**), a text of N bytes is at most N tokens, so the caps are an
+  upper bound on tokens under that assumption. It is still a heuristic, not a
+  compliance guarantee; a vendor rejection is a terminal `EmbeddingInputError`.
+  Inputs are never truncated.
+- **Request exposure evidence.** Every error raised after an HTTP request was
+  actually issued carries `request_attempted=True`, a conservative
+  `possibly_billed` judgement and, when a rejected 200 response still carried
+  a valid aggregate `prompt_tokens`, that count (`reported_input_tokens`).
+  Failures before any request (local validation, construction) carry the
+  defaults, so they are never accounted as attempts. Failures in the connect
+  phase (`ConnectError`, `ConnectTimeout`, `PoolTimeout`) are marked not
+  possibly billed, because no request was delivered; this is an inference from
+  where the failure occurred, not proof. Everything else after sending
+  (read/write timeouts, dropped connections, every HTTP status including
+  4xx, and every rejected 200 response) is treated as possibly billed:
+  nothing here claims a request was free or exactly-once.
 - **Usage** is the aggregate `usage.prompt_tokens` only (never added to
   `total_tokens`, which would double count). Missing or malformed usage is
   `None`, meaning unknown — never zero. Per-input usage is not inferred.
@@ -74,6 +90,7 @@ from app.embeddings.errors import (
     EmbeddingAuthError,
     EmbeddingConfigurationError,
     EmbeddingDimensionMismatchError,
+    EmbeddingError,
     EmbeddingInputError,
     EmbeddingRateLimitError,
     EmbeddingResponseError,
@@ -90,14 +107,18 @@ MAX_INPUTS_PER_REQUEST = 2048
 MAX_INPUT_TOKENS = 8192
 MAX_TOTAL_TOKENS_PER_REQUEST = 300_000
 
-# Conservative local size policy (no tokenizer available): assume as few as
-# two characters per token. A per-input cap of 8,000 characters is therefore
-# at most ~4,000 tokens under that assumption, leaving a 2x margin below the
-# 8,192-token limit; Nexus chunks are capped at 4,000 characters plus a short
-# header. This is a heuristic, not a compliance guarantee.
-_CONSERVATIVE_CHARS_PER_TOKEN = 2
-MAX_INPUT_CHARS = 8_000
-MAX_TOTAL_INPUT_CHARS = MAX_TOTAL_TOKENS_PER_REQUEST * _CONSERVATIVE_CHARS_PER_TOKEN
+# Conservative local size policy (no tokenizer available), in UTF-8 BYTES.
+# Under the unverified assumption that tokens are at least one byte each, N
+# bytes is at most N tokens, so 8,000 bytes stays under the 8,192-token input
+# limit and 300,000 bytes stays under the 300,000-token request limit. For
+# ASCII text this equals the character count. Nexus chunks are capped at 4,000
+# characters plus a short header (about 4.3 KB, a little more with typographic
+# characters that take 3 bytes), so ordinary chunks fit with margin and the
+# processor splits a batch before it would exceed the aggregate cap. Heavily
+# non-ASCII text (for example CJK, 3 bytes per character) is rejected earlier
+# than a character count would: deliberately. A heuristic, not a guarantee.
+MAX_INPUT_BYTES = 8_000
+MAX_TOTAL_INPUT_BYTES = MAX_TOTAL_TOKENS_PER_REQUEST
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
 MAX_TIMEOUT_SECONDS = 300.0
@@ -179,6 +200,21 @@ class OpenAIEmbeddingProvider:
     def max_batch_size(self) -> int:
         return self._max_batch_size
 
+    @property
+    def max_batch_input_size(self) -> int:
+        """Aggregate input-size cap per request, in `input_size` units; the
+        processor splits batches so that no batch exceeds it."""
+        return MAX_TOTAL_INPUT_BYTES
+
+    def input_size(self, text: str) -> int:
+        """The size this adapter's local policy assigns to one input (UTF-8
+        bytes). Text that cannot be encoded counts as oversized so that the
+        request is rejected locally."""
+        try:
+            return len(text.encode("utf-8"))
+        except UnicodeEncodeError:
+            return MAX_INPUT_BYTES + 1
+
     def embed_documents(self, texts: Sequence[str]) -> EmbeddingResult:
         return self._embed(list(texts))
 
@@ -238,14 +274,28 @@ class OpenAIEmbeddingProvider:
                 timeout=self._timeout_seconds,
                 follow_redirects=False,
             )
-        except httpx.TimeoutException:
-            raise EmbeddingTransientError("the OpenAI request timed out") from None
-        except httpx.HTTPError:
-            raise EmbeddingTransientError("the OpenAI request failed (network)") from None
+        except httpx.TimeoutException as exc:
+            # Connect/pool timeouts happen before a request is delivered.
+            # Read and write timeouts happen after bytes may have been sent.
+            delivered = not isinstance(exc, httpx.ConnectTimeout | httpx.PoolTimeout)
+            raise _mark(
+                EmbeddingTransientError("the OpenAI request timed out"), billed=delivered
+            ) from None
+        except httpx.HTTPError as exc:
+            delivered = not isinstance(exc, httpx.ConnectError)
+            raise _mark(
+                EmbeddingTransientError("the OpenAI request failed (network)"), billed=delivered
+            ) from None
 
         if response.status_code != 200:
-            raise self._error_for_status(response)
-        return self._parse_success(response, expected=len(texts))
+            # No evidence that an error response is unbilled: stay conservative.
+            raise _mark(self._error_for_status(response), billed=True)
+        try:
+            return self._parse_success(response, expected=len(texts))
+        except EmbeddingError as exc:
+            # A 200 that fails local validation may still have been billed,
+            # and may carry a valid usage count that must not be lost.
+            raise _mark(exc, billed=True, tokens=_usage_tokens_from(response)) from None
 
     def _validate_inputs(self, texts: list[str]) -> None:
         if not texts:
@@ -258,11 +308,12 @@ class OpenAIEmbeddingProvider:
         for text in texts:
             if not isinstance(text, str) or not text.strip():
                 raise EmbeddingInputError("an input is empty or not text")
-            if len(text) > MAX_INPUT_CHARS:
-                raise EmbeddingInputError("an input exceeds the local maximum input length")
-            total += len(text)
-        if total > MAX_TOTAL_INPUT_CHARS:
-            raise EmbeddingInputError("the batch exceeds the local maximum total input length")
+            size = self.input_size(text)
+            if size > MAX_INPUT_BYTES:
+                raise EmbeddingInputError("an input exceeds the local maximum input size")
+            total += size
+        if total > MAX_TOTAL_INPUT_BYTES:
+            raise EmbeddingInputError("the batch exceeds the local maximum total input size")
 
     # --- errors --------------------------------------------------------------------
 
@@ -415,3 +466,23 @@ def _aggregate_prompt_tokens(usage: Any) -> int | None:
     if total is not None and (not _is_count(total) or total != prompt):
         return None
     return prompt
+
+
+def _mark(exc: EmbeddingError, *, billed: bool, tokens: int | None = None) -> EmbeddingError:
+    """Attach request-exposure evidence (see `EmbeddingError`)."""
+    exc.request_attempted = True
+    exc.possibly_billed = billed
+    exc.reported_input_tokens = tokens
+    return exc
+
+
+def _usage_tokens_from(response: httpx.Response) -> int | None:
+    """Valid aggregate `prompt_tokens` from a response that was otherwise
+    rejected, or `None` (unknown) when absent, malformed or unparsable."""
+    try:
+        body: Any = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    return _aggregate_prompt_tokens(body.get("usage"))
