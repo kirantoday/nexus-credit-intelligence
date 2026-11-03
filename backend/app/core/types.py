@@ -493,6 +493,10 @@ class AuditEventType(StrEnum):
     RESEARCH_DOCUMENT_ARCHIVED = "research_document_archived"
     # --- Milestone 10C: Document Intelligence ---
     DOCUMENT_EXTRACTION_REQUESTED = "document_extraction_requested"
+    # --- Milestone 10D: Document Embeddings ---
+    PUBLIC_DOCUMENT_APPROVED = "public_document_approved"
+    PUBLIC_DOCUMENT_APPROVAL_REVOKED = "public_document_approval_revoked"
+    DOCUMENT_EMBEDDING_REQUESTED = "document_embedding_requested"
 
 
 # --- Milestone 12A: Universal Search ---
@@ -597,3 +601,44 @@ class DocumentChunkElementType(StrEnum):
     HEADING = "heading"
     TABLE = "table"
     LIST = "list"
+
+
+# --- Milestone 10D: Document Embeddings ---
+
+
+class EmbeddingJobStatus(StrEnum):
+    """`document_embedding_job.status` (Milestone 10D.2).
+
+    `BLOCKED_INELIGIBLE` is a distinct terminal state, not `FAILED`: the
+    document stopped being (or never was) eligible for external embedding
+    (revoked approval, archived, reclassified, superseded extraction, ...).
+    Nothing went wrong with the job itself, and it must never be retried
+    automatically — eligibility is re-evaluated only by a new, explicit
+    enqueue.
+    """
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    BLOCKED_INELIGIBLE = "blocked_ineligible"
+
+
+class EmbeddingInputType(StrEnum):
+    """Whether text is being embedded as a stored document passage or as a
+    search query. Vendors that distinguish the two (an asymmetric
+    retrieval task type) need it per call; vendors that don't simply
+    ignore it. Also `embedding_call_log.purpose`."""
+
+    DOCUMENT = "document"
+    QUERY = "query"
+
+
+class PageReferenceBasis(StrEnum):
+    """What a chunk's `page_start`/`page_end` refer to for an approved
+    public document. `CONVERTED_PDF` means the pages belong to a
+    Nexus-produced PDF conversion (for example of an SEC HTML exhibit) and
+    must never be presented as the original source's page numbers."""
+
+    ORIGINAL = "original"
+    CONVERTED_PDF = "converted_pdf"

@@ -72,6 +72,20 @@ class Settings(BaseSettings):
     # tool-calling and embeddings may end up sourced from different vendors.
     embedding_provider: str | None = None
 
+    # Document embeddings (Milestone 10D.2, ADR-021). Off by default: the
+    # embedding worker refuses to run unless this is explicitly true, and no
+    # real vendor adapter exists yet — `fake` (local/test only) is the only
+    # provider the factory will build. Model and dimension are deliberately
+    # unset until the provider decision is approved; `embedding_dimension`
+    # must equal `app.embeddings.dimensions.EMBEDDING_COLUMN_DIMENSION`.
+    embeddings_enabled: bool = False
+    embedding_model_id: str | None = None
+    embedding_model_version: str | None = None
+    embedding_dimension: int | None = None
+    embedding_batch_size: int = 64
+    embedding_job_max_attempts: int = 3
+    embedding_stale_processing_after_seconds: int = 900
+
     # Model routing (PLAN.md Milestone 7.5.3 AI cost-control correction).
     # `anthropic_model` above stays the Sonnet identity (unchanged, still the
     # single-model default for any caller not going through the router, e.g.
